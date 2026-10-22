@@ -2362,11 +2362,21 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('Workshop Parts Inventory (${_parts.length} items)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ElevatedButton.icon(
-              onPressed: () => _showPartDialog(),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add Part'),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _showStockLedgerHistoryDialog,
+                  icon: const Icon(Icons.history_edu, size: 17),
+                  label: const Text('Stock Ledger History'),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  onPressed: () => _showPartDialog(),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add Part'),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                ),
+              ],
             ),
           ],
         ),
@@ -3298,6 +3308,62 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     );
   }
 
+  Future<void> _showStockLedgerHistoryDialog() async {
+    List<dynamic> movements = [];
+    try {
+      final res = await http.get(Uri.parse('$_baseUrl/stock-movements'));
+      if (res.statusCode == 200) {
+        movements = json.decode(res.body);
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Spare Parts Stock Movement Ledger (Audit Trail)'),
+        content: SizedBox(
+          width: 720,
+          height: 460,
+          child: movements.isEmpty
+              ? const Center(child: Text('No stock movements recorded yet.'))
+              : ListView.separated(
+                  itemCount: movements.length,
+                  separatorBuilder: (_, __) => const Divider(),
+                  itemBuilder: (_, idx) {
+                    final m = movements[idx];
+                    final type = (m['type'] ?? 'IN').toString();
+                    final part = m['part'] ?? {};
+                    final isOut = type == 'OUT' || type == 'ISSUED';
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: isOut ? Colors.orange.shade50 : Colors.green.shade50,
+                        child: Icon(
+                          isOut ? Icons.call_made : Icons.call_received,
+                          color: isOut ? Colors.orange.shade800 : Colors.green.shade800,
+                          size: 18,
+                        ),
+                      ),
+                      title: Text(
+                        '${part['partNumber'] ?? 'Part'} • ${part['description'] ?? ''} (${isOut ? '-' : '+'}${m['quantity'] ?? 0})',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      subtitle: Text('Reason: ${m['reason'] ?? '-'} • Date: ${_formatDate(m['createdAt'])}'),
+                      trailing: Chip(
+                        label: Text(type, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        backgroundColor: isOut ? Colors.orange.shade50 : Colors.green.shade50,
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   // ==========================================
   // RIGHT SIDE PANELS (LIVE FROM DATABASE)
   // ==========================================
@@ -3305,6 +3371,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final activities = (_dashboard['recentActivities'] as List<dynamic>?) ?? [];
     final weeklyJobs = (_dashboard['weeklyJobs'] as List<dynamic>?) ?? [];
     final rev = (_dashboard['totalRevenue'] as num?)?.toDouble() ?? 0.0;
+    final netProfit = (_dashboard['netProfit'] as num?)?.toDouble() ?? 0.0;
+    final outstanding = (_dashboard['outstandingBalance'] as num?)?.toDouble() ?? 0.0;
 
     return Column(
       children: [
@@ -3345,13 +3413,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         ),
         const SizedBox(height: 24),
         _rightPanelBox(
-          'Customer Summary',
+          'Workshop & Financial Summary',
           Column(
             children: [
-              _summaryRow('Revenue (KSH)', rev.toStringAsFixed(0)),
-              _summaryRow('Active Jobs', '${_dashboard['activeJobsCount'] ?? 0}'),
+              _summaryRow('Collected Revenue', 'KSH ${rev.toStringAsFixed(0)}'),
+              _summaryRow('Net Profit (KSH)', netProfit.toStringAsFixed(0)),
+              _summaryRow('Outstanding Balances', 'KSH ${outstanding.toStringAsFixed(0)}'),
+              _summaryRow('Today / Week / Month', '${_dashboard['todayJobsCount'] ?? 0} / ${_dashboard['weekJobsCount'] ?? 0} / ${_dashboard['monthJobsCount'] ?? 0}'),
+              _summaryRow('Overdue Jobs', '${_dashboard['overdueJobsCount'] ?? 0}'),
+              _summaryRow('Upcoming Appointments', '${_dashboard['upcomingAppointmentsCount'] ?? _appointments.length}'),
               _summaryRow('Customers', '${_dashboard['customersCount'] ?? 0}'),
-              _summaryRow('Low Stock', '${_dashboard['lowStockCount'] ?? 0}'),
+              _summaryRow('Low Stock Alerts', '${_dashboard['lowStockCount'] ?? 0}'),
             ],
           ),
         ),

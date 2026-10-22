@@ -1676,6 +1676,17 @@ app.delete('/api/assets', async (req: Request, res: Response) => {
   }
 });
 
+// Serve compiled Flutter Web App at root (https://auto.zksms.online/)
+const publicWebDir = path.resolve(__dirname, '../public');
+app.use(express.static(publicWebDir));
+app.get(/^(?!\/api).*/, (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicWebDir, 'index.html'), (err) => {
+    if (err) {
+      res.status(200).send('Auto Repair Workshop API is running at /api');
+    }
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT} (Neon branch: ${process.env.NEON_BRANCH || 'linked'})`);
 });
