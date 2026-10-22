@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../web/invoice_pdf_service.dart';
@@ -15,7 +16,16 @@ class MobileHomeScreen extends StatefulWidget {
 class _MobileHomeScreenState extends State<MobileHomeScreen> {
   static const String _baseUrl = 'https://auto.zksms.online/api';
 
-  int _selectedIndex = 1;
+  // Role-based mobile workspace: 'ADVISOR' (Service Advisor) or 'MECHANIC' (Technician)
+  // Advisor tabs: 0 Home, 1 Jobs, 2 Intake, 3 Quotes, 4 Schedule
+  // Technician tabs: 0 My Jobs, 1 Completed
+  String _role = 'ADVISOR';
+  String _techName = 'All';
+  List<String> _technicians = [];
+  List<dynamic> _estimates = [];
+  String _jobSearch = '';
+
+  int _selectedIndex = 0;
   List<dynamic> _jobs = [];
   List<dynamic> _appointments = [];
   bool _isLoadingJobs = false;
@@ -51,11 +61,20 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       final results = await Future.wait([
         http.get(Uri.parse('$_baseUrl/jobs')),
         http.get(Uri.parse('$_baseUrl/appointments')),
+        http.get(Uri.parse('$_baseUrl/estimates')),
+        http.get(Uri.parse('$_baseUrl/employees')),
       ]);
       if (mounted) {
         setState(() {
           if (results[0].statusCode == 200) _jobs = json.decode(results[0].body);
           if (results[1].statusCode == 200) _appointments = json.decode(results[1].body);
+          if (results[2].statusCode == 200) _estimates = json.decode(results[2].body);
+          if (results[3].statusCode == 200) {
+            _technicians = (json.decode(results[3].body) as List)
+                .where((u) => u['role'] == 'MECHANIC' || u['role'] == 'INSPECTOR')
+                .map<String>((u) => u['name'].toString())
+                .toList();
+          }
         });
       }
     } catch (_) {
@@ -137,7 +156,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           _damageMarkers = [];
           _memoDetails = ReceivingMemoDetails();
           _signatureCaptured = false;
-          _selectedIndex = 0; // Switch to Home list to see it
+          _selectedIndex = 1; // Switch to Jobs list to see it
         });
         _fetchJobs();
       }
@@ -208,9 +227,66 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     );
   }
 
+  bool get _isAdvisor => _role == 'ADVISOR';
+
+  Color _statusColor(String s) {
+    switch (s) {
+      case 'BOOKED':
+        return const Color(0xFF64748B);
+      case 'INSPECTION':
+        return const Color(0xFF7C3AED);
+      case 'AWAITING_APPROVAL':
+        return const Color(0xFFD97706);
+      case 'IN_PROGRESS':
+        return const Color(0xFF2563EB);
+      case 'WAITING':
+        return const Color(0xFFEA580C);
+      case 'QUALITY_CHECK':
+        return const Color(0xFF0891B2);
+      case 'READY':
+        return const Color(0xFF16A34A);
+      case 'COMPLETED':
+        return const Color(0xFF15803D);
+      default:
+        return const Color(0xFF64748B);
+    }
+  }
+
+  String _prettyStatus(String s) => s.replaceAll('_', ' ');
+
+  void _toast(String msg, {Color color = Colors.green}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: color, content: Text(msg)));
+  }
+
+  Future<bool> _putJob(String id, Map<String, dynamic> body) async {
+    try {
+      final r = await http.put(
+        Uri.parse('$_baseUrl/jobs/$id'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(body),
+      );
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _switchRole(String role) {
+    setState(() {
+      _role = role;
+      _selectedIndex = 0;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final advisorTitles = ['Overview', 'Job Cards', 'Vehicle Intake', 'Quotations', 'Bay Schedule'];
+    final techTitles = ['My Assigned Jobs', 'Completed Jobs'];
+    final title = _isAdvisor ? advisorTitles[_selectedIndex] : techTitles[_selectedIndex];
+
     return Scaffold(
+      backgroundColor: const Color(0xFFF1F5F9),
       appBar: AppBar(
         title: Row(
           children: [
@@ -231,11 +307,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                _selectedIndex == 0
-                    ? '• Active Jobs'
-                    : _selectedIndex == 1
-                        ? '• Vehicle Intake'
-                        : '• Bay Schedule',
+                'â€¢ $title',
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white70),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -244,8 +316,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         ),
         backgroundColor: const Color(0xFF0F4C81),
         foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
-          if (_selectedIndex == 2)
+          if (_isAdvisor && _selectedIndex == 4)
             IconButton(
               tooltip: 'Book Appointment',
               icon: const Icon(Icons.add_box_outlined),
@@ -253,98 +326,764 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchJobs),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(52),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.all(3),
+              child: Row(
+                children: [
+                  _roleTab('ADVISOR', 'Service Advisor', Icons.support_agent),
+                  _roleTab('MECHANIC', 'Technician', Icons.build_circle_outlined),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
-      body: _selectedIndex == 0
-          ? _buildJobsList()
-          : _selectedIndex == 1
-              ? _buildIntakeForm()
-              : _buildScheduleView(),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF0F4C81),
-        onTap: (index) {
+      body: _isAdvisor ? _buildAdvisorBody() : _buildTechnicianBody(),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        backgroundColor: Colors.white,
+        indicatorColor: const Color(0xFFDBEAFE),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        height: 66,
+        onDestinationSelected: (index) {
           setState(() => _selectedIndex = index);
-          if (index != 1) _fetchJobs();
+          if (!(_isAdvisor && index == 2)) _fetchJobs();
         },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.list_alt), label: 'Active Jobs'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_circle_outline), label: 'New Intake'),
-          BottomNavigationBarItem(icon: Icon(Icons.calendar_today), label: 'Schedule'),
+        destinations: _isAdvisor
+            ? const [
+                NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Overview'),
+                NavigationDestination(icon: Icon(Icons.assignment_outlined), selectedIcon: Icon(Icons.assignment), label: 'Jobs'),
+                NavigationDestination(icon: Icon(Icons.add_circle_outline), selectedIcon: Icon(Icons.add_circle), label: 'Intake'),
+                NavigationDestination(icon: Icon(Icons.request_quote_outlined), selectedIcon: Icon(Icons.request_quote), label: 'Quotes'),
+                NavigationDestination(icon: Icon(Icons.calendar_today_outlined), selectedIcon: Icon(Icons.calendar_today), label: 'Schedule'),
+              ]
+            : const [
+                NavigationDestination(icon: Icon(Icons.build_outlined), selectedIcon: Icon(Icons.build), label: 'My Jobs'),
+                NavigationDestination(icon: Icon(Icons.check_circle_outline), selectedIcon: Icon(Icons.check_circle), label: 'Completed'),
+              ],
+      ),
+    );
+  }
+
+  Widget _roleTab(String role, String label, IconData icon) {
+    final selected = _role == role;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _switchRole(role),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: selected ? const Color(0xFF0F4C81) : Colors.white70),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: selected ? const Color(0xFF0F4C81) : Colors.white70,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // SERVICE ADVISOR WORKSPACE
+  // ---------------------------------------------------------------------------
+  Widget _buildAdvisorBody() {
+    switch (_selectedIndex) {
+      case 0:
+        return _buildAdvisorHome();
+      case 1:
+        return _buildJobsList();
+      case 2:
+        return _buildIntakeForm();
+      case 3:
+        return _buildQuotesView();
+      default:
+        return _buildScheduleView();
+    }
+  }
+
+  Widget _buildAdvisorHome() {
+    int count(bool Function(dynamic) f) => _jobs.where(f).length;
+    final active = count((j) => j['status'] != 'COMPLETED');
+    final awaiting = count((j) => j['status'] == 'AWAITING_APPROVAL');
+    final ready = count((j) => j['status'] == 'READY');
+
+    final tiles = <List<dynamic>>[
+      ['Job Cards', 'Create & track repairs', Icons.assignment, () => setState(() => _selectedIndex = 1)],
+      ['Customers', 'Profiles & history', Icons.people_alt, _showCustomersSheet],
+      ['Appointments', 'Bookings & bays', Icons.event_available, () => setState(() => _selectedIndex = 4)],
+      ['Quotations', 'Estimates & approvals', Icons.request_quote, () => setState(() => _selectedIndex = 3)],
+      ['Communications', 'Customer updates', Icons.chat_bubble, _showCommunicationsSheet],
+      ['New Intake', '360Â° vehicle check-in', Icons.directions_car, () => setState(() => _selectedIndex = 2)],
+    ];
+
+    return RefreshIndicator(
+      onRefresh: _fetchJobs,
+      child: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          const Text('Today at the workshop', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _statTile('Active', '$active', const Color(0xFF2563EB)),
+              const SizedBox(width: 8),
+              _statTile('Awaiting OK', '$awaiting', const Color(0xFFD97706)),
+              const SizedBox(width: 8),
+              _statTile('Ready', '$ready', const Color(0xFF16A34A)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.25,
+            children: tiles
+                .map((t) => InkWell(
+                      onTap: t[3] as VoidCallback,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2))],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: const Color(0xFFDBEAFE),
+                              child: Icon(t[2] as IconData, color: const Color(0xFF0F4C81)),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(t[0] as String, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                                Text(t[1] as String, style: const TextStyle(fontSize: 11.5, color: Colors.black54)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 18),
+          const Text('Needs your attention', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          ..._jobs
+              .where((j) => j['status'] == 'AWAITING_APPROVAL' || j['status'] == 'READY')
+              .take(5)
+              .map((j) => _jobCard(j)),
+          if (awaiting + ready == 0)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('Nothing pending â€” all caught up.', style: TextStyle(color: Colors.black54)),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildJobsList() {
-    if (_isLoadingJobs) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_jobs.isEmpty) {
-      return Center(
+  Widget _statTile(String label, String value, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(14)),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.directions_car_outlined, size: 64, color: Colors.grey),
+            Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: color)),
+            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCustomersSheet() {
+    final Map<String, Map<String, dynamic>> customers = {};
+    for (final j in _jobs) {
+      final c = j['customer'];
+      if (c == null) continue;
+      final key = (c['id'] ?? c['name']).toString();
+      customers.putIfAbsent(key, () => {'name': c['name'], 'phone': c['phone'], 'jobs': <dynamic>[]});
+      (customers[key]!['jobs'] as List).add(j);
+    }
+    final list = customers.values.toList();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.8,
+        maxChildSize: 0.95,
+        builder: (_, scroll) => Column(
+          children: [
             const SizedBox(height: 12),
-            const Text('No Job Cards in Database yet.', style: TextStyle(fontSize: 16, color: Colors.grey)),
-            const SizedBox(height: 12),
-            ElevatedButton.icon(
-              onPressed: () => setState(() => _selectedIndex = 1),
-              icon: const Icon(Icons.add),
-              label: const Text('Create First Intake Job Card'),
+            const Text('Customers & Vehicle History', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            const Divider(),
+            Expanded(
+              child: list.isEmpty
+                  ? const Center(child: Text('No customers yet.'))
+                  : ListView.builder(
+                      controller: scroll,
+                      itemCount: list.length,
+                      itemBuilder: (_, i) {
+                        final c = list[i];
+                        final jobs = c['jobs'] as List;
+                        return ExpansionTile(
+                          leading: CircleAvatar(
+                            backgroundColor: const Color(0xFF0F4C81),
+                            child: Text(
+                              (c['name'] ?? '?').toString().substring(0, 1).toUpperCase(),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          title: Text(c['name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
+                          subtitle: Text('${c['phone'] ?? 'No phone'} â€¢ ${jobs.length} visit(s)'),
+                          children: jobs
+                              .map<Widget>((j) => ListTile(
+                                    dense: true,
+                                    title: Text('${j['vehicle']?['registrationNo'] ?? ''} â€¢ ${j['workRequested'] ?? 'Service'}'),
+                                    subtitle: Text('${j['jobNumber'] ?? ''} â€¢ ${_prettyStatus(j['status'] ?? '')}'),
+                                  ))
+                              .toList(),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
-      );
+      ),
+    );
+  }
+
+  void _showCommunicationsSheet() {
+    final pending = _jobs.where((j) => j['status'] == 'READY' || j['status'] == 'AWAITING_APPROVAL').toList();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        maxChildSize: 0.95,
+        builder: (_, scroll) => Column(
+          children: [
+            const SizedBox(height: 12),
+            const Text('Customer Follow-Ups', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            const Text('Copy a ready message and send via SMS / WhatsApp', style: TextStyle(fontSize: 12, color: Colors.black54)),
+            const Divider(),
+            Expanded(
+              child: pending.isEmpty
+                  ? const Center(child: Text('No customers waiting for an update.'))
+                  : ListView.builder(
+                      controller: scroll,
+                      itemCount: pending.length,
+                      itemBuilder: (_, i) {
+                        final j = pending[i];
+                        final ready = j['status'] == 'READY';
+                        final reg = j['vehicle']?['registrationNo'] ?? 'your vehicle';
+                        final msg = ready
+                            ? 'Hello ${j['customer']?['name'] ?? ''}, your vehicle $reg is ready for collection at AutoKe workshop. Thank you!'
+                            : 'Hello ${j['customer']?['name'] ?? ''}, we have inspected $reg and prepared a quotation awaiting your approval. Please reply to authorise the repairs.';
+                        return ListTile(
+                          leading: Icon(ready ? Icons.check_circle : Icons.hourglass_top,
+                              color: ready ? Colors.green : Colors.orange),
+                          title: Text('${j['customer']?['name'] ?? ''} â€¢ $reg'),
+                          subtitle: Text(msg, maxLines: 3, overflow: TextOverflow.ellipsis),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.copy),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: '${j['customer']?['phone'] ?? ''}\n$msg'));
+                              _toast('Message copied');
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuotesView() {
+    if (_isLoadingJobs) return const Center(child: CircularProgressIndicator());
+    if (_estimates.isEmpty) {
+      return const Center(child: Text('No quotations yet.', style: TextStyle(color: Colors.grey)));
     }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _jobs.length,
-      itemBuilder: (context, index) {
-        final job = _jobs[index];
-        final jobNo = job['jobNumber'] ?? job['id'].toString().substring(0, 8).toUpperCase();
-        final customer = job['customer']?['name'] ?? 'Customer';
-        final vehicle = '${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} (${job['vehicle']?['registrationNo'] ?? ''})';
-        final status = job['status'] ?? 'IN_PROGRESS';
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 10),
-          child: ListTile(
-            onTap: () => InvoicePdfService.showJobCardPreviewModal(
-              context: context,
-              workshopSettings: const {},
-              job: Map<String, dynamic>.from(job),
-            ),
-            leading: CircleAvatar(
-              backgroundColor: const Color(0xFF0F4C81),
-              child: Text(jobNo.substring(0, 2), style: const TextStyle(color: Colors.white, fontSize: 12)),
-            ),
-            title: Text('$jobNo • $customer', style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('$vehicle\nService: ${job['workRequested'] ?? 'Service'} • Tech: ${job['technician'] ?? 'Unassigned'}'),
-            isThreeLine: true,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
+    return RefreshIndicator(
+      onRefresh: _fetchJobs,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: _estimates.length,
+        itemBuilder: (_, i) {
+          final e = _estimates[i];
+          final status = (e['status'] ?? 'DRAFT').toString();
+          final jc = e['jobCard'];
+          final total = (e['total'] is num) ? (e['total'] as num).toStringAsFixed(0) : '0';
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                IconButton(
-                  tooltip: 'Print / PDF Customer Copy',
-                  icon: const Icon(Icons.print_outlined, color: Color(0xFF1D4ED8)),
-                  onPressed: () => InvoicePdfService.showJobCardPreviewModal(
-                    context: context,
-                    workshopSettings: const {},
-                    job: Map<String, dynamic>.from(job),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${jc?['jobNumber'] ?? 'Job'} â€¢ ${jc?['customer']?['name'] ?? ''}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    Text('KES $total', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF0F4C81))),
+                  ],
                 ),
-                Chip(
-                  label: Text(status, style: const TextStyle(fontSize: 11)),
-                  backgroundColor: Colors.blue.shade50,
+                const SizedBox(height: 2),
+                Text('${jc?['vehicle']?['registrationNo'] ?? ''} â€¢ ${(e['lineItems'] as List?)?.length ?? 0} item(s)',
+                    style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  children: ['DRAFT', 'SENT', 'APPROVED', 'REJECTED']
+                      .map((s) => ChoiceChip(
+                            label: Text(s, style: const TextStyle(fontSize: 11)),
+                            selected: status == s,
+                            onSelected: (_) async {
+                              await http.put(
+                                Uri.parse('$_baseUrl/estimates/${e['id']}/status'),
+                                headers: {'Content-Type': 'application/json'},
+                                body: json.encode({'status': s}),
+                              );
+                              _fetchJobs();
+                            },
+                          ))
+                      .toList(),
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text('Approve only with documented customer authorisation.',
+                      style: TextStyle(fontSize: 10.5, color: Colors.black45)),
                 ),
               ],
             ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // SHARED JOB CARD LIST / CARD
+  // ---------------------------------------------------------------------------
+  Widget _jobCard(dynamic job, {bool techMode = false}) {
+    final jobNo = (job['jobNumber'] ?? job['id'].toString().substring(0, 8).toUpperCase()).toString();
+    final customer = job['customer']?['name'] ?? 'Customer';
+    final vehicle = '${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''}'.trim();
+    final reg = job['vehicle']?['registrationNo'] ?? '';
+    final status = (job['status'] ?? 'IN_PROGRESS').toString();
+    final color = _statusColor(status);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openJobSheet(Map<String, dynamic>.from(job), techMode: techMode),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(jobNo, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
+                    child: Text(_prettyStatus(status),
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text('$reg â€¢ $vehicle', style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(job['workRequested']?.toString() ?? 'Service',
+                  maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54, fontSize: 13)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.person_outline, size: 15, color: Colors.black45),
+                  const SizedBox(width: 4),
+                  Expanded(child: Text(customer, style: const TextStyle(fontSize: 12))),
+                  const Icon(Icons.build_outlined, size: 15, color: Colors.black45),
+                  const SizedBox(width: 4),
+                  Text(job['technician']?.toString().isNotEmpty == true ? job['technician'].toString() : 'Unassigned',
+                      style: const TextStyle(fontSize: 12)),
+                  if (job['bayNumber'] != null) ...[
+                    const SizedBox(width: 10),
+                    const Icon(Icons.garage_outlined, size: 15, color: Colors.black45),
+                    const SizedBox(width: 4),
+                    Text(job['bayNumber'].toString(), style: const TextStyle(fontSize: 12)),
+                  ],
+                ],
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildJobsList() {
+    if (_isLoadingJobs && _jobs.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final q = _jobSearch.toLowerCase();
+    final shown = _jobs.where((j) {
+      if (q.isEmpty) return true;
+      return '${j['jobNumber']} ${j['customer']?['name']} ${j['vehicle']?['registrationNo']} ${j['vehicle']?['make']} ${j['vehicle']?['model']}'
+          .toLowerCase()
+          .contains(q);
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: TextField(
+            onChanged: (v) => setState(() => _jobSearch = v),
+            decoration: InputDecoration(
+              hintText: 'Search job, plate, customerâ€¦',
+              prefixIcon: const Icon(Icons.search),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(vertical: 0),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+            ),
+          ),
+        ),
+        Expanded(
+          child: shown.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.directions_car_outlined, size: 64, color: Colors.grey),
+                      const SizedBox(height: 12),
+                      const Text('No job cards found.', style: TextStyle(fontSize: 16, color: Colors.grey)),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () => setState(() => _selectedIndex = 2),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Create Intake Job Card'),
+                      ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _fetchJobs,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: shown.length,
+                    itemBuilder: (_, i) => _jobCard(shown[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TECHNICIAN WORKSPACE
+  // ---------------------------------------------------------------------------
+  Widget _buildTechnicianBody() {
+    final showCompleted = _selectedIndex == 1;
+    final mine = _jobs.where((j) {
+      final done = j['status'] == 'COMPLETED';
+      if (done != showCompleted) return false;
+      if (!showCompleted && (j['status'] == 'BOOKED' || j['status'] == 'READY') && _techName != 'All') {
+        // still visible if assigned to this technician
+      }
+      if (_techName == 'All') return true;
+      return (j['technician'] ?? '').toString() == _techName;
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: DropdownButtonFormField<String>(
+            value: (_techName == 'All' || _technicians.contains(_techName)) ? _techName : 'All',
+            decoration: InputDecoration(
+              labelText: 'I am',
+              prefixIcon: const Icon(Icons.badge_outlined),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+            ),
+            items: ['All', ..._technicians].map((t) => DropdownMenuItem(value: t, child: Text(t == 'All' ? 'All technicians (bay view)' : t))).toList(),
+            onChanged: (v) => setState(() => _techName = v ?? 'All'),
+          ),
+        ),
+        Expanded(
+          child: _isLoadingJobs && _jobs.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : mine.isEmpty
+                  ? const Center(child: Text('No jobs here.', style: TextStyle(color: Colors.grey)))
+                  : RefreshIndicator(
+                      onRefresh: _fetchJobs,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: mine.length,
+                        itemBuilder: (_, i) => _jobCard(mine[i], techMode: true),
+                      ),
+                    ),
+        ),
+      ],
+    );
+  }
+
+  static const List<String> _inspectionPoints = [
+    'Engine & Oil',
+    'Brakes',
+    'Suspension & Steering',
+    'Tyres & Wheels',
+    'Battery & Electrical',
+    'Lights',
+    'Cooling System',
+    'Exhaust & Transmission',
+  ];
+
+  void _openJobSheet(Map<String, dynamic> job, {required bool techMode}) {
+    final walk = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
+    final tech = walk['techInspection'] is Map ? Map<String, dynamic>.from(walk['techInspection']) : <String, dynamic>{};
+    final results = <String, String>{
+      for (final p in _inspectionPoints) p: (tech['results'] is Map ? tech['results'][p]?.toString() : null) ?? '',
+    };
+    final obdCtrl = TextEditingController(text: tech['obdCodes']?.toString() ?? '');
+    final notesCtrl = TextEditingController(text: tech['notes']?.toString() ?? '');
+    final hoursCtrl = TextEditingController(text: job['actualHours']?.toString() ?? '');
+    String status = (job['status'] ?? 'BOOKED').toString();
+    String assigned = (job['technician'] ?? '').toString();
+    final techOptions = {..._technicians, if (assigned.isNotEmpty) assigned}.toList();
+    bool saving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.9,
+          maxChildSize: 0.97,
+          builder: (_, scroll) => Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: ListView(
+              controller: scroll,
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text('${job['jobNumber'] ?? 'Job Card'} â€¢ ${job['vehicle']?['registrationNo'] ?? ''}',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                Text('${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} â€¢ ${job['customer']?['name'] ?? ''}',
+                    style: const TextStyle(color: Colors.black54)),
+                const SizedBox(height: 4),
+                Text('Work requested: ${job['workRequested'] ?? '-'}'),
+                const SizedBox(height: 14),
+                const Text('Repair Stage', style: TextStyle(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: (techMode
+                          ? ['INSPECTION', 'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK']
+                          : ['BOOKED', 'INSPECTION', 'AWAITING_APPROVAL', 'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK', 'READY', 'COMPLETED'])
+                      .map((s) => ChoiceChip(
+                            label: Text(_prettyStatus(s), style: const TextStyle(fontSize: 11)),
+                            selected: status == s,
+                            selectedColor: _statusColor(s).withOpacity(0.2),
+                            onSelected: (_) => setSheet(() => status = s),
+                          ))
+                      .toList(),
+                ),
+                if (!techMode) ...[
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    value: techOptions.contains(assigned) ? assigned : null,
+                    decoration: const InputDecoration(labelText: 'Assign Technician', border: OutlineInputBorder()),
+                    items: techOptions.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                    onChanged: (v) => setSheet(() => assigned = v ?? ''),
+                  ),
+                ],
+                if (techMode) ...[
+                  const SizedBox(height: 16),
+                  const Text('Mechanical & OBD-II Inspection', style: TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  ..._inspectionPoints.map((p) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Expanded(child: Text(p, style: const TextStyle(fontSize: 13.5))),
+                            ...[
+                              ['PASS', Colors.green],
+                              ['ATTENTION', Colors.orange],
+                              ['FAIL', Colors.red],
+                            ].map((o) {
+                              final sel = results[p] == o[0];
+                              final c = o[1] as Color;
+                              return Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: GestureDetector(
+                                  onTap: () => setSheet(() => results[p] = o[0] as String),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: sel ? c : c.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      o[0] == 'ATTENTION' ? 'WARN' : o[0] as String,
+                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: sel ? Colors.white : c),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      )),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: obdCtrl,
+                    decoration: const InputDecoration(labelText: 'OBD-II fault codes (e.g. P0300)', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: notesCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(labelText: 'Findings / parts needed', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InputDecorator(
+                          decoration: const InputDecoration(labelText: 'Estimated hrs', border: OutlineInputBorder()),
+                          child: Text(job['estimatedHours']?.toString() ?? '-'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: hoursCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Actual hrs', border: OutlineInputBorder()),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    if (!techMode)
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.print_outlined),
+                          label: const Text('Customer Copy'),
+                          onPressed: () => InvoicePdfService.showJobCardPreviewModal(
+                            context: context,
+                            workshopSettings: const {},
+                            job: job,
+                          ),
+                        ),
+                      ),
+                    if (!techMode) const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0F4C81),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: saving
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.save),
+                        label: const Text('Save'),
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                setSheet(() => saving = true);
+                                final body = <String, dynamic>{'status': status};
+                                if (techMode) {
+                                  walk['techInspection'] = {
+                                    'results': results,
+                                    'obdCodes': obdCtrl.text.trim(),
+                                    'notes': notesCtrl.text.trim(),
+                                    'by': _techName,
+                                    'updatedAt': DateTime.now().toIso8601String(),
+                                  };
+                                  body['walkAroundData'] = walk;
+                                  final h = double.tryParse(hoursCtrl.text.trim());
+                                  if (h != null) body['actualHours'] = h;
+                                } else {
+                                  body['technician'] = assigned;
+                                }
+                                final ok = await _putJob(job['id'].toString(), body);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                _toast(ok ? 'Job updated' : 'Failed to update job', color: ok ? Colors.green : Colors.red);
+                                _fetchJobs();
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -545,11 +1284,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                           child: Icon(Icons.event_available, color: Colors.white, size: 18),
                         ),
                         title: Text(
-                          '${appt['registrationNo'] ?? 'Vehicle'} • ${appt['customerName'] ?? ''}',
+                          '${appt['registrationNo'] ?? 'Vehicle'} â€¢ ${appt['customerName'] ?? ''}',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         subtitle: Text(
-                          'Service: ${appt['serviceType'] ?? '-'}\nBay: ${appt['bayNumber'] ?? 'Bay 1'} • Status: $status',
+                          'Service: ${appt['serviceType'] ?? '-'}\nBay: ${appt['bayNumber'] ?? 'Bay 1'} â€¢ Status: $status',
                         ),
                         isThreeLine: true,
                         trailing: TextButton(
@@ -559,7 +1298,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                               _phoneController.text = appt['customerPhone']?.toString() ?? '';
                               _regController.text = appt['registrationNo']?.toString() ?? '';
                               _serviceController.text = appt['serviceType']?.toString() ?? '';
-                              _selectedIndex = 1;
+                              _selectedIndex = 2;
                             });
                           },
                           child: const Text('Start Intake'),
@@ -656,3 +1395,4 @@ class _SignaturePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
