@@ -46,7 +46,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       'job:edit',
     },
     'STOREKEEPER': {
-      'nav:Dashboard', 'nav:Parts Catalog', 'nav:Inventory',
+      'nav:Dashboard', 'nav:Parts Catalog', 'nav:Inventory', 'nav:Reports',
       'part:edit', 'stock:adjust',
     },
     'INVENTORY_MANAGER': {
@@ -97,6 +97,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       _activeSidebar = 'Dashboard';
       _activeTab = _firstAllowedTab();
     });
+    _refreshAllData();
   }
 
   // Real data collections from PostgreSQL
@@ -129,6 +130,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   List<dynamic> _appointments = [];
   List<dynamic> _expenses = [];
   Map<String, dynamic> _workshopSettings = {};
+
+  // Storekeeper / Inventory Manager Operations Reports Data
+  Map<String, dynamic> _inventorySummary = {};
+  List<dynamic> _inventoryReturns = [];
+  List<dynamic> _inventoryTransactions = [];
+  String _storeReportTab = 'Inventories'; // 'Inventories', 'Issued Items', 'Spoiled Items', 'Fast-Moving'
+  String _inventoryCategoryFilter = 'ALL';
+  String _issuedSubFilter = 'PARTS_JOB'; // 'PARTS_JOB', 'CONSUMABLES_DEPT', 'TOOLS_FIELD'
+  String _inventorySearchQuery = '';
 
   bool _isLoading = true;
   bool _showEstimateCreator = false;
@@ -177,6 +187,28 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         if (responses[9].statusCode == 200) _expenses = json.decode(responses[9].body);
         _isLoading = false;
       });
+
+      // Fetch dedicated inventory operational summary & returns
+      try {
+        final invHeaders = {
+          'x-user-role': _activeUserRole,
+          'x-user-name': 'Storekeeper',
+        };
+        final invResp = await Future.wait([
+          http.get(Uri.parse('$_baseUrl/inventory/reports/summary'), headers: invHeaders),
+          http.get(Uri.parse('$_baseUrl/inventory/returns'), headers: invHeaders),
+          http.get(Uri.parse('$_baseUrl/inventory/transactions?limit=150'), headers: invHeaders),
+        ]);
+        if (mounted) {
+          setState(() {
+            if (invResp[0].statusCode == 200) _inventorySummary = json.decode(invResp[0].body);
+            if (invResp[1].statusCode == 200) _inventoryReturns = json.decode(invResp[1].body);
+            if (invResp[2].statusCode == 200) _inventoryTransactions = json.decode(invResp[2].body);
+          });
+        }
+      } catch (ie) {
+        debugPrint('Error fetching inventory summary: $ie');
+      }
     } catch (e) {
       debugPrint('Error fetching data from backend: $e');
       if (mounted) {
@@ -2028,6 +2060,64 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Widget _buildStatsRow() {
+    final isInvRole = _activeUserRole == 'STOREKEEPER' || _activeUserRole == 'INVENTORY_MANAGER';
+    if (isInvRole) {
+      final balances = (_inventorySummary['balances'] as List<dynamic>?) ?? [];
+      final lowStockList = (_inventorySummary['lowStock'] as List<dynamic>?) ?? [];
+      final partsByJob = (_inventorySummary['partsByJob'] as List<dynamic>?) ?? [];
+      final movementTotals = (_inventorySummary['movementTotalsByType'] as Map<String, dynamic>?) ?? {};
+      final spoiledList = _inventoryReturns.where((r) =>
+        r['kind'] == 'DAMAGED' || r['kind'] == 'LOST' || r['condition'] == 'DAMAGED' || r['condition'] == 'DEFECTIVE' || r['status'] == 'QUARANTINED' || r['status'] == 'WRITTEN_OFF'
+      ).toList();
+      final totalIssued = movementTotals['ISSUE'] ?? 0;
+      final catalogCount = balances.isNotEmpty ? balances.length : _parts.length;
+      final lowCount = lowStockList.isNotEmpty ? lowStockList.length : (_dashboard['lowStockCount'] ?? 0);
+
+      return Row(
+        children: [
+          _statCard(
+            'Stock Catalog',
+            '$catalogCount Items',
+            'Parts, Tools & Consumables',
+            Colors.blue.shade800,
+            Icons.inventory_2,
+            Colors.blue,
+            onPlusTap: () => setState(() => _activeSidebar = 'Inventory'),
+          ),
+          const SizedBox(width: 16),
+          _statCard(
+            'Issued Items',
+            '$totalIssued Units',
+            '${partsByJob.length} Repair Jobs Supplied',
+            Colors.green.shade800,
+            Icons.output,
+            Colors.green,
+            onPlusTap: () => setState(() => _activeSidebar = 'Reports'),
+          ),
+          const SizedBox(width: 16),
+          _statCard(
+            'Low Stock Alerts',
+            '$lowCount Reorders',
+            lowCount > 0 ? 'Requires Replenishment' : 'All Stock Healthy',
+            lowCount > 0 ? Colors.orange.shade800 : Colors.green.shade800,
+            Icons.warning_amber_rounded,
+            Colors.orange,
+            onPlusTap: () => setState(() => _activeSidebar = 'Reports'),
+          ),
+          const SizedBox(width: 16),
+          _statCard(
+            'Spoiled & Damaged',
+            '${spoiledList.length} Items',
+            '${_inventorySummary['pendingInspections'] ?? 0} Pending QC Inspection',
+            spoiledList.isNotEmpty ? Colors.red.shade800 : Colors.teal.shade800,
+            Icons.remove_circle_outline,
+            Colors.red,
+            onPlusTap: () => setState(() => _activeSidebar = 'Reports'),
+          ),
+        ],
+      );
+    }
+
     final rev = (_dashboard['totalRevenue'] as num?)?.toDouble() ?? 0.0;
     final activeJobs = _dashboard['activeJobsCount'] ?? 0;
     final pendingEst = _dashboard['pendingEstimatesCount'] ?? 0;
@@ -3471,7 +3561,809 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     );
   }
 
+  // ==========================================
+  // STOREKEEPER & INVENTORY MANAGER OPERATIONS REPORTS
+  // (Inventories, Issued Items, Spoiled Items, Fast-Moving Items)
+  // ==========================================
+  Widget _buildStorekeeperReportsSection() {
+    final balances = (_inventorySummary['balances'] as List<dynamic>?) ?? [];
+    final lowStockList = (_inventorySummary['lowStock'] as List<dynamic>?) ?? [];
+    final partsByJob = (_inventorySummary['partsByJob'] as List<dynamic>?) ?? [];
+    final consumablesByDept = (_inventorySummary['consumablesByDepartment'] as List<dynamic>?) ?? [];
+    final toolsAssigned = (_inventorySummary['toolsAssigned'] as List<dynamic>?) ?? [];
+    final overdueTools = (_inventorySummary['overdueTools'] as List<dynamic>?) ?? [];
+    final lostDamagedAssets = (_inventorySummary['lostDamagedAssets'] as List<dynamic>?) ?? [];
+    final movementTotals = (_inventorySummary['movementTotalsByType'] as Map<String, dynamic>?) ?? {};
+    final totalIssuedUnits = movementTotals['ISSUE'] ?? 0;
+    final pendingQC = (_inventorySummary['pendingInspections'] as num?)?.toInt() ?? 0;
+    final valuation = _inventorySummary['valuation'] as Map<String, dynamic>?;
+
+    final spoiledReturns = _inventoryReturns.where((r) {
+      final k = (r['kind'] ?? '').toString().toUpperCase();
+      final c = (r['condition'] ?? '').toString().toUpperCase();
+      final s = (r['status'] ?? '').toString().toUpperCase();
+      return k == 'DAMAGED' || k == 'LOST' || c == 'DAMAGED' || c == 'DEFECTIVE' || s == 'QUARANTINED' || s == 'WRITTEN_OFF';
+    }).toList();
+
+    // Filter balances
+    final filteredBalances = balances.where((b) {
+      if (_inventoryCategoryFilter != 'ALL' && b['category'] != _inventoryCategoryFilter) {
+        return false;
+      }
+      if (_inventorySearchQuery.isNotEmpty) {
+        final q = _inventorySearchQuery.toLowerCase();
+        final name = (b['name'] ?? '').toString().toLowerCase();
+        final code = (b['code'] ?? '').toString().toLowerCase();
+        final loc = (b['location'] ?? '').toString().toLowerCase();
+        if (!name.contains(q) && !code.contains(q) && !loc.contains(q)) return false;
+      }
+      return true;
+    }).toList();
+
+    final partsCount = balances.where((b) => b['category'] == 'SPARE_PART').length;
+    final consumablesCount = balances.where((b) => b['category'] == 'CONSUMABLE').length;
+    final toolsCount = balances.where((b) => b['category'] == 'TOOL_EQUIPMENT').length;
+    final topParts = (_dashboard['topParts'] as List<dynamic>?) ?? [];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 1. Header Banner
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.warehouse, color: Color(0xFF1D4ED8), size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text('Store & Inventory Operations Reports', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.blue.shade200),
+                                ),
+                                child: Text(_activeUserRole, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue.shade800)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Real-time tracking of workshop stock balances, issued parts, and damaged/spoiled items.', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  Wrap(
+                    spacing: 10,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _refreshAllData,
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('Refresh'),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Export Reports as CSV',
+                        onSelected: (val) {
+                          final exportUrl = '$_baseUrl/inventory/reports/export?report=$val&role=$_activeUserRole';
+                          openExternalUrlImpl(exportUrl);
+                        },
+                        itemBuilder: (ctx) => [
+                          const PopupMenuItem(value: 'balances', child: Text('Export Stock Balances (CSV)')),
+                          const PopupMenuItem(value: 'lowStock', child: Text('Export Low Stock Alerts (CSV)')),
+                          const PopupMenuItem(value: 'partsByJob', child: Text('Export Spare Parts Issued to Jobs (CSV)')),
+                          const PopupMenuItem(value: 'consumables', child: Text('Export Consumables Issued (CSV)')),
+                          const PopupMenuItem(value: 'toolsAssigned', child: Text('Export Tools & Equipment (CSV)')),
+                          const PopupMenuItem(value: 'lostDamaged', child: Text('Export Spoiled & Damaged Items (CSV)')),
+                          const PopupMenuItem(value: 'transactions', child: Text('Export Full Stock Ledger (CSV)')),
+                        ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F4C81),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.download, size: 16, color: Colors.white),
+                              SizedBox(width: 6),
+                              Text('Export Report (CSV)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              SizedBox(width: 4),
+                              Icon(Icons.arrow_drop_down, size: 16, color: Colors.white),
+                            ],
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
+                        onPressed: () => setState(() => _activeSidebar = 'Inventory'),
+                        icon: const Icon(Icons.tune, size: 16),
+                        label: const Text('Inventory Hub'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Divider(height: 28),
+              // KPI Cards Row
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  _pnlCard(
+                    'Total Stock Items',
+                    '${balances.length} items',
+                    '$partsCount Parts â€¢ $consumablesCount Supplies â€¢ $toolsCount Tools',
+                    Colors.blue.shade800,
+                    Colors.blue.shade50,
+                  ),
+                  _pnlCard(
+                    'Issued / Dispatched Items',
+                    '$totalIssuedUnits units',
+                    '${partsByJob.length} repair jobs â€¢ ${consumablesByDept.length} departments',
+                    Colors.teal.shade800,
+                    Colors.teal.shade50,
+                  ),
+                  _pnlCard(
+                    'Low-Stock Alerts',
+                    '${lowStockList.length} items',
+                    lowStockList.isNotEmpty ? 'Requires reorder replenishment' : 'All stock levels healthy',
+                    lowStockList.isNotEmpty ? Colors.orange.shade800 : Colors.green.shade800,
+                    lowStockList.isNotEmpty ? Colors.orange.shade50 : Colors.green.shade50,
+                  ),
+                  _pnlCard(
+                    'Spoiled / Damaged Items',
+                    '${spoiledReturns.length + lostDamagedAssets.length} items',
+                    '$pendingQC returns pending QC inspection',
+                    (spoiledReturns.length + lostDamagedAssets.length) > 0 ? Colors.red.shade800 : Colors.teal.shade800,
+                    (spoiledReturns.length + lostDamagedAssets.length) > 0 ? Colors.red.shade50 : Colors.teal.shade50,
+                  ),
+                ],
+              ),
+              if (valuation != null && _activeUserRole == 'INVENTORY_MANAGER') ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.indigo.shade100),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Text('Stock Valuation (Cost): KSH ${((valuation['total'] ?? 0) as num).toStringAsFixed(0)}', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo.shade900)),
+                      Text('Parts: KSH ${((valuation['spareParts'] ?? 0) as num).toStringAsFixed(0)}', style: TextStyle(color: Colors.indigo.shade800)),
+                      Text('Parts Retail: KSH ${((valuation['sparePartsAtRetail'] ?? 0) as num).toStringAsFixed(0)}', style: TextStyle(color: Colors.indigo.shade800)),
+                      Text('Consumables: KSH ${((valuation['consumables'] ?? 0) as num).toStringAsFixed(0)}', style: TextStyle(color: Colors.indigo.shade800)),
+                      Text('Tools & Assets: KSH ${((valuation['assets'] ?? 0) as num).toStringAsFixed(0)}', style: TextStyle(color: Colors.indigo.shade800)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // 2. Sub-Navigation Tabs
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              _buildStoreReportTabItem('Inventories', 'Inventories & Balances (${balances.length})', Icons.inventory),
+              const SizedBox(width: 8),
+              _buildStoreReportTabItem('Issued Items', 'Issued Items & Dispatches (${partsByJob.length + consumablesByDept.length})', Icons.output),
+              const SizedBox(width: 8),
+              _buildStoreReportTabItem('Spoiled Items', 'Spoiled & Damaged Items (${spoiledReturns.length + lostDamagedAssets.length})', Icons.broken_image),
+              const SizedBox(width: 8),
+              _buildStoreReportTabItem('Fast-Moving', 'Fast-Moving & Top Items (${topParts.length})', Icons.trending_up),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 3. Tab Content Section
+        if (_storeReportTab == 'Inventories')
+          _buildStoreInventoriesTab(filteredBalances, lowStockList, balances.length, partsCount, consumablesCount, toolsCount)
+        else if (_storeReportTab == 'Issued Items')
+          _buildStoreIssuedItemsTab(partsByJob, consumablesByDept, toolsAssigned, overdueTools)
+        else if (_storeReportTab == 'Spoiled Items')
+          _buildStoreSpoiledItemsTab(spoiledReturns, lostDamagedAssets, pendingQC)
+        else
+          _buildStoreFastMovingTab(topParts),
+      ],
+    );
+  }
+
+  Widget _buildStoreReportTabItem(String key, String label, IconData icon) {
+    final active = _storeReportTab == key;
+    return InkWell(
+      onTap: () => setState(() => _storeReportTab = key),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? const Color(0xFF0F4C81) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: active ? Colors.white : Colors.black87),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                color: active ? Colors.white : Colors.black87,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TAB 1: INVENTORIES & STOCK BALANCES
+  // ---------------------------------------------------------------------------
+  Widget _buildStoreInventoriesTab(
+    List<dynamic> filteredBalances,
+    List<dynamic> lowStockList,
+    int totalCount,
+    int partsCount,
+    int consumablesCount,
+    int toolsCount,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Current Inventories & Stock Balances (${filteredBalances.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text('All ($totalCount)'),
+                    selected: _inventoryCategoryFilter == 'ALL',
+                    onSelected: (_) => setState(() => _inventoryCategoryFilter = 'ALL'),
+                  ),
+                  ChoiceChip(
+                    label: Text('Spare Parts ($partsCount)'),
+                    selected: _inventoryCategoryFilter == 'SPARE_PART',
+                    onSelected: (_) => setState(() => _inventoryCategoryFilter = 'SPARE_PART'),
+                  ),
+                  ChoiceChip(
+                    label: Text('Consumables ($consumablesCount)'),
+                    selected: _inventoryCategoryFilter == 'CONSUMABLE',
+                    onSelected: (_) => setState(() => _inventoryCategoryFilter = 'CONSUMABLE'),
+                  ),
+                  ChoiceChip(
+                    label: Text('Tools ($toolsCount)'),
+                    selected: _inventoryCategoryFilter == 'TOOL_EQUIPMENT',
+                    onSelected: (_) => setState(() => _inventoryCategoryFilter = 'TOOL_EQUIPMENT'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'Search by part number, SKU, item name, or location...',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              isDense: true,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onChanged: (val) => setState(() => _inventorySearchQuery = val),
+          ),
+          if (lowStockList.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade900, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Reorder Recommendation Alert: ${lowStockList.length} item(s) are at or below reorder threshold. Replenishment recommended.',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade900, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const Divider(height: 24),
+          if (filteredBalances.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('No inventory items match the current filter.', style: TextStyle(color: Colors.grey))),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: [
+                  const DataColumn(label: Text('Code / SKU', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('Item Name & Description', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('Location / Bin', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('On Hand', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('In QC / Quarantine', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('Reorder Level', style: TextStyle(fontWeight: FontWeight.bold))),
+                  const DataColumn(label: Text('Stock Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                  if (_activeUserRole == 'INVENTORY_MANAGER')
+                    const DataColumn(label: Text('Unit Cost', style: TextStyle(fontWeight: FontWeight.bold))),
+                ],
+                rows: filteredBalances.map((b) {
+                  final cat = (b['category'] ?? '').toString();
+                  final onHand = (b['onHand'] as num?)?.toInt() ?? 0;
+                  final reorder = (b['reorderLevel'] as num?)?.toInt() ?? 0;
+                  final qc = (b['quarantined'] as num?)?.toInt() ?? 0;
+                  final isLow = cat != 'TOOL_EQUIPMENT' && onHand <= reorder;
+                  final isOut = onHand == 0;
+
+                  Color catBg;
+                  Color catFg;
+                  String catLabel;
+                  if (cat == 'TOOL_EQUIPMENT') {
+                    catBg = Colors.purple.shade50; catFg = Colors.purple.shade800; catLabel = 'TOOL';
+                  } else if (cat == 'CONSUMABLE') {
+                    catBg = Colors.teal.shade50; catFg = Colors.teal.shade800; catLabel = 'SUPPLY';
+                  } else {
+                    catBg = Colors.blue.shade50; catFg = Colors.blue.shade800; catLabel = 'PART';
+                  }
+
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(b['code'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold))),
+                      DataCell(Text(b['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600))),
+                      DataCell(Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(color: catBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(catLabel, style: TextStyle(color: catFg, fontWeight: FontWeight.bold, fontSize: 11)),
+                      )),
+                      DataCell(Text(b['location'] ?? 'Main Store')),
+                      DataCell(Text(
+                        '$onHand units',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isOut ? Colors.red : (isLow ? Colors.orange.shade900 : Colors.green.shade800),
+                        ),
+                      )),
+                      DataCell(Text(qc > 0 ? '$qc units' : '-', style: TextStyle(color: qc > 0 ? Colors.red : Colors.grey))),
+                      DataCell(Text('$reorder units')),
+                      DataCell(Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: isOut ? Colors.red.shade50 : (isLow ? Colors.orange.shade50 : Colors.green.shade50),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          isOut ? 'OUT OF STOCK' : (isLow ? 'LOW STOCK' : 'IN STOCK'),
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: isOut ? Colors.red.shade800 : (isLow ? Colors.orange.shade900 : Colors.green.shade800),
+                          ),
+                        ),
+                      )),
+                      if (_activeUserRole == 'INVENTORY_MANAGER')
+                        DataCell(Text('KSH ${((b['unitCost'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}')),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TAB 2: ISSUED ITEMS & DISPATCHES
+  // ---------------------------------------------------------------------------
+  Widget _buildStoreIssuedItemsTab(
+    List<dynamic> partsByJob,
+    List<dynamic> consumablesByDept,
+    List<dynamic> toolsAssigned,
+    List<dynamic> overdueTools,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Item Issuance & Operational Dispatches Report', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text('Parts Issued to Jobs (${partsByJob.length})'),
+                    selected: _issuedSubFilter == 'PARTS_JOB',
+                    onSelected: (_) => setState(() => _issuedSubFilter = 'PARTS_JOB'),
+                  ),
+                  ChoiceChip(
+                    label: Text('Consumables by Dept (${consumablesByDept.length})'),
+                    selected: _issuedSubFilter == 'CONSUMABLES_DEPT',
+                    onSelected: (_) => setState(() => _issuedSubFilter = 'CONSUMABLES_DEPT'),
+                  ),
+                  ChoiceChip(
+                    label: Text('Tools in Field (${toolsAssigned.length})'),
+                    selected: _issuedSubFilter == 'TOOLS_FIELD',
+                    onSelected: (_) => setState(() => _issuedSubFilter = 'TOOLS_FIELD'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+
+          if (_issuedSubFilter == 'PARTS_JOB') ...[
+            if (partsByJob.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('No spare parts have been issued to job cards yet.', style: TextStyle(color: Colors.grey))),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    const DataColumn(label: Text('Job Card Ref', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Part Description', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Net Qty Issued', style: TextStyle(fontWeight: FontWeight.bold))),
+                    if (_activeUserRole == 'INVENTORY_MANAGER')
+                      const DataColumn(label: Text('Total Cost', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: partsByJob.map((p) {
+                    final jc = (p['jobCardId'] ?? '').toString();
+                    final shortJc = jc.length >= 8 ? jc.substring(0, 8).toUpperCase() : jc;
+                    final q = (p['netQty'] as num?)?.toInt() ?? 0;
+                    return DataRow(
+                      cells: [
+                        DataCell(Text('JC-$shortJc', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(p['item'] ?? 'Part', style: const TextStyle(fontWeight: FontWeight.w600))),
+                        DataCell(Text('$q units', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))),
+                        if (_activeUserRole == 'INVENTORY_MANAGER')
+                          DataCell(Text('KSH ${((p['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}')),
+                        const DataCell(Chip(label: Text('DISPATCHED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+          ] else if (_issuedSubFilter == 'CONSUMABLES_DEPT') ...[
+            if (consumablesByDept.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('No internal consumables have been issued to departments yet.', style: TextStyle(color: Colors.grey))),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    const DataColumn(label: Text('Receiving Department', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Consumable Item', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Quantity Consumed', style: TextStyle(fontWeight: FontWeight.bold))),
+                    if (_activeUserRole == 'INVENTORY_MANAGER')
+                      const DataColumn(label: Text('Cost Allocated', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Classification', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: consumablesByDept.map((c) {
+                    final q = (c['quantity'] as num?)?.toInt() ?? 0;
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(c['department'] ?? 'Workshop', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(c['item'] ?? 'Consumable', style: const TextStyle(fontWeight: FontWeight.w600))),
+                        DataCell(Text('$q units', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal))),
+                        if (_activeUserRole == 'INVENTORY_MANAGER')
+                          DataCell(Text('KSH ${((c['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}')),
+                        const DataCell(Chip(label: Text('INTERNAL USAGE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+          ] else ...[
+            if (toolsAssigned.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('All workshop tools are currently in the store (none checked out).', style: TextStyle(color: Colors.grey))),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Asset #', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Tool Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Assigned Technician', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Bay / Location', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Checked Out At', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Expected Return', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: toolsAssigned.map((t) {
+                    final isOverdue = overdueTools.any((o) => o['id'] == t['id']);
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(t['assetNumber'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(t['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600))),
+                        DataCell(Text(t['assignedTo'] ?? 'Assigned')),
+                        DataCell(Text(t['location'] ?? 'Workshop')),
+                        DataCell(Text(_formatDate(t['checkedOutAt']))),
+                        DataCell(Text(_formatDate(t['expectedReturnAt']))),
+                        DataCell(Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isOverdue ? Colors.red.shade50 : Colors.blue.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            isOverdue ? 'OVERDUE' : 'CHECKED OUT',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                              color: isOverdue ? Colors.red.shade800 : Colors.blue.shade800,
+                            ),
+                          ),
+                        )),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TAB 3: SPOILED, DAMAGED & DEFECTIVE ITEMS
+  // ---------------------------------------------------------------------------
+  Widget _buildStoreSpoiledItemsTab(List<dynamic> spoiledReturns, List<dynamic> lostDamagedAssets, int pendingQC) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Spoiled, Damaged & Defective Items (Returns & QC)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
+                onPressed: () => setState(() => _activeSidebar = 'Inventory'),
+                icon: const Icon(Icons.fact_check, size: 16),
+                label: const Text('Open QC Inspection in Hub'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Defective components removed from customer vehicles, damaged returns, broken workshop tools, and items held in QC quarantine.',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const Divider(height: 24),
+
+          if (spoiledReturns.isEmpty && lostDamagedAssets.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text('Zero spoiled or damaged items recorded! All returns and tools are in good condition.', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+              ),
+            )
+          else ...[
+            if (spoiledReturns.isNotEmpty) ...[
+              const Text('Damaged / Defective Returns Log:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Return Ref', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Item Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Condition', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('QC Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Reported By', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Damage / Defect Notes', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: spoiledReturns.map((r) {
+                    final status = (r['status'] ?? 'PENDING_INSPECTION').toString().toUpperCase();
+                    final cond = (r['condition'] ?? 'DAMAGED').toString().toUpperCase();
+                    Color statusBg; Color statusFg;
+                    if (status == 'WRITTEN_OFF') {
+                      statusBg = Colors.red.shade50; statusFg = Colors.red.shade800;
+                    } else if (status == 'QUARANTINED') {
+                      statusBg = Colors.orange.shade50; statusFg = Colors.orange.shade800;
+                    } else {
+                      statusBg = Colors.amber.shade50; statusFg = Colors.amber.shade900;
+                    }
+
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(r['reference'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(r['itemName'] ?? 'Item', style: const TextStyle(fontWeight: FontWeight.w600))),
+                        DataCell(Text(r['category'] ?? 'SPARE_PART')),
+                        DataCell(Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4)),
+                          child: Text(cond, style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 11)),
+                        )),
+                        DataCell(Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(6)),
+                          child: Text(status.replaceAll('_', ' '), style: TextStyle(color: statusFg, fontWeight: FontWeight.bold, fontSize: 10.5)),
+                        )),
+                        DataCell(Text(r['returnedBy'] ?? 'Technician')),
+                        DataCell(Text(r['notes'] ?? r['reason'] ?? '-', style: const TextStyle(fontStyle: FontStyle.italic))),
+                        DataCell(Text(_formatDate(r['createdAt']))),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+
+            if (lostDamagedAssets.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              const Text('Damaged or Lost Workshop Equipment:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    const DataColumn(label: Text('Asset #', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Tool Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                    if (_activeUserRole == 'INVENTORY_MANAGER')
+                      const DataColumn(label: Text('Cost Impact', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: lostDamagedAssets.map((t) {
+                    final status = (t['status'] ?? '').toString();
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(t['assetNumber'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(t['name'] ?? '')),
+                        DataCell(Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4)),
+                          child: Text(status, style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 11)),
+                        )),
+                        if (_activeUserRole == 'INVENTORY_MANAGER')
+                          DataCell(Text('KSH ${((t['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}')),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TAB 4: FAST-MOVING & TOP ITEMS
+  // ---------------------------------------------------------------------------
+  Widget _buildStoreFastMovingTab(List<dynamic> topParts) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Fast-Moving & High-Turnover Spare Parts', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('Top items frequently requested and billed on repair jobs to guide warehouse restocking.', style: TextStyle(fontSize: 13, color: Colors.black54)),
+          const Divider(height: 24),
+          if (topParts.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('No part issuance history recorded yet.', style: TextStyle(color: Colors.grey))),
+            )
+          else
+            ...topParts.map((p) => ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFEFF6FF),
+                    child: Icon(Icons.bolt, size: 18, color: Color(0xFF1D4ED8)),
+                  ),
+                  title: Text(p['description'] ?? 'Item', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Total Units Dispatched: ${p['quantityUsed'] ?? 0} units'),
+                  trailing: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '${p['quantityUsed'] ?? 0} sold',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade800, fontSize: 12),
+                    ),
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+
   Widget _buildReportsSection() {
+    if (_activeUserRole == 'STOREKEEPER' || _activeUserRole == 'INVENTORY_MANAGER') {
+      return _buildStorekeeperReportsSection();
+    }
     final rev = (_dashboard['totalRevenue'] as num?)?.toDouble() ?? 0.0;
     final billed = (_dashboard['totalBilled'] as num?)?.toDouble() ?? rev;
     final outstanding = (_dashboard['outstandingBalance'] as num?)?.toDouble() ?? 0.0;
@@ -3933,21 +4825,39 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           ),
         ),
         const SizedBox(height: 24),
-        _rightPanelBox(
-          'Workshop & Financial Summary',
-          Column(
-            children: [
-              _summaryRow('Collected Revenue', 'KSH ${rev.toStringAsFixed(0)}'),
-              _summaryRow('Net Profit (KSH)', netProfit.toStringAsFixed(0)),
-              _summaryRow('Outstanding Balances', 'KSH ${outstanding.toStringAsFixed(0)}'),
-              _summaryRow('Today / Week / Month', '${_dashboard['todayJobsCount'] ?? 0} / ${_dashboard['weekJobsCount'] ?? 0} / ${_dashboard['monthJobsCount'] ?? 0}'),
-              _summaryRow('Overdue Jobs', '${_dashboard['overdueJobsCount'] ?? 0}'),
-              _summaryRow('Upcoming Appointments', '${_dashboard['upcomingAppointmentsCount'] ?? _appointments.length}'),
-              _summaryRow('Customers', '${_dashboard['customersCount'] ?? 0}'),
-              _summaryRow('Low Stock Alerts', '${_dashboard['lowStockCount'] ?? 0}'),
-            ],
+        if (_activeUserRole == 'STOREKEEPER' || _activeUserRole == 'INVENTORY_MANAGER')
+          _rightPanelBox(
+            'Store & Inventory Summary',
+            Column(
+              children: [
+                _summaryRow('Catalog Items', '${((_inventorySummary['balances'] as List<dynamic>?)?.length ?? _parts.length)} Total'),
+                _summaryRow('Dispatched / Issued', '${(_inventorySummary['movementTotalsByType'] as Map<String, dynamic>?)?['ISSUE'] ?? 0} Units'),
+                _summaryRow('Low Stock Alerts', '${((_inventorySummary['lowStock'] as List<dynamic>?)?.length ?? (_dashboard['lowStockCount'] ?? 0))} Items'),
+                _summaryRow('Damaged / Spoiled Returns', '${_inventoryReturns.where((r) => r['kind'] == 'DAMAGED' || r['condition'] == 'DAMAGED' || r['status'] == 'QUARANTINED' || r['status'] == 'WRITTEN_OFF').length} Items'),
+                _summaryRow('Pending QC Inspection', '${_inventorySummary['pendingInspections'] ?? 0} Returns'),
+                _summaryRow('Tools Checked Out', '${((_inventorySummary['toolsAssigned'] as List<dynamic>?)?.length ?? 0)} Active'),
+                _summaryRow('Overdue Equipment', '${((_inventorySummary['overdueTools'] as List<dynamic>?)?.length ?? 0)} Tools'),
+                if (_activeUserRole == 'INVENTORY_MANAGER' && _inventorySummary['valuation'] != null)
+                  _summaryRow('Stock Valuation (Cost)', 'KSH ${((_inventorySummary['valuation']?['total'] ?? 0) as num).toStringAsFixed(0)}'),
+              ],
+            ),
+          )
+        else
+          _rightPanelBox(
+            'Workshop & Financial Summary',
+            Column(
+              children: [
+                _summaryRow('Collected Revenue', 'KSH ${rev.toStringAsFixed(0)}'),
+                _summaryRow('Net Profit (KSH)', netProfit.toStringAsFixed(0)),
+                _summaryRow('Outstanding Balances', 'KSH ${outstanding.toStringAsFixed(0)}'),
+                _summaryRow('Today / Week / Month', '${_dashboard['todayJobsCount'] ?? 0} / ${_dashboard['weekJobsCount'] ?? 0} / ${_dashboard['monthJobsCount'] ?? 0}'),
+                _summaryRow('Overdue Jobs', '${_dashboard['overdueJobsCount'] ?? 0}'),
+                _summaryRow('Upcoming Appointments', '${_dashboard['upcomingAppointmentsCount'] ?? _appointments.length}'),
+                _summaryRow('Customers', '${_dashboard['customersCount'] ?? 0}'),
+                _summaryRow('Low Stock Alerts', '${_dashboard['lowStockCount'] ?? 0}'),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }

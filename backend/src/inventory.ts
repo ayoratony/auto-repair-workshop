@@ -104,10 +104,10 @@ export function createInventoryRouter(
       if (!u) throw new HttpError(401, 'Unknown user');
       return { id: u.id, name: u.name, role: u.role, tenantId: u.tenantId };
     }
-    const role = (req.header('x-user-role') || '').toUpperCase();
+    const role = (req.header('x-user-role') || String(req.query.role || '')).toUpperCase();
     if (!ALL_ROLES.has(role)) throw new HttpError(401, 'Missing or invalid x-user-role');
     return {
-      name: req.header('x-user-name') || role,
+      name: req.header('x-user-name') || String(req.query.userName || role),
       role,
       tenantId: await getDefaultTenantId(),
     };
