@@ -59,6 +59,7 @@ enum Role {
   STOREKEEPER
   INSPECTOR
   MECHANIC
+  INVENTORY_MANAGER
 }
 
 // -------------------------------------
@@ -123,7 +124,7 @@ model JobCard {
 
   odometer           Int?
   fuelLevel          String?       // e.g., "1/4", "Half", "Full"
-  walkAroundData     Json?         // Checklists, 360° Damage Markers, Diagnostic & QC Data
+  walkAroundData     Json?         // Checklists, 360Â° Damage Markers, Diagnostic & QC Data
   workRequested      String?
   technician         String?       // Assigned technician name
   bayNumber          String?       // e.g., "Bay 1 (Lift)", "Bay 2 (Pit)", "Electrical Bay"
@@ -173,6 +174,8 @@ model PartCatalog {
   supplierName   String?
   supplierPhone  String?
   warrantyMonths Int             @default(6)
+  location       String          @default("Main Store")
+  quarantineQuantity Int         @default(0) // Returned/damaged stock awaiting review - not sellable
 
   tenantId       String
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
@@ -194,6 +197,11 @@ model StockMovement {
   type      String   @default("ISSUED") // RECEIVED, ISSUED, RETURNED, ADJUSTED
   quantity  Int      // positive for RECEIVED/RETURNED, negative or positive tracked by type
   notes     String?
+  unitCost     Float?
+  unitPrice    Float?
+  supplierName String?
+  reference    String?
+  tenantId     String?
 
   createdAt DateTime @default(now())
 }
@@ -300,4 +308,205 @@ model Expense {
   incurredAt  DateTime @default(now())
 
   createdAt   DateTime @default(now())
+}
+
+
+// =====================================================================
+// Workshop Inventory: Requests, Issuance, Assets, Consumables, Audit
+// Spare parts stay in PartCatalog/StockMovement. Everything below is
+// tenant-scoped (tenantId on every row, checked by the API on each query).
+// =====================================================================
+
+enum InventoryCategory {
+  SPARE_PART      // PartCatalog - resale / customer repairs
+  TOOL_EQUIPMENT  // ToolAsset   - reusable company assets
+  CONSUMABLE      // InventoryItem - internal supplies, never sold
+}
+
+// Catalogue of internal consumables and workshop supplies (gloves, rags, detergent...).
+model InventoryItem {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  sku                String
+  name               String
+  unit               String   @default("pcs")
+  description        String?
+  quantityOnHand     Int      @default(0)
+  quarantineQuantity Int      @default(0)
+  reorderLevel       Int      @default(5)
+  unitCost           Float    @default(0)
+  location           String   @default("Main Store")
+  supplierName       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+}
+
+// One row per physical company-owned tool / machine.
+model ToolAsset {
+  id               String    @id @default(uuid())
+  tenantId         String
+  assetNumber      String
+  name             String
+  serialNumber     String?
+  purchaseDate     DateTime?
+  cost             Float     @default(0)
+  condition        String    @default("GOOD")      // GOOD, FAIR, POOR, DAMAGED
+  status           String    @default("AVAILABLE") // AVAILABLE, CHECKED_OUT, FIXED, UNDER_REVIEW, DAMAGED, LOST, WRITTEN_OFF
+  isFixed          Boolean   @default(false)       // fixed equipment (lifts, alignment machines) - assigned, not checked out
+  location         String    @default("Main Store")
+  assignedTo       String?   // employee name (checked-out / permanently assigned)
+  department       String?
+  usedAt           String?   // where it is being used while checked out
+  checkedOutAt     DateTime?
+  expectedReturnAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([tenantId, assetNumber])
+  @@index([tenantId, status])
+}
+
+// Technician item request (approval is separate from physical issuance).
+model ItemRequest {
+  id             String   @id @default(uuid())
+  tenantId       String
+  reference      String   // e.g. REQ-000123
+  technicianId   String?
+  technicianName String
+  jobCardId      String?
+  vehicleId      String?
+  department     String?  // workshop / department
+  reason         String
+  status         String   @default("PENDING") // PENDING, APPROVED, REJECTED, PARTIALLY_ISSUED, ISSUED, CANCELLED
+  decidedBy      String?
+  decidedAt      DateTime?
+  decisionNotes  String?
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lines          ItemRequestLine[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, technicianName])
+}
+
+model ItemRequestLine {
+  id               String            @id @default(uuid())
+  requestId        String
+  request          ItemRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  tenantId         String
+  category         InventoryCategory
+  partId           String?
+  inventoryItemId  String?
+  toolAssetId      String?
+  description      String
+  qtyRequested     Int
+  qtyApproved      Int               @default(0)
+  qtyIssued        Int               @default(0)
+  qtyReturned      Int               @default(0) // restocked or quarantined returns, damaged and lost
+  expectedReturnAt DateTime?
+
+  @@index([requestId])
+  @@index([tenantId])
+}
+
+// Returns waiting for inspection before becoming available stock.
+model ItemReturn {
+  id              String            @id @default(uuid())
+  tenantId        String
+  reference       String
+  requestLineId   String?
+  category        InventoryCategory
+  partId          String?
+  inventoryItemId String?
+  toolAssetId     String?
+  quantity        Int
+  kind            String            @default("RETURN") // RETURN, DAMAGED, LOST
+  condition       String?
+  returnedBy      String
+  receivedBy      String
+  status          String            @default("PENDING_INSPECTION") // PENDING_INSPECTION, RESTOCKED, QUARANTINED, WRITTEN_OFF, LOST
+  inspectedBy     String?
+  inspectedAt     DateTime?
+  notes           String?
+  createdAt       DateTime          @default(now())
+
+  @@index([tenantId, status])
+}
+
+// Immutable audit ledger. Rows are only ever inserted (DB trigger blocks UPDATE/DELETE).
+model InventoryTransaction {
+  id              String             @id @default(uuid())
+  tenantId        String
+  reference       String             // TXN-...
+  type            String             // RECEIVE, REQUEST, APPROVE, REJECT, CANCEL, ISSUE, ACKNOWLEDGE, RETURN, INSPECT, DAMAGED, LOST, ADJUST, WRITE_OFF, ASSIGN, STOCKTAKE
+  category        InventoryCategory?
+  partId          String?
+  inventoryItemId String?
+  toolAssetId     String?
+  itemName        String?
+  requestId       String?
+  requestLineId   String?
+  jobCardId       String?
+  vehicleId       String?
+  department      String?
+  location        String?
+  quantity        Int                @default(0) // signed effect on available stock (+/-); 0 for workflow-only entries
+  quantityDetail  Int                @default(0) // qty requested / approved / returned etc. for workflow entries
+  unitCost        Float              @default(0)
+  actorId         String?
+  actorName       String
+  actorRole       String
+  recipientName   String?
+  condition       String?
+  reason          String?
+  notes           String?
+  createdAt       DateTime           @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, partId])
+  @@index([tenantId, inventoryItemId])
+  @@index([tenantId, toolAssetId])
+  @@index([tenantId, jobCardId])
+  @@index([tenantId, requestId])
+}
+
+// Physical count vs recorded balance; approval posts an ADJUST transaction.
+model StockCount {
+  id              String            @id @default(uuid())
+  tenantId        String
+  category        InventoryCategory
+  partId          String?
+  inventoryItemId String?
+  itemName        String
+  recordedQty     Int
+  countedQty      Int
+  variance        Int
+  status          String            @default("PENDING") // PENDING, APPROVED, REJECTED
+  countedBy       String
+  approvedBy      String?
+  approvedAt      DateTime?
+  notes           String?
+  createdAt       DateTime          @default(now())
+
+  @@index([tenantId, status])
+}
+
+model StoreNotification {
+  id         String    @id @default(uuid())
+  tenantId   String
+  targetRole String    // STOREKEEPER, TECHNICIAN...
+  type       String
+  message    String
+  requestId  String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId, targetRole, readAt])
 }

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'estimate_form.dart';
@@ -6,6 +6,7 @@ import 'invoice_pdf_service.dart';
 import 'pdf_saver_stub.dart' if (dart.library.html) 'pdf_saver_web.dart';
 import '../mobile/vehicle_damage_map.dart';
 import '../mobile/walk_around_checklist.dart';
+import 'inventory_workspace_view.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -26,13 +27,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   static const Map<String, Set<String>> _rolePerms = {
     'ADMIN': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
     },
     'MANAGER': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
     },
@@ -45,8 +46,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       'job:edit',
     },
     'STOREKEEPER': {
-      'nav:Dashboard', 'nav:Parts Catalog',
+      'nav:Dashboard', 'nav:Parts Catalog', 'nav:Inventory',
       'part:edit', 'stock:adjust',
+    },
+    'INVENTORY_MANAGER': {
+      'nav:Dashboard', 'nav:Parts Catalog', 'nav:Inventory', 'nav:Reports',
+      'part:edit', 'stock:adjust',
+    },
+    'ACCOUNTS': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Reports', 'nav:Inventory',
+      'payment:record', 'expense:record',
     },
     'CASHIER': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Reports',
@@ -1884,6 +1893,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   _sidebarItem(Icons.people, 'Customers'),
                   _sidebarItem(Icons.badge, 'Employees'),
                   _sidebarItem(Icons.bar_chart, 'Reports'),
+                  _sidebarItem(Icons.warehouse, 'Inventory'),
                   const Divider(color: Colors.white12, height: 24),
                   _sidebarItem(Icons.settings, 'Settings'),
                 ],
@@ -1990,6 +2000,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     DropdownMenuItem(value: 'MANAGER', child: Text('Role: Workshop Manager')),
                     DropdownMenuItem(value: 'MECHANIC', child: Text('Role: Mechanic')),
                     DropdownMenuItem(value: 'STOREKEEPER', child: Text('Role: Storekeeper')),
+                    DropdownMenuItem(value: 'INVENTORY_MANAGER', child: Text('Role: Inventory Manager')),
+                    DropdownMenuItem(value: 'ACCOUNTS', child: Text('Role: Accountant')),
                     DropdownMenuItem(value: 'CASHIER', child: Text('Role: Cashier')),
                   ],
                   onChanged: (val) => _changeRole(val ?? 'ADMIN'),
@@ -2141,6 +2153,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     if (_activeSidebar == 'Employees') return _buildEmployeesSection();
     if (_activeSidebar == 'Reports') return _buildReportsSection();
     if (_activeSidebar == 'Settings') return _buildSettingsSection();
+    if (_activeSidebar == 'Inventory') return InventoryWorkspaceView(
+      activeUserRole: _activeUserRole,
+      activeUserName: 'Admin',
+      onDataChanged: () => _refreshAllData(),
+    );
 
     return Container(
       padding: const EdgeInsets.all(24),

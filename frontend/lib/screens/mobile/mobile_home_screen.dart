@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -28,6 +28,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   int _selectedIndex = 0;
   List<dynamic> _jobs = [];
   List<dynamic> _appointments = [];
+  List<dynamic> _itemRequests = [];
   bool _isLoadingJobs = false;
   bool _isSubmitting = false;
 
@@ -58,11 +59,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   Future<void> _fetchJobs() async {
     setState(() => _isLoadingJobs = true);
     try {
+      final effectiveTech = _techName == 'All' ? 'Kamau Tech' : _techName;
       final results = await Future.wait([
         http.get(Uri.parse('$_baseUrl/jobs')),
         http.get(Uri.parse('$_baseUrl/appointments')),
         http.get(Uri.parse('$_baseUrl/estimates')),
         http.get(Uri.parse('$_baseUrl/employees')),
+        http.get(
+          Uri.parse('$_baseUrl/inventory/requests'),
+          headers: {'x-user-role': 'MECHANIC', 'x-user-name': effectiveTech},
+        ),
       ]);
       if (mounted) {
         setState(() {
@@ -75,6 +81,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 .map<String>((u) => u['name'].toString())
                 .toList();
           }
+          if (results[4].statusCode == 200) _itemRequests = json.decode(results[4].body);
         });
       }
     } catch (_) {
@@ -282,7 +289,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final advisorTitles = ['Overview', 'Job Cards', 'Vehicle Intake', 'Quotations', 'Bay Schedule'];
-    final techTitles = ['My Assigned Jobs', 'Completed Jobs'];
+    final techTitles = ['My Assigned Jobs', 'Item Requests', 'Completed Jobs'];
     final title = _isAdvisor ? advisorTitles[_selectedIndex] : techTitles[_selectedIndex];
 
     return Scaffold(
@@ -367,6 +374,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               ]
             : const [
                 NavigationDestination(icon: Icon(Icons.build_outlined), selectedIcon: Icon(Icons.build), label: 'My Jobs'),
+                NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Item Requests'),
                 NavigationDestination(icon: Icon(Icons.check_circle_outline), selectedIcon: Icon(Icons.check_circle), label: 'Completed'),
               ],
       ),
@@ -836,8 +844,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   // ---------------------------------------------------------------------------
   // TECHNICIAN WORKSPACE
   // ---------------------------------------------------------------------------
+  String _requestStatusFilter = 'ALL';
+
   Widget _buildTechnicianBody() {
-    final showCompleted = _selectedIndex == 1;
+    if (_selectedIndex == 1) {
+      return _buildTechnicianRequestsBody();
+    }
+    final showCompleted = _selectedIndex == 2;
     final mine = _jobs.where((j) {
       final done = j['status'] == 'COMPLETED';
       if (done != showCompleted) return false;
@@ -862,7 +875,10 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
             ),
             items: ['All', ..._technicians].map((t) => DropdownMenuItem(value: t, child: Text(t == 'All' ? 'All technicians (bay view)' : t))).toList(),
-            onChanged: (v) => setState(() => _techName = v ?? 'All'),
+            onChanged: (v) {
+              setState(() => _techName = v ?? 'All');
+              _fetchJobs();
+            },
           ),
         ),
         Expanded(
@@ -882,6 +898,489 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       ],
     );
   }
+
+
+  Widget _buildTechnicianRequestsBody() {
+    final filtered = _itemRequests.where((r) {
+      if (_requestStatusFilter == 'ALL') return true;
+      return (r['status'] ?? '').toString().toUpperCase() == _requestStatusFilter;
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F4C81),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.add_shopping_cart, size: 18),
+                  label: const Text('Request Parts, Tools or Supplies', style: TextStyle(fontWeight: FontWeight.bold)),
+                  onPressed: () => _showItemRequestDialog(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Row(
+            children: ['ALL', 'PENDING', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED']
+                .map((s) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(s.replaceAll('_', ' '), style: const TextStyle(fontSize: 11)),
+                        selected: _requestStatusFilter == s,
+                        onSelected: (_) => setState(() => _requestStatusFilter = s),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+        Expanded(
+          child: _isLoadingJobs && _itemRequests.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : filtered.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.inventory_2_outlined, size: 56, color: Colors.grey),
+                          const SizedBox(height: 12),
+                          const Text('No item requests found.', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                          const SizedBox(height: 8),
+                          ElevatedButton.icon(
+                            onPressed: () => _showItemRequestDialog(),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Create First Request'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _fetchJobs,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: filtered.length,
+                        itemBuilder: (_, i) => _buildRequestCard(filtered[i]),
+                      ),
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRequestCard(dynamic req) {
+    final status = (req['status'] ?? 'PENDING').toString();
+    final lines = (req['lines'] as List<dynamic>?) ?? [];
+    final ref = req['reference'] ?? 'REQ';
+    final reason = req['reason'] ?? '-';
+    final bool hasIssuedItems = lines.any((l) => (l['qtyIssued'] ?? 0) > 0);
+    final bool acknowledged = req['acknowledgedAt'] != null;
+
+    Color badgeColor;
+    switch (status) {
+      case 'APPROVED': badgeColor = Colors.green; break;
+      case 'ISSUED': badgeColor = Colors.blue; break;
+      case 'PARTIALLY_ISSUED': badgeColor = Colors.orange; break;
+      case 'REJECTED': badgeColor = Colors.red; break;
+      case 'CANCELLED': badgeColor = Colors.grey; break;
+      default: badgeColor = Colors.amber.shade800;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(ref, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: badgeColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+                  child: Text(status.replaceAll('_', ' '), style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: badgeColor)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('Reason: $reason', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+            if (req['jobCardId'] != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.directions_car, size: 14, color: Colors.black54),
+                  const SizedBox(width: 4),
+                  Text('Job Card: ${req['jobCardId'].toString().substring(0, 8).toUpperCase()}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                ],
+              ),
+            ],
+            const Divider(height: 20),
+            const Text('Items Requested:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
+            const SizedBox(height: 6),
+            ...lines.map((l) {
+              final cat = (l['category'] ?? 'SPARE_PART').toString();
+              final desc = l['description'] ?? 'Item';
+              final qReq = l['qtyRequested'] ?? 0;
+              final qApp = l['qtyApproved'] ?? 0;
+              final qIss = l['qtyIssued'] ?? 0;
+              final qRet = l['qtyReturned'] ?? 0;
+              final canReturn = qIss > qRet;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(8)),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: cat == 'TOOL_EQUIPMENT' ? Colors.purple.shade50 : cat == 'CONSUMABLE' ? Colors.teal.shade50 : Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  cat == 'TOOL_EQUIPMENT' ? 'TOOL' : cat == 'CONSUMABLE' ? 'SUPPLY' : 'PART',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: cat == 'TOOL_EQUIPMENT' ? Colors.purple.shade800 : cat == 'CONSUMABLE' ? Colors.teal.shade800 : Colors.blue.shade800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(child: Text(desc, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text('Req: $qReq  |  Appr: $qApp  |  Issued: $qIss  |  Returned: $qRet', style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                        ],
+                      ),
+                    ),
+                    if (canReturn)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: Size.zero),
+                        icon: const Icon(Icons.assignment_return, size: 14),
+                        label: const Text('Return', style: TextStyle(fontSize: 11)),
+                        onPressed: () => _showReturnDialog(Map<String, dynamic>.from(l), req['id'].toString()),
+                      ),
+                  ],
+                ),
+              );
+            }),
+            if (hasIssuedItems && !acknowledged) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                  label: const Text('Confirm Physical Receipt', style: TextStyle(fontWeight: FontWeight.bold)),
+                  onPressed: () => _acknowledgeReceipt(req['id'].toString()),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _acknowledgeReceipt(String requestId) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_baseUrl/inventory/requests/$requestId/acknowledge'),
+        headers: {'Content-Type': 'application/json', 'x-user-role': 'MECHANIC', 'x-user-name': _techName},
+      );
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Receipt acknowledged!'), backgroundColor: Colors.green),
+        );
+        _fetchJobs();
+      } else {
+        final err = json.decode(res.body)['error'] ?? 'Failed';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  void _showReturnDialog(Map<String, dynamic> line, String requestId) {
+    final qtyCtrl = TextEditingController(text: '1');
+    final reasonCtrl = TextEditingController();
+    String condition = 'GOOD';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Return: ${line['description']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 12),
+              TextField(controller: qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity to Return', border: OutlineInputBorder())),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: condition,
+                decoration: const InputDecoration(labelText: 'Condition', border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'GOOD', child: Text('Good - Unused')),
+                  DropdownMenuItem(value: 'DAMAGED', child: Text('Damaged')),
+                  DropdownMenuItem(value: 'DEFECTIVE', child: Text('Defective / Faulty')),
+                ],
+                onChanged: (v) => setSheet(() => condition = v ?? 'GOOD'),
+              ),
+              const SizedBox(height: 10),
+              TextField(controller: reasonCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Reason for Return', border: OutlineInputBorder())),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
+                  icon: const Icon(Icons.assignment_return),
+                  label: const Text('Submit Return'),
+                  onPressed: () async {
+                    final res = await http.post(
+                      Uri.parse('$_baseUrl/inventory/returns'),
+                      headers: {'Content-Type': 'application/json', 'x-user-role': 'MECHANIC', 'x-user-name': _techName},
+                      body: json.encode({
+                        'requestId': requestId,
+                        'itemId': line['itemId'],
+                        'quantity': int.tryParse(qtyCtrl.text) ?? 1,
+                        'condition': condition,
+                        'reason': reasonCtrl.text.trim().isEmpty ? 'Unused - returning to store' : reasonCtrl.text.trim(),
+                      }),
+                    );
+                    if (res.statusCode == 201) {
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Return submitted for inspection!'), backgroundColor: Colors.green),
+                      );
+                      _fetchJobs();
+                    } else {
+                      final err = json.decode(res.body)['error'] ?? 'Return failed';
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err), backgroundColor: Colors.red));
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showItemRequestDialog() {
+    String searchQuery = '';
+    List<dynamic> catalogResults = [];
+    Map<String, dynamic>? selectedItem;
+    final qtyCtrl = TextEditingController(text: '1');
+    final reasonCtrl = TextEditingController();
+    String? linkedJobId;
+    String category = 'ALL';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Request Parts, Tools, or Supplies', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(height: 12),
+                // Category filter chips
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: ['ALL', 'SPARE_PART', 'TOOL_EQUIPMENT', 'CONSUMABLE'].map((c) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(c == 'ALL' ? 'All' : c == 'SPARE_PART' ? 'Parts' : c == 'TOOL_EQUIPMENT' ? 'Tools' : 'Supplies', style: const TextStyle(fontSize: 11)),
+                        selected: category == c,
+                        onSelected: (_) => setSheet(() => category = c),
+                      ),
+                    )).toList(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Search field
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search inventory catalog...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onChanged: (q) async {
+                    searchQuery = q;
+                    if (q.length < 2) { setSheet(() => catalogResults = []); return; }
+                    try {
+                      final catParam = category == 'ALL' ? '' : '&category=$category';
+                      final res = await http.get(
+                        Uri.parse('$_baseUrl/inventory/catalog?search=$q$catParam'),
+                        headers: {'x-user-role': 'MECHANIC'},
+                      );
+                      if (res.statusCode == 200) {
+                        setSheet(() => catalogResults = json.decode(res.body));
+                      }
+                    } catch (_) {}
+                  },
+                ),
+                if (catalogResults.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: catalogResults.length,
+                      itemBuilder: (_, i) {
+                        final item = catalogResults[i];
+                        final cat = item['category'] ?? '';
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            cat == 'TOOL_EQUIPMENT' ? Icons.build : cat == 'CONSUMABLE' ? Icons.cleaning_services : Icons.settings,
+                            color: cat == 'TOOL_EQUIPMENT' ? Colors.purple : cat == 'CONSUMABLE' ? Colors.teal : Colors.blue,
+                            size: 20,
+                          ),
+                          title: Text(item['name'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          subtitle: Text('Stock: ${item['quantity'] ?? 0}  |  ${cat.replaceAll('_', ' ')}', style: const TextStyle(fontSize: 11)),
+                          selected: selectedItem?['id'] == item['id'],
+                          selectedTileColor: Colors.blue.shade50,
+                          onTap: () => setSheet(() { selectedItem = Map<String, dynamic>.from(item); catalogResults = []; }),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                if (selectedItem != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10)),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text('Selected: ${selectedItem!['name']} (${selectedItem!['category']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                TextField(controller: qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity *', border: OutlineInputBorder())),
+                const SizedBox(height: 10),
+                TextField(controller: reasonCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Reason for Request *', hintText: 'e.g. Brake pad replacement for KBA 123A', border: OutlineInputBorder())),
+                const SizedBox(height: 10),
+                // Link to job card
+                DropdownButtonFormField<String>(
+                  value: linkedJobId,
+                  decoration: const InputDecoration(labelText: 'Link to Job Card (optional)', border: OutlineInputBorder()),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('-- No job card --')),
+                    ..._jobs.where((j) => j['status'] != 'COMPLETED').map((j) {
+                      final plate = j['vehiclePlate'] ?? '';
+                      final id = j['id'].toString();
+                      return DropdownMenuItem(value: id, child: Text('$plate - ${id.substring(0, 8).toUpperCase()}', style: const TextStyle(fontSize: 12)));
+                    }),
+                  ],
+                  onChanged: (v) => setSheet(() => linkedJobId = v),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F4C81),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.send),
+                    label: const Text('Submit Request', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    onPressed: () async {
+                      if (selectedItem == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select an item'), backgroundColor: Colors.orange));
+                        return;
+                      }
+                      if (reasonCtrl.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a reason'), backgroundColor: Colors.orange));
+                        return;
+                      }
+                      final body = {
+                        'reason': reasonCtrl.text.trim(),
+                        'lines': [
+                          {
+                            'itemId': selectedItem!['id'],
+                            'qtyRequested': int.tryParse(qtyCtrl.text) ?? 1,
+                          }
+                        ],
+                      };
+                      if (linkedJobId != null) body['jobCardId'] = linkedJobId!;
+                      try {
+                        final res = await http.post(
+                          Uri.parse('$_baseUrl/inventory/requests'),
+                          headers: {'Content-Type': 'application/json', 'x-user-role': 'MECHANIC', 'x-user-name': _techName},
+                          body: json.encode(body),
+                        );
+                        if (res.statusCode == 201) {
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Item request submitted!'), backgroundColor: Colors.green),
+                          );
+                          _fetchJobs();
+                        } else {
+                          final err = json.decode(res.body)['error'] ?? 'Request failed';
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err), backgroundColor: Colors.red));
+                        }
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
 
   static const List<String> _inspectionPoints = [
     'Engine & Oil',

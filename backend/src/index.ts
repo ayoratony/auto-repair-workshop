@@ -11,6 +11,7 @@ import {
   workshopAssetExists,
   deleteWorkshopAsset,
 } from './storage';
+import { createInventoryRouter } from './inventory';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env.local') });
 dotenv.config();
@@ -59,6 +60,9 @@ async function generateJobNumber(): Promise<string> {
   }
   return `JC0${maxNum + 1}`;
 }
+
+// Workshop inventory: requests, issuance, assets, consumables, audit ledger
+app.use('/api/inventory', createInventoryRouter(prisma, async () => (await getActiveTenant()).id));
 
 // In-flight deduplication map to prevent duplicate job creation on rapid/double clicks
 const inFlightJobCreations = new Map<string, Promise<any>>();
