@@ -1,11 +1,11 @@
 {
-    "name": "frontend",
-    "short_name": "frontend",
+    "name": "AutoKe Auto Workshop",
+    "short_name": "AutoKe",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0F172A",
+    "theme_color": "#2563EB",
+    "description": "AutoKe — Automotive Repair, Diagnostics & Workshop Management System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

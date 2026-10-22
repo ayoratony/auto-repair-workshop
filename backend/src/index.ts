@@ -28,10 +28,15 @@ async function getActiveTenant() {
   if (!tenant) {
     tenant = await prisma.tenant.create({
       data: {
-        name: 'MechanicHQ Auto Workshop',
+        name: 'AutoKe Auto Workshop',
         address: 'Industrial Area, Nairobi',
         taxPin: 'P051234567X',
       },
+    });
+  } else if (tenant.name === 'MechanicHQ Auto Workshop') {
+    tenant = await prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { name: 'AutoKe Auto Workshop' },
     });
   }
   return tenant;

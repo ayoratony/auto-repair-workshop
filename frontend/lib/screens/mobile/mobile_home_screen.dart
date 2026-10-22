@@ -212,11 +212,29 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selectedIndex == 0
-            ? 'Active Workshop Jobs'
-            : _selectedIndex == 1
-                ? 'Digital Vehicle Intake'
-                : 'Workshop & Bay Schedule'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text('AK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _selectedIndex == 0
+                    ? 'AutoKe • Active Jobs'
+                    : _selectedIndex == 1
+                        ? 'AutoKe • Vehicle Intake'
+                        : 'AutoKe • Bay Schedule',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         backgroundColor: const Color(0xFF0F4C81),
         foregroundColor: Colors.white,
         actions: [

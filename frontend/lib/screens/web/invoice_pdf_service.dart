@@ -18,7 +18,7 @@ class InvoicePdfService {
   }) async {
     final pdf = pw.Document(
       title: isInvoice ? 'Tax Invoice' : 'Official Estimate',
-      author: workshopSettings['name']?.toString() ?? 'MechanicHQ Auto Workshop',
+      author: workshopSettings['name']?.toString() ?? 'AutoKe Auto Workshop',
     );
 
     final fontRegular = pw.Font.helvetica();
@@ -1234,7 +1234,7 @@ class InvoicePdfService {
   }) {
     final workshopName = (workshopSettings['name']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['name'].toString()
-        : 'MechanicHQ Auto Workshop';
+        : 'AutoKe Auto Workshop';
     final workshopAddress = (workshopSettings['address']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['address'].toString()
         : 'Enterprise Road, Industrial Area, Nairobi, Kenya';
@@ -1424,7 +1424,7 @@ class InvoicePdfService {
   }) async {
     final pdf = pw.Document(
       title: 'Vehicle Receiving Memo & Job Card - Customer Copy',
-      author: workshopSettings['name']?.toString() ?? 'MechanicHQ Auto Workshop',
+      author: workshopSettings['name']?.toString() ?? 'AutoKe Auto Workshop',
     );
 
     final fontRegular = pw.Font.helvetica();
@@ -2891,7 +2891,7 @@ class InvoicePdfService {
   }) {
     final workshopName = (workshopSettings['name']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['name'].toString()
-        : 'MechanicHQ Auto Workshop';
+        : 'AutoKe Auto Workshop';
     final workshopAddress = (workshopSettings['address']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['address'].toString()
         : 'Enterprise Road, Industrial Area, Nairobi, Kenya';
@@ -2997,7 +2997,7 @@ class InvoicePdfService {
   }) async {
     final pdf = pw.Document(
       title: 'Official Payment Receipt & Gate Pass',
-      author: workshopSettings['name']?.toString() ?? 'MechanicHQ Auto Workshop',
+      author: workshopSettings['name']?.toString() ?? 'AutoKe Auto Workshop',
     );
     final fontRegular = pw.Font.helvetica();
     final fontBold = pw.Font.helveticaBold();

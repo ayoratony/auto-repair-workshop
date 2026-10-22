@@ -958,7 +958,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           const SizedBox(width: 10),
                           OutlinedButton.icon(
                             onPressed: () {
-                              final msg = 'Hello ${customer['name'] ?? 'Customer'}, your vehicle ${vehicle['registrationNo'] ?? ''} (Job Card $jobNo) at ${_workshopSettings['name'] ?? 'MechanicHQ'} is currently in stage: ${_statusLabel(job['status'] ?? 'IN_PROGRESS')}.';
+                              final msg = 'Hello ${customer['name'] ?? 'Customer'}, your vehicle ${vehicle['registrationNo'] ?? ''} (Job Card $jobNo) at ${_workshopSettings['name'] ?? 'AutoKe'} is currently in stage: ${_statusLabel(job['status'] ?? 'IN_PROGRESS')}.';
                               _launchWhatsAppMessage(customer['phone']?.toString() ?? '', msg);
                             },
                             icon: const Icon(Icons.chat_outlined, size: 16, color: Colors.green),
@@ -1464,7 +1464,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               OutlinedButton.icon(
                 onPressed: () {
                   final firstReg = vehicles.isNotEmpty ? vehicles.first['registrationNo'] : 'your vehicle';
-                  final msg = 'Hello ${customer['name']}, this is a courtesy reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'} that $firstReg is due for its scheduled routine maintenance service.';
+                  final msg = 'Hello ${customer['name']}, this is a courtesy reminder from ${_workshopSettings['name'] ?? 'AutoKe'} that $firstReg is due for its scheduled routine maintenance service.';
                   _launchWhatsAppMessage(customer['phone']?.toString() ?? '', msg);
                 },
                 icon: const Icon(Icons.chat_outlined, size: 16, color: Colors.green),
@@ -1767,16 +1767,56 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         children: [
           const SizedBox(height: 32),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            padding: const EdgeInsets.symmetric(horizontal: 20.0),
             child: Row(
               children: [
-                const Icon(Icons.settings, color: Colors.blueAccent, size: 28),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF2563EB), Color(0xFF0EA5E9)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(color: Colors.blueAccent.withOpacity(0.35), blurRadius: 8, offset: const Offset(0, 3)),
+                    ],
+                  ),
+                  child: const Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Positioned(top: 4, child: Icon(Icons.directions_car_filled, color: Colors.white, size: 15)),
+                      Positioned(
+                        bottom: 4,
+                        child: Text(
+                          'AK',
+                          style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    _workshopSettings['name']?.toString().split(' ').first ?? 'MechanicHQ',
-                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      RichText(
+                        overflow: TextOverflow.ellipsis,
+                        text: const TextSpan(
+                          children: [
+                            TextSpan(text: 'Auto', style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4)),
+                            TextSpan(text: 'Ke', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4)),
+                          ],
+                        ),
+                      ),
+                      const Text(
+                        'WORKSHOP & GARAGE OS',
+                        style: TextStyle(color: Colors.white54, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1907,7 +1947,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            const CircleAvatar(backgroundColor: Colors.blueAccent, child: Text('AR', style: TextStyle(color: Colors.white))),
+            const CircleAvatar(
+              backgroundColor: Color(0xFF1E3A8A),
+              child: Text('AK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+            ),
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2646,7 +2689,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   tooltip: 'Send Quotation on WhatsApp for Approval',
                                   icon: const Icon(Icons.chat_outlined, color: Colors.green, size: 18),
                                   onPressed: () {
-                                    final msg = 'Hello $customer, your repair quotation for vehicle $reg at ${_workshopSettings['name'] ?? 'MechanicHQ'} is KSH ${total.toStringAsFixed(0)} (Incl. ${discRate.toStringAsFixed(0)}% discount & 16% VAT). Please reply APPROVED so we can proceed with the repair.';
+                                    final msg = 'Hello $customer, your repair quotation for vehicle $reg at ${_workshopSettings['name'] ?? 'AutoKe'} is KSH ${total.toStringAsFixed(0)} (Incl. ${discRate.toStringAsFixed(0)}% discount & 16% VAT). Please reply APPROVED so we can proceed with the repair.';
                                     _launchWhatsAppMessage(phone, msg);
                                   },
                                 ),
@@ -2838,7 +2881,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             tooltip: 'Send WhatsApp Invoice Summary',
                             icon: const Icon(Icons.chat_outlined, color: Colors.green, size: 20),
                             onPressed: () {
-                              final msg = 'Hello $customer, your invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for $reg at ${_workshopSettings['name'] ?? 'MechanicHQ'} is KSH ${total.toStringAsFixed(0)} (Paid: KSH ${paid.toStringAsFixed(0)}, Balance Due: KSH ${bal.toStringAsFixed(0)}). Thank you!';
+                              final msg = 'Hello $customer, your invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for $reg at ${_workshopSettings['name'] ?? 'AutoKe'} is KSH ${total.toStringAsFixed(0)} (Paid: KSH ${paid.toStringAsFixed(0)}, Balance Due: KSH ${bal.toStringAsFixed(0)}). Thank you!';
                               _launchWhatsAppMessage(phone, msg);
                             },
                           ),
@@ -3045,7 +3088,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               onPressed: () {
                                 _launchWhatsAppMessage(
                                   (r['phone'] ?? '').toString(),
-                                  'Hello ${r['customerName']}, service reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'}: your vehicle ${r['registrationNo']} (${r['makeModel']}) is due for its next periodic service at ${r['nextServiceMileage']} km (${_formatDate(r['nextServiceDate'])}). Reply to book a bay!',
+                                  'Hello ${r['customerName']}, service reminder from ${_workshopSettings['name'] ?? 'AutoKe'}: your vehicle ${r['registrationNo']} (${r['makeModel']}) is due for its next periodic service at ${r['nextServiceMileage']} km (${_formatDate(r['nextServiceDate'])}). Reply to book a bay!',
                                 );
                               },
                               icon: const Icon(Icons.chat_outlined, size: 15),
@@ -3472,7 +3515,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   onPressed: () {
                                     _launchWhatsAppMessage(
                                       phone,
-                                      'Hello $cust, polite reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'} regarding outstanding balance of KSH ${bal.toStringAsFixed(0)} on Invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for vehicle $reg.',
+                                      'Hello $cust, polite reminder from ${_workshopSettings['name'] ?? 'AutoKe'} regarding outstanding balance of KSH ${bal.toStringAsFixed(0)} on Invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for vehicle $reg.',
                                     );
                                   },
                                 ),

@@ -13,7 +13,7 @@ class AutoRepairApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Auto Repair System',
+      title: 'AutoKe',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,

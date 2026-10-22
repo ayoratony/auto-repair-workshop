@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded Shield / Badge Background -->
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <rect x="6" y="6" width="116" height="116" rx="23" fill="none" stroke="url(#accent)" stroke-width="3" opacity="0.6"/>
+  <!-- Dynamic Speed Roofline Silhouette -->
+  <path d="M22 60 L44 36 L86 36 L106 60" fill="none" stroke="url(#accent)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Headlight / Grill Accents -->
+  <circle cx="34" cy="64" r="4" fill="#38BDF8"/>
+  <circle cx="94" cy="64" r="4" fill="#38BDF8"/>
+  <line x1="48" y1="64" x2="80" y2="64" stroke="#60A5FA" stroke-width="3" stroke-linecap="round"/>
+  <!-- Bold AutoKe Monogram -->
+  <text x="64" y="100" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="30" fill="#FFFFFF" letter-spacing="1">Auto<tspan fill="#38BDF8">Ke</tspan></text>
+</svg>
