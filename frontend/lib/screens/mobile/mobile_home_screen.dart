@@ -214,22 +214,29 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2563EB),
-                borderRadius: BorderRadius.circular(6),
+            RichText(
+              text: const TextSpan(
+                children: [
+                  TextSpan(
+                    text: 'Auto',
+                    style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4),
+                  ),
+                  TextSpan(
+                    text: 'Ke',
+                    style: TextStyle(color: Color(0xFF38BDF8), fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4),
+                  ),
+                ],
               ),
-              child: const Text('AK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 _selectedIndex == 0
-                    ? 'AutoKe • Active Jobs'
+                    ? '• Active Jobs'
                     : _selectedIndex == 1
-                        ? 'AutoKe • Vehicle Intake'
-                        : 'AutoKe • Bay Schedule',
+                        ? '• Vehicle Intake'
+                        : '• Bay Schedule',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white70),
                 overflow: TextOverflow.ellipsis,
               ),
             ),

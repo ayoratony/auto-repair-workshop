@@ -1767,57 +1767,29 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         children: [
           const SizedBox(height: 32),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20.0),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF2563EB), Color(0xFF0EA5E9)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(color: Colors.blueAccent.withOpacity(0.35), blurRadius: 8, offset: const Offset(0, 3)),
-                    ],
-                  ),
-                  child: const Stack(
-                    alignment: Alignment.center,
+                RichText(
+                  overflow: TextOverflow.ellipsis,
+                  text: const TextSpan(
                     children: [
-                      Positioned(top: 4, child: Icon(Icons.directions_car_filled, color: Colors.white, size: 15)),
-                      Positioned(
-                        bottom: 4,
-                        child: Text(
-                          'AK',
-                          style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.8),
-                        ),
+                      TextSpan(
+                        text: 'Auto',
+                        style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                      ),
+                      TextSpan(
+                        text: 'Ke',
+                        style: TextStyle(color: Color(0xFF38BDF8), fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 0.5),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      RichText(
-                        overflow: TextOverflow.ellipsis,
-                        text: const TextSpan(
-                          children: [
-                            TextSpan(text: 'Auto', style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4)),
-                            TextSpan(text: 'Ke', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: 0.4)),
-                          ],
-                        ),
-                      ),
-                      const Text(
-                        'WORKSHOP & GARAGE OS',
-                        style: TextStyle(color: Colors.white54, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8),
-                      ),
-                    ],
-                  ),
+                const SizedBox(height: 2),
+                const Text(
+                  'WORKSHOP & GARAGE OS',
+                  style: TextStyle(color: Colors.white54, fontSize: 9.5, fontWeight: FontWeight.bold, letterSpacing: 0.9),
                 ),
               ],
             ),
