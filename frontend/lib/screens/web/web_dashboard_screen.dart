@@ -20,6 +20,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // Navigation state
   String _activeSidebar = 'Dashboard';
   String _activeTab = 'Current Job Cards';
+  String _activeUserRole = 'ADMIN';
 
   // Real data collections from PostgreSQL
   Map<String, dynamic> _dashboard = {
@@ -267,6 +268,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       text: (existingJob?['nextServiceMileage'] ?? existingJob?['vehicle']?['nextServiceMileage'])?.toString() ?? '',
     );
     final estHoursCtrl = TextEditingController(text: (existingJob?['estimatedHours'] ?? 2.0).toString());
+    final actualHoursCtrl = TextEditingController(text: (existingJob?['actualHours'] ?? 0.0).toString());
     final warrantyNotesCtrl = TextEditingController(text: existingJob?['warrantyNotes']?.toString() ?? '');
 
     String status = existingJob?['status'] ?? 'IN_PROGRESS';
@@ -530,11 +532,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           ),
                           const SizedBox(width: 12),
                           SizedBox(
-                            width: 110,
+                            width: 95,
                             child: TextField(
                               controller: estHoursCtrl,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(labelText: 'Est. Hrs', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 95,
+                            child: TextField(
+                              controller: actualHoursCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Actual Hrs', border: OutlineInputBorder()),
                             ),
                           ),
                         ],
@@ -739,6 +750,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               'nextServiceMileage': int.tryParse(nextMileageCtrl.text.trim()),
                               'fuelLevel': fuelLevel,
                               'estimatedHours': double.tryParse(estHoursCtrl.text.trim()) ?? 2.0,
+                              'actualHours': double.tryParse(actualHoursCtrl.text.trim()) ?? 0.0,
                               'isWarranty': isWarranty,
                               'warrantyNotes': warrantyNotesCtrl.text.trim(),
                               'walkAroundData': {
@@ -1869,13 +1881,39 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               onPressed: _refreshAllData,
             ),
             const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.indigo.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.indigo.shade200),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _activeUserRole,
+                  isDense: true,
+                  icon: Icon(Icons.admin_panel_settings, size: 16, color: Colors.indigo.shade800),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.indigo.shade900),
+                  items: const [
+                    DropdownMenuItem(value: 'ADMIN', child: Text('Role: Owner / Admin')),
+                    DropdownMenuItem(value: 'ADVISOR', child: Text('Role: Service Advisor')),
+                    DropdownMenuItem(value: 'MANAGER', child: Text('Role: Workshop Manager')),
+                    DropdownMenuItem(value: 'MECHANIC', child: Text('Role: Mechanic')),
+                    DropdownMenuItem(value: 'STOREKEEPER', child: Text('Role: Storekeeper')),
+                    DropdownMenuItem(value: 'CASHIER', child: Text('Role: Cashier')),
+                  ],
+                  onChanged: (val) => setState(() => _activeUserRole = val ?? 'ADMIN'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
             const CircleAvatar(backgroundColor: Colors.blueAccent, child: Text('AR', style: TextStyle(color: Colors.white))),
             const SizedBox(width: 12),
-            const Column(
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Shop Manager', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text('Live Connected', style: TextStyle(fontSize: 12, color: Colors.green)),
+                Text(_activeUserRole, style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Live Connected', style: TextStyle(fontSize: 12, color: Colors.green)),
               ],
             )
           ],
@@ -2522,6 +2560,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     rows: _estimates.map((est) {
                       final job = est['jobCard'] ?? {};
                       final customer = job['customer']?['name'] ?? 'Customer';
+                      final phone = job['customer']?['phone']?.toString() ?? '';
                       final reg = job['vehicle']?['registrationNo'] ?? '';
                       final subtotal = (est['subtotal'] as num).toDouble();
                       final discRate = (est['discountRate'] as num).toDouble();
@@ -2529,6 +2568,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       final vat = afterDisc * 0.16;
                       final total = (est['total'] as num).toDouble();
                       final hasInvoice = est['invoice'] != null;
+                      final estStatus = (est['status'] ?? 'DRAFT').toString();
 
                       return DataRow(
                         cells: [
@@ -2537,7 +2577,38 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           DataCell(Text('${discRate.toStringAsFixed(0)}%')),
                           DataCell(Text('KSH ${vat.toStringAsFixed(2)}')),
                           DataCell(Text('KSH ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A)))),
-                          DataCell(Chip(label: Text(est['status'] ?? 'DRAFT', style: const TextStyle(fontSize: 11)))),
+                          DataCell(
+                            DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: ['DRAFT', 'SENT', 'APPROVED', 'REJECTED'].contains(estStatus) ? estStatus : 'DRAFT',
+                                isDense: true,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: estStatus == 'APPROVED'
+                                      ? Colors.green.shade800
+                                      : estStatus == 'REJECTED'
+                                          ? Colors.red.shade800
+                                          : Colors.blue.shade800,
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: 'DRAFT', child: Text('DRAFT')),
+                                  DropdownMenuItem(value: 'SENT', child: Text('SENT TO CUSTOMER')),
+                                  DropdownMenuItem(value: 'APPROVED', child: Text('APPROVED ✓')),
+                                  DropdownMenuItem(value: 'REJECTED', child: Text('REJECTED ✗')),
+                                ],
+                                onChanged: (newSt) async {
+                                  if (newSt == null) return;
+                                  await http.put(
+                                    Uri.parse('$_baseUrl/estimates/${est['id']}/status'),
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: json.encode({'status': newSt}),
+                                  );
+                                  _refreshAllData();
+                                },
+                              ),
+                            ),
+                          ),
                           DataCell(
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -2568,9 +2639,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     isInvoice: false,
                                   ),
                                   icon: const Icon(Icons.picture_as_pdf, size: 15, color: Color(0xFF1D4ED8)),
-                                  label: const Text('A4 PDF / Print', style: TextStyle(fontSize: 12, color: Color(0xFF1D4ED8))),
+                                  label: const Text('A4 Quotation PDF', style: TextStyle(fontSize: 12, color: Color(0xFF1D4ED8))),
                                 ),
                                 const SizedBox(width: 4),
+                                IconButton(
+                                  tooltip: 'Send Quotation on WhatsApp for Approval',
+                                  icon: const Icon(Icons.chat_outlined, color: Colors.green, size: 18),
+                                  onPressed: () {
+                                    final msg = 'Hello $customer, your repair quotation for vehicle $reg at ${_workshopSettings['name'] ?? 'MechanicHQ'} is KSH ${total.toStringAsFixed(0)} (Incl. ${discRate.toStringAsFixed(0)}% discount & 16% VAT). Please reply APPROVED so we can proceed with the repair.';
+                                    _launchWhatsAppMessage(phone, msg);
+                                  },
+                                ),
                                 IconButton(
                                   tooltip: 'Delete Estimate',
                                   icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
@@ -2718,13 +2797,23 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               isInvoice: true,
                             ),
                             icon: const Icon(Icons.visibility, size: 15),
-                            label: const Text('Preview A4', style: TextStyle(fontSize: 12)),
+                            label: const Text('Invoice A4', style: TextStyle(fontSize: 12)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF0F172A),
                               foregroundColor: Colors.white,
                             ),
                           ),
                           const SizedBox(width: 6),
+                          OutlinedButton.icon(
+                            onPressed: () => InvoicePdfService.showPaymentReceiptPreviewModal(
+                              context: context,
+                              workshopSettings: _workshopSettings,
+                              invoice: Map<String, dynamic>.from(inv),
+                            ),
+                            icon: const Icon(Icons.verified_outlined, size: 15, color: Color(0xFF15803D)),
+                            label: const Text('Receipt & Gate Pass', style: TextStyle(fontSize: 12, color: Color(0xFF15803D), fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 4),
                           IconButton(
                             tooltip: 'Print A4 Invoice',
                             icon: const Icon(Icons.print, color: Color(0xFF2563EB), size: 20),
@@ -2767,128 +2856,212 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   // ==========================================
-  // SIDEBAR SECTIONS: APPOINTMENTS, CUSTOMERS, EMPLOYEES, REPORTS, SETTINGS
+  // SIDEBAR SECTIONS: APPOINTMENTS (MODULE 8), CUSTOMERS, EMPLOYEES (MODULE 7), REPORTS (MODULE 9), SETTINGS
   // ==========================================
   Widget _buildAppointmentsSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final reminders = (_dashboard['serviceReminders'] as List<dynamic>?) ?? [];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Block 1: Appointments & Bay Schedule
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Appointments & Bay Schedule (${_appointments.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ElevatedButton.icon(
-                onPressed: _showAppointmentDialog,
-                icon: const Icon(Icons.calendar_month, size: 18),
-                label: const Text('+ Book Appointment'),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
-              ),
-            ],
-          ),
-          const Divider(height: 24),
-          if (_appointments.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: Text('No appointments scheduled yet. Click "+ Book Appointment" to reserve a bay or mechanic.')),
-            )
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('Scheduled Date', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Vehicle Reg', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Service Type', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Bay / Lift', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Appointments & Bay Schedule (${_appointments.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ElevatedButton.icon(
+                    onPressed: _showAppointmentDialog,
+                    icon: const Icon(Icons.calendar_month, size: 18),
+                    label: const Text('+ Book Appointment'),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  ),
                 ],
-                rows: _appointments.map((a) {
-                  final status = a['status'] ?? 'SCHEDULED';
-                  return DataRow(
-                    cells: [
-                      DataCell(Text(_formatDate(a['scheduledAt']))),
-                      DataCell(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(a['customerName'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            if ((a['customerPhone'] ?? '').toString().isNotEmpty)
-                              Text(a['customerPhone'].toString(), style: const TextStyle(fontSize: 11, color: Colors.black54)),
-                          ],
-                        ),
-                      ),
-                      DataCell(Text(a['registrationNo'] ?? '-', style: const TextStyle(fontWeight: FontWeight.w600))),
-                      DataCell(Text(a['serviceType'] ?? '-')),
-                      DataCell(Text(a['bayNumber'] ?? 'Unassigned')),
-                      DataCell(
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: status == 'ARRIVED' ? Colors.green.shade50 : Colors.blue.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            status.toString(),
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: status == 'ARRIVED' ? Colors.green.shade800 : Colors.blue.shade800,
+              ),
+              const Divider(height: 24),
+              if (_appointments.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: Text('No appointments scheduled yet. Click "+ Book Appointment" to reserve a bay or mechanic.')),
+                )
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Scheduled Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Customer & Phone', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Vehicle Reg', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Service Type', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Bay / Lift', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Booking Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: _appointments.map((a) {
+                      final status = (a['status'] ?? 'SCHEDULED').toString();
+                      final phone = (a['phone'] ?? a['customerPhone'] ?? '').toString();
+                      final bay = (a['assignedBay'] ?? a['bayNumber'] ?? 'Bay 1').toString();
+                      return DataRow(
+                        cells: [
+                          DataCell(Text(_formatDate(a['scheduledAt']))),
+                          DataCell(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(a['customerName'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                if (phone.isNotEmpty)
+                                  Text(phone, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                              ],
                             ),
                           ),
-                        ),
-                      ),
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            TextButton.icon(
-                              onPressed: () async {
-                                await http.put(
-                                  Uri.parse('$_baseUrl/appointments/${a['id']}'),
-                                  headers: {'Content-Type': 'application/json'},
-                                  body: json.encode({'status': 'ARRIVED'}),
-                                );
-                                _refreshAllData();
-                                _showJobCardDialog();
-                              },
-                              icon: const Icon(Icons.assignment_add, size: 15, color: Color(0xFF2563EB)),
-                              label: const Text('Convert to Job Card', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                            ),
-                            if ((a['customerPhone'] ?? '').toString().isNotEmpty)
-                              IconButton(
-                                tooltip: 'WhatsApp Appointment Reminder',
-                                icon: const Icon(Icons.chat, size: 16, color: Color(0xFF16A34A)),
-                                onPressed: () {
-                                  _launchWhatsAppMessage(
-                                    a['customerPhone'].toString(),
-                                    'Hello ${a['customerName']}, reminder of your ${a['serviceType']} appointment for ${a['registrationNo']} on ${_formatDate(a['scheduledAt'])} (${a['bayNumber'] ?? 'Workshop'}).',
+                          DataCell(Text(a['registrationNo'] ?? '-', style: const TextStyle(fontWeight: FontWeight.w600))),
+                          DataCell(Text(a['serviceType'] ?? '-')),
+                          DataCell(Chip(label: Text(bay, style: const TextStyle(fontSize: 11)))),
+                          DataCell(
+                            DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: ['SCHEDULED', 'ARRIVED', 'COMPLETED', 'MISSED'].contains(status) ? status : 'SCHEDULED',
+                                isDense: true,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: status == 'ARRIVED' || status == 'COMPLETED'
+                                      ? Colors.green.shade800
+                                      : status == 'MISSED'
+                                          ? Colors.red.shade800
+                                          : Colors.blue.shade800,
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: 'SCHEDULED', child: Text('SCHEDULED')),
+                                  DropdownMenuItem(value: 'ARRIVED', child: Text('ARRIVED ✓')),
+                                  DropdownMenuItem(value: 'COMPLETED', child: Text('COMPLETED')),
+                                  DropdownMenuItem(value: 'MISSED', child: Text('MISSED / NO-SHOW')),
+                                ],
+                                onChanged: (newStatus) async {
+                                  if (newStatus == null) return;
+                                  await http.put(
+                                    Uri.parse('$_baseUrl/appointments/${a['id']}'),
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: json.encode({'status': newStatus}),
                                   );
+                                  _refreshAllData();
                                 },
                               ),
-                            IconButton(
-                              tooltip: 'Delete Appointment',
-                              icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
-                              onPressed: () async {
-                                await http.delete(Uri.parse('$_baseUrl/appointments/${a['id']}'));
-                                _refreshAllData();
-                              },
                             ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                }).toList(),
+                          ),
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    await http.put(
+                                      Uri.parse('$_baseUrl/appointments/${a['id']}'),
+                                      headers: {'Content-Type': 'application/json'},
+                                      body: json.encode({'status': 'ARRIVED'}),
+                                    );
+                                    _refreshAllData();
+                                    _showJobCardDialog();
+                                  },
+                                  icon: const Icon(Icons.assignment_add, size: 15, color: Color(0xFF2563EB)),
+                                  label: const Text('Convert to Job Card', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                ),
+                                if (phone.isNotEmpty)
+                                  IconButton(
+                                    tooltip: 'WhatsApp Appointment Reminder',
+                                    icon: const Icon(Icons.chat, size: 16, color: Color(0xFF16A34A)),
+                                    onPressed: () {
+                                      _launchWhatsAppMessage(
+                                        phone,
+                                        'Hello ${a['customerName']}, reminder of your ${a['serviceType']} appointment for ${a['registrationNo']} on ${_formatDate(a['scheduledAt'])} ($bay).',
+                                      );
+                                    },
+                                  ),
+                                IconButton(
+                                  tooltip: 'Delete Appointment',
+                                  icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
+                                  onPressed: () async {
+                                    await http.delete(Uri.parse('$_baseUrl/appointments/${a['id']}'));
+                                    _refreshAllData();
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // Block 2: Module 8 Automated Next-Service Interval & Mileage Reminders
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.notifications_active_outlined, color: Color(0xFFEA580C)),
+                  SizedBox(width: 10),
+                  Text('Upcoming Vehicle Service Reminders (Mileage & Interval Alerts)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
               ),
-            ),
-        ],
-      ),
+              const Divider(height: 20),
+              if (reminders.isEmpty)
+                const Text('No vehicle service reminders yet.', style: TextStyle(color: Colors.grey))
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Vehicle Reg & Make', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Last Recorded Mileage', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Next Service Mileage', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Next Service Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('1-Click Customer Notification', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: reminders.map((r) {
+                      return DataRow(
+                        cells: [
+                          DataCell(Text('${r['registrationNo']} (${r['makeModel']})', style: const TextStyle(fontWeight: FontWeight.bold))),
+                          DataCell(Text('${r['customerName']} (${r['phone'] ?? '-'})')),
+                          DataCell(Text('${r['currentOdometer'] ?? 0} km')),
+                          DataCell(Text('${r['nextServiceMileage'] ?? 5000} km', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEA580C)))),
+                          DataCell(Text(_formatDate(r['nextServiceDate']))),
+                          DataCell(
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                _launchWhatsAppMessage(
+                                  (r['phone'] ?? '').toString(),
+                                  'Hello ${r['customerName']}, service reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'}: your vehicle ${r['registrationNo']} (${r['makeModel']}) is due for its next periodic service at ${r['nextServiceMileage']} km (${_formatDate(r['nextServiceDate'])}). Reply to book a bay!',
+                                );
+                              },
+                              icon: const Icon(Icons.chat_outlined, size: 15),
+                              label: const Text('Send WhatsApp Reminder', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -2984,107 +3157,197 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
     String selectedRole = 'MECHANIC';
+    final mechProd = (_dashboard['mechanicProductivity'] as List<dynamic>?) ?? [];
 
     return StatefulBuilder(
       builder: (context, setEmpState) {
-        return Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Workshop Technicians, Service Advisors & Staff', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Row(
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(labelText: 'Staff / Technician Name', border: OutlineInputBorder()),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Workshop Staff, Mechanics & Role Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      Chip(
+                        avatar: const Icon(Icons.verified_user, size: 16, color: Color(0xFF1D4ED8)),
+                        label: Text('Active Session Role: $_activeUserRole', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        backgroundColor: Colors.blue.shade50,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: emailCtrl,
-                      decoration: const InputDecoration(labelText: 'Email Address', border: OutlineInputBorder()),
-                    ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(labelText: 'Staff / Technician Name', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: emailCtrl,
+                          decoration: const InputDecoration(labelText: 'Email Address', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 1,
+                        child: DropdownButtonFormField<String>(
+                          value: selectedRole,
+                          decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
+                          items: const [
+                            DropdownMenuItem(value: 'ADMIN', child: Text('OWNER / ADMIN')),
+                            DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR')),
+                            DropdownMenuItem(value: 'MANAGER', child: Text('WORKSHOP MANAGER')),
+                            DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC')),
+                            DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER')),
+                            DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER')),
+                          ],
+                          onChanged: (v) => setEmpState(() => selectedRole = v ?? 'MECHANIC'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          if (nameCtrl.text.trim().isEmpty) return;
+                          await http.post(
+                            Uri.parse('$_baseUrl/employees'),
+                            headers: {'Content-Type': 'application/json'},
+                            body: json.encode({
+                              'name': nameCtrl.text.trim(),
+                              'email': emailCtrl.text.trim(),
+                              'role': selectedRole,
+                            }),
+                          );
+                          _refreshAllData();
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Staff'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 1,
-                    child: DropdownButtonFormField<String>(
-                      value: selectedRole,
-                      decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
-                      items: const [
-                        DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC')),
-                        DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR')),
-                        DropdownMenuItem(value: 'MANAGER', child: Text('MANAGER')),
-                        DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER')),
-                        DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER')),
+                  const Divider(height: 32),
+                  if (_employees.isEmpty)
+                    const Padding(padding: EdgeInsets.all(24), child: Text('No employees added yet. Add technicians above so they appear in Job Card assignments.'))
+                  else
+                    DataTable(
+                      columns: const [
+                        DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Assigned Role', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Commission Rate', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                       ],
-                      onChanged: (v) => setEmpState(() => selectedRole = v ?? 'MECHANIC'),
+                      rows: _employees.map((e) {
+                        final role = (e['role'] ?? 'MECHANIC').toString();
+                        return DataRow(
+                          cells: [
+                            DataCell(Text(e['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
+                            DataCell(Text(e['email'] ?? '')),
+                            DataCell(Chip(label: Text(role, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)))),
+                            DataCell(Text(role == 'MECHANIC' ? '15% of Labour' : 'Fixed Salary')),
+                            DataCell(
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                onPressed: () async {
+                                  if (_activeUserRole != 'ADMIN' && _activeUserRole != 'MANAGER') {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(backgroundColor: Colors.orange, content: Text('Role Guard: Only Owner/Admin or Manager can remove staff.')),
+                                    );
+                                    return;
+                                  }
+                                  await http.delete(Uri.parse('$_baseUrl/employees/${e['id']}'));
+                                  _refreshAllData();
+                                },
+                              ),
+                            ),
+                          ],
+                        );
+                      }).toList(),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      if (nameCtrl.text.trim().isEmpty) return;
-                      await http.post(
-                        Uri.parse('$_baseUrl/employees'),
-                        headers: {'Content-Type': 'application/json'},
-                        body: json.encode({
-                          'name': nameCtrl.text.trim(),
-                          'email': emailCtrl.text.trim(),
-                          'role': selectedRole,
-                        }),
-                      );
-                      _refreshAllData();
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Staff'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2563EB),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                    ),
-                  ),
                 ],
               ),
-              const Divider(height: 32),
-              if (_employees.isEmpty)
-                const Padding(padding: EdgeInsets.all(24), child: Text('No employees added yet. Add technicians above so they appear in Job Card assignments.'))
-              else
-                DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
-                  ],
-                  rows: _employees.map((e) {
-                    return DataRow(
-                      cells: [
-                        DataCell(Text(e['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                        DataCell(Text(e['email'] ?? '')),
-                        DataCell(Chip(label: Text(e['role'] ?? 'MECHANIC', style: const TextStyle(fontSize: 11)))),
-                        DataCell(
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.red),
-                            onPressed: () async {
-                              await http.delete(Uri.parse('$_baseUrl/employees/${e['id']}'));
-                              _refreshAllData();
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 24),
+            // Module 7: Mechanic Labour Hours, Turnaround & Commission Ledger
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Mechanic Labour Hours, Efficiency & 15% Commission Tracker', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Divider(height: 20),
+                  if (mechProd.isEmpty)
+                    const Text('No mechanic job assignments yet.', style: TextStyle(color: Colors.grey))
+                  else
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Total Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Completed', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Est. vs Actual Hours', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Labour Value (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Commission (15%)', style: TextStyle(fontWeight: FontWeight.bold))),
+                        ],
+                        rows: mechProd.map((m) {
+                          final estH = (m['estimatedHours'] as num?)?.toDouble() ?? 0.0;
+                          final actH = (m['actualHours'] as num?)?.toDouble() ?? 0.0;
+                          final labVal = (m['labourGenerated'] as num?)?.toDouble() ?? (estH * 1500);
+                          final comm = (m['commissionEarned'] as num?)?.toDouble() ?? (labVal * 0.15);
+                          return DataRow(
+                            cells: [
+                              DataCell(Text((m['technician'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                              DataCell(Text('${m['totalJobs'] ?? 0}')),
+                              DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
+                              DataCell(Text('${estH.toStringAsFixed(1)}h est / ${actH.toStringAsFixed(1)}h actual')),
+                              DataCell(Text('KSH ${labVal.toStringAsFixed(0)}')),
+                              DataCell(Text('KSH ${comm.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)))),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Module 7: Role-Based Access & Permissions Matrix
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Workshop Role-Based Access Control (RBAC) Matrix', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Divider(height: 20),
+                  Text('• Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('• Service Advisor: Create Job Cards, 360° Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('• Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('• Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('• Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('• Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
@@ -3102,11 +3365,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final stockValCost = (_dashboard['stockValuationCost'] as num?)?.toDouble() ?? 0.0;
     final stockValRetail = (_dashboard['stockValuationRetail'] as num?)?.toDouble() ?? 0.0;
     final mechProd = (_dashboard['mechanicProductivity'] as List<dynamic>?) ?? [];
+    final topVehicles = (_dashboard['topVehicles'] as List<dynamic>?) ?? [];
+    final topParts = (_dashboard['topParts'] as List<dynamic>?) ?? [];
+    final debtorInvoices = _invoices.where((inv) => inv['paymentStatus'] != 'PAID').toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Top Financial P&L Cards
+        // 1. Top Financial P&L Cards
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
@@ -3134,7 +3400,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   _pnlCard('Spare Parts COGS', 'KSH ${partsCostCogs.toStringAsFixed(0)}', 'Buying cost of parts sold', Colors.orange.shade800, Colors.orange.shade50),
                   _pnlCard('Workshop Expenses', 'KSH ${totalExpenses.toStringAsFixed(0)}', '${_expenses.length} recorded expenses', Colors.red.shade700, Colors.red.shade50),
                   _pnlCard('True Net Profit', 'KSH ${netProfit.toStringAsFixed(0)}', 'Revenue - COGS - Expenses', netProfit >= 0 ? Colors.green.shade800 : Colors.red.shade900, netProfit >= 0 ? Colors.green.shade50 : Colors.red.shade50),
-                  _pnlCard('Outstanding Debtors', 'KSH ${outstanding.toStringAsFixed(0)}', 'Unpaid / Partial Invoices', Colors.purple.shade800, Colors.purple.shade50),
+                  _pnlCard('Outstanding Debtors', 'KSH ${outstanding.toStringAsFixed(0)}', '${debtorInvoices.length} Unpaid / Partial Invoices', Colors.purple.shade800, Colors.purple.shade50),
                 ],
               ),
               const SizedBox(height: 24),
@@ -3142,48 +3408,185 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               _summaryRow('Spare Parts Sales Revenue', 'KSH ${partsRev.toStringAsFixed(2)}'),
               _summaryRow('Inventory Stock Valuation (At Buying Cost)', 'KSH ${stockValCost.toStringAsFixed(2)}'),
               _summaryRow('Inventory Stock Valuation (At Retail Selling Price)', 'KSH ${stockValRetail.toStringAsFixed(2)}'),
-              _summaryRow('Total Job Cards / Active / Completed', '${_dashboard['totalJobsCount'] ?? 0} Total • ${_dashboard['activeJobsCount'] ?? 0} Active • ${_dashboard['completedJobsCount'] ?? 0} Completed'),
+              _summaryRow('Projected Inventory Gross Margin', 'KSH ${(stockValRetail - stockValCost).toStringAsFixed(2)}'),
+              _summaryRow('Today / This Week / This Month Jobs', '${_dashboard['todayJobsCount'] ?? 0} Today • ${_dashboard['weekJobsCount'] ?? 0} Week • ${_dashboard['monthJobsCount'] ?? 0} Month'),
             ],
           ),
         ),
         const SizedBox(height: 24),
-        // Mechanic Productivity & Turnaround Table
+        // 2. Customer Debtors & Outstanding Balances Table
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Mechanic Productivity & Turnaround Performance', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text('Customer Debtors & Unpaid / Partial Invoices (${debtorInvoices.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const Divider(height: 20),
-              if (mechProd.isEmpty)
-                const Text('No technicians assigned to jobs yet.', style: TextStyle(color: Colors.grey))
+              if (debtorInvoices.isEmpty)
+                const Text('All issued invoices are settled in full. Zero outstanding debtor balances!', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600))
               else
-                DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Assigned Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Completed Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Est. Hours Logged', style: TextStyle(fontWeight: FontWeight.bold))),
-                  ],
-                  rows: mechProd.map((m) {
-                    return DataRow(
-                      cells: [
-                        DataCell(Text((m['technician'] ?? m['name'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
-                        DataCell(Text((m['role'] ?? 'MECHANIC').toString())),
-                        DataCell(Text('${m['totalJobs'] ?? m['assignedJobs'] ?? 0}')),
-                        DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
-                        DataCell(Text('${m['estimatedHours'] ?? m['totalEstimatedHours'] ?? 0} hrs')),
-                      ],
-                    );
-                  }).toList(),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Invoice #', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Customer & Phone', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Vehicle Reg', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Total Billed', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Paid', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Balance Due', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Debtor Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: debtorInvoices.map((inv) {
+                      final est = inv['estimate'] ?? {};
+                      final job = est['jobCard'] ?? {};
+                      final cust = job['customer']?['name'] ?? 'Customer';
+                      final phone = job['customer']?['phone']?.toString() ?? '';
+                      final reg = job['vehicle']?['registrationNo'] ?? '-';
+                      final total = (est['total'] as num?)?.toDouble() ?? 0.0;
+                      final paid = (inv['amountPaid'] as num?)?.toDouble() ?? 0.0;
+                      final bal = (inv['balanceDue'] as num?)?.toDouble() ?? (total - paid).clamp(0.0, total);
+                      return DataRow(
+                        cells: [
+                          DataCell(Text('INV-${inv['id'].toString().substring(0, 6).toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold))),
+                          DataCell(Text('$cust ($phone)')),
+                          DataCell(Text(reg)),
+                          DataCell(Text('KSH ${total.toStringAsFixed(0)}')),
+                          DataCell(Text('KSH ${paid.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green))),
+                          DataCell(Text('KSH ${bal.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red))),
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => _showRecordPaymentDialog(Map<String, dynamic>.from(inv)),
+                                  icon: const Icon(Icons.payments_outlined, size: 14),
+                                  label: const Text('Collect Balance', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+                                ),
+                                const SizedBox(width: 6),
+                                IconButton(
+                                  tooltip: 'Send WhatsApp Balance Reminder',
+                                  icon: const Icon(Icons.chat_outlined, color: Colors.green, size: 18),
+                                  onPressed: () {
+                                    _launchWhatsAppMessage(
+                                      phone,
+                                      'Hello $cust, polite reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'} regarding outstanding balance of KSH ${bal.toStringAsFixed(0)} on Invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for vehicle $reg.',
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 24),
-        // Workshop Expenses Ledger
+        // 3. Top Serviced Vehicles & Most Used Spare Parts
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Top Serviced Vehicles', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Divider(height: 20),
+                    if (topVehicles.isEmpty)
+                      const Text('No vehicle service records yet.', style: TextStyle(color: Colors.grey))
+                    else
+                      ...topVehicles.map((v) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const CircleAvatar(backgroundColor: Color(0xFFEFF6FF), child: Icon(Icons.directions_car, size: 16, color: Color(0xFF1D4ED8))),
+                            title: Text('${v['registrationNo']} — ${v['makeModel']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('Owner: ${v['customerName']} • Last: ${v['lastService']}'),
+                            trailing: Chip(label: Text('${v['jobsCount']} Visits', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                          )),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Most Used Spare Parts & Items', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Divider(height: 20),
+                    if (topParts.isEmpty)
+                      const Text('No parts billed on estimates yet.', style: TextStyle(color: Colors.grey))
+                    else
+                      ...topParts.map((p) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const CircleAvatar(backgroundColor: Color(0xFFFEF3C7), child: Icon(Icons.build_circle_outlined, size: 16, color: Color(0xFFB45309))),
+                            title: Text('${p['description']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('Total Qty Billed: ${p['quantityUsed']} units'),
+                            trailing: Text('KSH ${((p['revenueGenerated'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A))),
+                          )),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        // 4. Mechanic Productivity, Turnaround & Commission Table
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Mechanic Productivity, Turnaround & Commission Performance', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Divider(height: 20),
+              if (mechProd.isEmpty)
+                const Text('No technicians assigned to jobs yet.', style: TextStyle(color: Colors.grey))
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Assigned Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Completed Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Est. vs Actual Hours', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Commission Earned (15%)', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: mechProd.map((m) {
+                      final estH = (m['estimatedHours'] ?? m['totalEstimatedHours'] ?? 0);
+                      final actH = (m['actualHours'] ?? 0);
+                      final comm = (m['commissionEarned'] as num?)?.toDouble() ?? 0.0;
+                      return DataRow(
+                        cells: [
+                          DataCell(Text((m['technician'] ?? m['name'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                          DataCell(Text('${m['totalJobs'] ?? m['assignedJobs'] ?? 0}')),
+                          DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
+                          DataCell(Text('$estH hrs est / $actH hrs actual')),
+                          DataCell(Text('KSH ${comm.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)))),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // 5. Workshop Operating Expenses Ledger
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
@@ -3498,8 +3901,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.black87)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          Expanded(
+            child: Text(label, style: const TextStyle(color: Colors.black87), overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 8),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         ],
       ),
     );

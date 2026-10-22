@@ -2987,6 +2987,442 @@ class InvoicePdfService {
       presentCount: presentCount,
     );
   }
+
+  // ===========================================================================
+  // MODULE 6: OFFICIAL A4 PAYMENT RECEIPT & VEHICLE RELEASE GATE PASS PDF
+  // ===========================================================================
+  static Future<Uint8List> generatePaymentReceiptPdf({
+    required Map<String, dynamic> workshopSettings,
+    required Map<String, dynamic> invoice,
+  }) async {
+    final pdf = pw.Document(
+      title: 'Official Payment Receipt & Gate Pass',
+      author: workshopSettings['name']?.toString() ?? 'MechanicHQ Auto Workshop',
+    );
+    final fontRegular = pw.Font.helvetica();
+    final fontBold = pw.Font.helveticaBold();
+
+    final est = (invoice['estimate'] as Map<String, dynamic>?) ?? {};
+    final d = _extractDocData(
+      workshopSettings: workshopSettings,
+      estimate: est,
+      invoice: invoice,
+      isInvoice: true,
+    );
+    final history = (invoice['paymentHistory'] as List<dynamic>?) ?? [];
+    final isCleared = d.balanceDue <= 0.01;
+
+    const navyDark = PdfColor.fromInt(0xFF0F172A);
+    const primaryBlue = PdfColor.fromInt(0xFF1D4ED8);
+    const greenColor = PdfColor.fromInt(0xFF15803D);
+    const greenBg = PdfColor.fromInt(0xFFDCFCE7);
+    const amberColor = PdfColor.fromInt(0xFFB45309);
+    const amberBg = PdfColor.fromInt(0xFFFEF3C7);
+    const borderGrey = PdfColor.fromInt(0xFFE2E8F0);
+    const lightBg = PdfColor.fromInt(0xFFF8FAFC);
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        build: (context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              pw.Container(
+                padding: const pw.EdgeInsets.all(20),
+                decoration: pw.BoxDecoration(
+                  color: navyDark,
+                  borderRadius: pw.BorderRadius.circular(8),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          d.workshopName.toUpperCase(),
+                          style: pw.TextStyle(font: fontBold, color: PdfColors.white, fontSize: 16),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          '${d.workshopAddress}  |  Tax PIN: ${d.workshopPin}',
+                          style: pw.TextStyle(font: fontRegular, color: const PdfColor.fromInt(0xFFCBD5E1), fontSize: 9),
+                        ),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          'OFFICIAL PAYMENT RECEIPT',
+                          style: pw.TextStyle(font: fontBold, color: PdfColors.white, fontSize: 14),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Receipt Ref: RCT-${d.docNumber.replaceAll("INV-", "")}  •  Job: ${d.jobNumber}',
+                          style: pw.TextStyle(font: fontBold, color: const PdfColor.fromInt(0xFF93C5FD), fontSize: 9.5),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 18),
+              // Customer & Vehicle Box
+              pw.Container(
+                padding: const pw.EdgeInsets.all(14),
+                decoration: pw.BoxDecoration(
+                  color: lightBg,
+                  borderRadius: pw.BorderRadius.circular(6),
+                  border: pw.Border.all(color: borderGrey),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('RECEIVED FROM CUSTOMER', style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: primaryBlue)),
+                        pw.SizedBox(height: 4),
+                        pw.Text(d.customerName, style: pw.TextStyle(font: fontBold, fontSize: 12, color: navyDark)),
+                        pw.Text('Phone: ${d.customerPhone}', style: pw.TextStyle(font: fontRegular, fontSize: 9.5)),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text('VEHICLE & SERVICE DETAILS', style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: primaryBlue)),
+                        pw.SizedBox(height: 4),
+                        pw.Text('${d.regNo} — ${d.makeModel}', style: pw.TextStyle(font: fontBold, fontSize: 11, color: navyDark)),
+                        pw.Text('Service: ${d.serviceRequested}', style: pw.TextStyle(font: fontRegular, fontSize: 9.5)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 18),
+              // Payment Ledger Table
+              pw.Text('PAYMENT & DEPOSIT TRANSACTION LEDGER', style: pw.TextStyle(font: fontBold, fontSize: 10, color: navyDark)),
+              pw.SizedBox(height: 6),
+              pw.Table(
+                border: pw.TableBorder.all(color: borderGrey),
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: navyDark),
+                    children: [
+                      _tableHeaderCell(fontBold, 'DATE'),
+                      _tableHeaderCell(fontBold, 'PAYMENT MODE'),
+                      _tableHeaderCell(fontBold, 'M-PESA / TXN REF'),
+                      _tableHeaderCell(fontBold, 'NOTES'),
+                      _tableHeaderCell(fontBold, 'AMOUNT PAID (KSH)', alignRight: true),
+                    ],
+                  ),
+                  if (history.isEmpty)
+                    pw.TableRow(
+                      children: [
+                        _tableBodyCell(fontRegular, d.createdAtStr),
+                        _tableBodyCell(fontBold, d.paymentMode),
+                        _tableBodyCell(fontBold, d.mpesaReceiptNo.isEmpty ? '-' : d.mpesaReceiptNo),
+                        _tableBodyCell(fontRegular, d.paymentStatus),
+                        _tableBodyCell(fontBold, _formatCurrency(d.amountPaid), alignRight: true),
+                      ],
+                    )
+                  else
+                    ...history.map((h) {
+                      final amt = (h['amount'] as num?)?.toDouble() ?? 0.0;
+                      return pw.TableRow(
+                        children: [
+                          _tableBodyCell(fontRegular, _formatFullDate(h['date'])),
+                          _tableBodyCell(fontBold, (h['mode'] ?? d.paymentMode).toString()),
+                          _tableBodyCell(fontBold, (h['reference'] ?? d.mpesaReceiptNo ?? '-').toString()),
+                          _tableBodyCell(fontRegular, (h['notes'] ?? 'Payment').toString()),
+                          _tableBodyCell(fontBold, _formatCurrency(amt), alignRight: true),
+                        ],
+                      );
+                    }),
+                ],
+              ),
+              pw.SizedBox(height: 18),
+              // Financial Summary Box
+              pw.Container(
+                padding: const pw.EdgeInsets.all(14),
+                decoration: pw.BoxDecoration(
+                  color: lightBg,
+                  borderRadius: pw.BorderRadius.circular(6),
+                  border: pw.Border.all(color: borderGrey),
+                ),
+                child: pw.Column(
+                  children: [
+                    _summaryLine(fontRegular, fontBold, 'Total Invoice Amount (Incl. VAT)', 'KSH ${_formatCurrency(d.grandTotal)}'),
+                    pw.SizedBox(height: 6),
+                    _summaryLine(fontRegular, fontBold, 'Total Amount Received / Paid to Date', 'KSH ${_formatCurrency(d.amountPaid)}', valueColor: greenColor),
+                    pw.SizedBox(height: 6),
+                    _summaryLine(
+                      fontBold,
+                      fontBold,
+                      'Remaining Balance Due',
+                      'KSH ${_formatCurrency(d.balanceDue)}',
+                      valueColor: isCleared ? greenColor : amberColor,
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 22),
+              // Gate Pass Authorization Box
+              pw.Container(
+                padding: const pw.EdgeInsets.all(16),
+                decoration: pw.BoxDecoration(
+                  color: isCleared ? greenBg : amberBg,
+                  borderRadius: pw.BorderRadius.circular(8),
+                  border: pw.Border.all(color: isCleared ? greenColor : amberColor, width: 1.5),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          isCleared
+                              ? 'SECURITY GATE PASS: CLEARED FOR VEHICLE RELEASE'
+                              : 'PARTIAL DEPOSIT RECEIPT — VEHICLE RELEASE SUBJECT TO MANAGER APPROVAL',
+                          style: pw.TextStyle(font: fontBold, fontSize: 11, color: isCleared ? greenColor : amberColor),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Vehicle Reg: ${d.regNo}  •  Job Card: ${d.jobNumber}  •  Customer: ${d.customerName}',
+                          style: pw.TextStyle(font: fontBold, fontSize: 9.5, color: navyDark),
+                        ),
+                      ],
+                    ),
+                    pw.Text(
+                      isCleared ? 'CLEARED' : 'BALANCE DUE',
+                      style: pw.TextStyle(font: fontBold, fontSize: 13, color: isCleared ? greenColor : amberColor),
+                    ),
+                  ],
+                ),
+              ),
+              pw.Spacer(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(width: 170, height: 1, color: borderGrey),
+                      pw.SizedBox(height: 4),
+                      pw.Text('Cashier / Accounts Signature', style: pw.TextStyle(font: fontRegular, fontSize: 9)),
+                    ],
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(width: 170, height: 1, color: borderGrey),
+                      pw.SizedBox(height: 4),
+                      pw.Text('Security Gate Officer Stamp & Time Out', style: pw.TextStyle(font: fontRegular, fontSize: 9)),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  static Future<void> showPaymentReceiptPreviewModal({
+    required BuildContext context,
+    required Map<String, dynamic> workshopSettings,
+    required Map<String, dynamic> invoice,
+  }) async {
+    final est = (invoice['estimate'] as Map<String, dynamic>?) ?? {};
+    final d = _extractDocData(
+      workshopSettings: workshopSettings,
+      estimate: est,
+      invoice: invoice,
+      isInvoice: true,
+    );
+    final history = (invoice['paymentHistory'] as List<dynamic>?) ?? [];
+    final isCleared = d.balanceDue <= 0.01;
+    final fileName = 'Receipt_${d.docNumber.replaceAll("INV-", "RCT-")}';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: const Color(0xFF0F172A),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: SizedBox(
+            width: 820,
+            height: MediaQuery.of(ctx).size.height * 0.9,
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF1E293B),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.verified_outlined, color: Colors.greenAccent),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Official Payment Receipt & Gate Pass (${d.regNo})',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final bytes = await generatePaymentReceiptPdf(
+                                workshopSettings: workshopSettings,
+                                invoice: invoice,
+                              );
+                              await printPdfBytesImpl(bytes, fileName);
+                            },
+                            icon: const Icon(Icons.print, size: 16),
+                            label: const Text('Print Receipt & Gate Pass'),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                          ),
+                          const SizedBox(width: 10),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final bytes = await generatePaymentReceiptPdf(
+                                workshopSettings: workshopSettings,
+                                invoice: invoice,
+                              );
+                              await saveAndDownloadPdfImpl(bytes, '$fileName.pdf');
+                            },
+                            icon: const Icon(Icons.download, size: 16, color: Colors.white),
+                            label: const Text('Download PDF', style: TextStyle(color: Colors.white)),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close, color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(28),
+                    child: Container(
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(d.workshopName.toUpperCase(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                                  Text('${d.workshopAddress} • PIN: ${d.workshopPin}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                                ],
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  const Text('OFFICIAL PAYMENT RECEIPT', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF1D4ED8))),
+                                  Text('Job Card: ${d.jobNumber} • Vehicle: ${d.regNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 28),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Customer: ${d.customerName} (${d.customerPhone})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text('Vehicle: ${d.regNo} (${d.makeModel})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          const Text('Payment & Deposit History Ledger:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const SizedBox(height: 8),
+                          if (history.isEmpty)
+                            ListTile(
+                              dense: true,
+                              tileColor: Colors.grey.shade50,
+                              title: Text('${d.paymentMode} ${d.mpesaReceiptNo.isNotEmpty ? "• Ref: ${d.mpesaReceiptNo}" : ""}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text('Date: ${d.createdAtStr}'),
+                              trailing: Text('KSH ${_formatCurrency(d.amountPaid)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                            )
+                          else
+                            ...history.map((h) {
+                              final amt = (h['amount'] as num?)?.toDouble() ?? 0.0;
+                              return ListTile(
+                                dense: true,
+                                tileColor: Colors.grey.shade50,
+                                title: Text('${h['mode'] ?? d.paymentMode} • Ref: ${h['reference'] ?? d.mpesaReceiptNo ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                subtitle: Text('${_formatFullDate(h['date'])} — ${h['notes'] ?? ''}'),
+                                trailing: Text('KSH ${_formatCurrency(amt)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                              );
+                            }),
+                          const Divider(height: 28),
+                          _previewSummaryLine('Total Invoice Amount (Incl. 16% VAT)', 'KSH ${_formatCurrency(d.grandTotal)}'),
+                          const SizedBox(height: 6),
+                          _previewSummaryLine('Total Amount Paid / Received', 'KSH ${_formatCurrency(d.amountPaid)}', valueColor: Colors.green.shade800),
+                          const SizedBox(height: 6),
+                          _previewSummaryLine('Remaining Balance Due', 'KSH ${_formatCurrency(d.balanceDue)}', valueColor: isCleared ? Colors.green.shade800 : Colors.red.shade800),
+                          const SizedBox(height: 24),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: isCleared ? Colors.green.shade50 : Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: isCleared ? Colors.green : Colors.amber.shade800),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      isCleared ? 'SECURITY GATE PASS: CLEARED FOR EXIT ✓' : 'PARTIAL DEPOSIT RECEIPT (BALANCE DUE)',
+                                      style: TextStyle(fontWeight: FontWeight.bold, color: isCleared ? Colors.green.shade900 : Colors.amber.shade900),
+                                    ),
+                                    Text('Vehicle ${d.regNo} (${d.makeModel}) — Job ${d.jobNumber}', style: const TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                                Icon(isCleared ? Icons.verified : Icons.schedule, color: isCleared ? Colors.green : Colors.amber.shade900, size: 28),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 class _JobCardDocData {

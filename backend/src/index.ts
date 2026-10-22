@@ -199,7 +199,7 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
       (p) => p.stockQuantity <= (p.reorderLevel || 5)
     ).length;
 
-    // Mechanic Productivity breakdown
+    // Mechanic Productivity & Commission breakdown
     const techStatsMap = new Map<
       string,
       {
@@ -209,6 +209,8 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
         activeJobs: number;
         estimatedHours: number;
         actualHours: number;
+        labourGenerated: number;
+        commissionEarned: number;
       }
     >();
 
@@ -221,6 +223,8 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
         activeJobs: 0,
         estimatedHours: 0,
         actualHours: 0,
+        labourGenerated: 0,
+        commissionEarned: 0,
       };
       entry.totalJobs += 1;
       if (j.status === 'COMPLETED' || j.status === 'READY') {
@@ -228,10 +232,80 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
       } else {
         entry.activeJobs += 1;
       }
-      entry.estimatedHours += j.estimatedHours || 2;
-      entry.actualHours += j.actualHours || (j.status === 'COMPLETED' ? j.estimatedHours || 2 : 0);
+      const estH = j.estimatedHours || 2;
+      const actH = j.actualHours || (j.status === 'COMPLETED' ? estH : 0);
+      entry.estimatedHours += estH;
+      entry.actualHours += actH;
+      const jobLabour = estH * 1500;
+      entry.labourGenerated += jobLabour;
+      entry.commissionEarned += Math.round(jobLabour * 0.15);
       techStatsMap.set(techName, entry);
     }
+
+    // Top Serviced Vehicles (by make/model & registration)
+    const vehicleCountsMap = new Map<
+      string,
+      { registrationNo: string; makeModel: string; customerName: string; jobsCount: number; lastService: string }
+    >();
+    for (const j of jobs) {
+      const reg = j.vehicle?.registrationNo || 'UNKNOWN';
+      const existingV = vehicleCountsMap.get(reg) || {
+        registrationNo: reg,
+        makeModel: `${j.vehicle?.make || ''} ${j.vehicle?.model || ''}`.trim() || 'Vehicle',
+        customerName: j.customer?.name || 'Customer',
+        jobsCount: 0,
+        lastService: j.workRequested || 'General Service',
+      };
+      existingV.jobsCount += 1;
+      vehicleCountsMap.set(reg, existingV);
+    }
+    const topVehicles = Array.from(vehicleCountsMap.values())
+      .sort((a, b) => b.jobsCount - a.jobsCount)
+      .slice(0, 6);
+
+    // Most Used Spare Parts across Estimates/Invoices
+    const partUsageMap = new Map<
+      string,
+      { description: string; quantityUsed: number; revenueGenerated: number }
+    >();
+    for (const est of estimates) {
+      for (const li of est.lineItems || []) {
+        if ((li.itemType || 'PART').toUpperCase() === 'LABOUR') continue;
+        const key = li.description.trim();
+        const curr = partUsageMap.get(key) || {
+          description: key,
+          quantityUsed: 0,
+          revenueGenerated: 0,
+        };
+        curr.quantityUsed += li.quantity;
+        curr.revenueGenerated += li.total;
+        partUsageMap.set(key, curr);
+      }
+    }
+    const topParts = Array.from(partUsageMap.values())
+      .sort((a, b) => b.quantityUsed - a.quantityUsed)
+      .slice(0, 6);
+
+    // Service Due Reminders (from JobCards/Vehicles with odometer or nextServiceMileage)
+    const serviceReminders = jobs.slice(0, 8).map((j) => {
+      const currentOdo = j.odometer || 0;
+      const nextOdo = j.nextServiceMileage || j.vehicle?.nextServiceMileage || (currentOdo > 0 ? currentOdo + 5000 : 5000);
+      return {
+        jobId: j.id,
+        jobNumber: j.jobNumber || j.id.substring(0, 6).toUpperCase(),
+        customerName: j.customer?.name || 'Customer',
+        phone: j.customer?.phone || '',
+        registrationNo: j.vehicle?.registrationNo || '-',
+        makeModel: `${j.vehicle?.make || ''} ${j.vehicle?.model || ''}`.trim(),
+        currentOdometer: currentOdo,
+        nextServiceMileage: nextOdo,
+        nextServiceDate:
+          j.nextServiceDate ||
+          j.vehicle?.nextServiceDate ||
+          new Date(new Date(j.createdAt).getTime() + 90 * 86400000).toISOString(),
+        status: j.status,
+      };
+    });
 
     // Weekly Jobs (Mon - Sat counts based on createdAt day of week)
     const weeklyCounts = [0, 0, 0, 0, 0, 0]; // Mon(0) .. Sat(5)
@@ -295,6 +369,9 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
       employeesCount,
       upcomingAppointmentsCount: appointments.filter((a) => a.status !== 'CANCELLED').length,
       mechanicProductivity: Array.from(techStatsMap.values()),
+      topVehicles,
+      topParts,
+      serviceReminders,
       weeklyJobs: [
         { day: 'M', count: weeklyCounts[0] },
         { day: 'T', count: weeklyCounts[1] },
@@ -1358,11 +1435,13 @@ app.post('/api/appointments', async (req: Request, res: Response) => {
     const {
       customerName,
       phone,
+      customerPhone,
       registrationNo,
       makeModel,
       serviceType,
       scheduledAt,
       assignedBay,
+      bayNumber,
       technician,
       status,
       notes,
@@ -1371,12 +1450,12 @@ app.post('/api/appointments', async (req: Request, res: Response) => {
     const appointment = await prisma.appointment.create({
       data: {
         customerName: customerName || 'Walk-in Customer',
-        phone: phone || '',
+        phone: phone || customerPhone || '',
         registrationNo: (registrationNo || 'TBA').toUpperCase(),
         makeModel: makeModel || '',
         serviceType: serviceType || 'General Service',
         scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(Date.now() + 86400000),
-        assignedBay: assignedBay || 'Bay 1',
+        assignedBay: assignedBay || bayNumber || 'Bay 1',
         technician: technician || 'Unassigned',
         status: status || 'SCHEDULED',
         notes: notes || null,
@@ -1396,11 +1475,13 @@ app.put('/api/appointments/:id', async (req: Request, res: Response) => {
     const {
       customerName,
       phone,
+      customerPhone,
       registrationNo,
       makeModel,
       serviceType,
       scheduledAt,
       assignedBay,
+      bayNumber,
       technician,
       status,
       notes,
@@ -1409,12 +1490,12 @@ app.put('/api/appointments/:id', async (req: Request, res: Response) => {
       where: { id },
       data: {
         ...(customerName !== undefined ? { customerName } : {}),
-        ...(phone !== undefined ? { phone } : {}),
+        ...(phone !== undefined || customerPhone !== undefined ? { phone: phone ?? customerPhone } : {}),
         ...(registrationNo !== undefined ? { registrationNo } : {}),
         ...(makeModel !== undefined ? { makeModel } : {}),
         ...(serviceType !== undefined ? { serviceType } : {}),
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt) } : {}),
-        ...(assignedBay !== undefined ? { assignedBay } : {}),
+        ...(assignedBay !== undefined || bayNumber !== undefined ? { assignedBay: assignedBay ?? bayNumber } : {}),
         ...(technician !== undefined ? { technician } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(notes !== undefined ? { notes } : {}),
