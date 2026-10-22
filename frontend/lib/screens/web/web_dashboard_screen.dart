@@ -3084,8 +3084,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final rev = (_dashboard['totalRevenue'] as num?)?.toDouble() ?? 0.0;
     final billed = (_dashboard['totalBilled'] as num?)?.toDouble() ?? rev;
     final outstanding = (_dashboard['outstandingBalance'] as num?)?.toDouble() ?? 0.0;
-    final partsCostCogs = (_dashboard['partsCostCogs'] as num?)?.toDouble() ?? 0.0;
-    final totalExpenses = (_dashboard['totalExpenses'] as num?)?.toDouble() ?? 0.0;
+    final partsCostCogs = ((_dashboard['partsCostTotal'] ?? _dashboard['partsCostCogs']) as num?)?.toDouble() ?? 0.0;
+    final totalExpenses = ((_dashboard['expensesTotal'] ?? _dashboard['totalExpenses']) as num?)?.toDouble() ?? 0.0;
     final netProfit = (_dashboard['netProfit'] as num?)?.toDouble() ?? (rev - partsCostCogs - totalExpenses);
     final labourRev = (_dashboard['labourRevenue'] as num?)?.toDouble() ?? 0.0;
     final partsRev = (_dashboard['partsRevenue'] as num?)?.toDouble() ?? 0.0;
@@ -3160,11 +3160,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   rows: mechProd.map((m) {
                     return DataRow(
                       cells: [
-                        DataCell(Text(m['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                        DataCell(Text(m['role'] ?? 'MECHANIC')),
-                        DataCell(Text('${m['assignedJobs'] ?? 0}')),
+                        DataCell(Text((m['technician'] ?? m['name'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text((m['role'] ?? 'MECHANIC').toString())),
+                        DataCell(Text('${m['totalJobs'] ?? m['assignedJobs'] ?? 0}')),
                         DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
-                        DataCell(Text('${m['totalEstimatedHours'] ?? 0} hrs')),
+                        DataCell(Text('${m['estimatedHours'] ?? m['totalEstimatedHours'] ?? 0} hrs')),
                       ],
                     );
                   }).toList(),
