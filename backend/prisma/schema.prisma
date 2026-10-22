@@ -13,37 +13,50 @@ datasource db {
 // -------------------------------------
 
 model Tenant {
-  id          String   @id @default(uuid())
-  name        String
-  address     String?
-  taxPin      String?  // e.g. KRA Pin
-  logoUrl     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String        @id @default(uuid())
+  name         String
+  address      String?
+  taxPin       String?       // e.g. KRA Pin
+  logoUrl      String?
+  phone        String?
+  email        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
-  users       User[]
-  customers   Customer[]
-  jobCards    JobCard[]
-  parts       PartCatalog[]
+  users        User[]
+  customers    Customer[]
+  jobCards     JobCard[]
+  parts        PartCatalog[]
+  appointments Appointment[]
+  expenses     Expense[]
 }
 
 model User {
-  id          String   @id @default(uuid())
-  email       String   @unique
-  password    String   // Hashed
-  name        String
-  role        Role     @default(MECHANIC)
-  
-  tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  email          String   @unique
+  password       String   // Hashed
+  name           String
+  phone          String?
+  specialization String?  // e.g., "Engine & Transmission", "Auto Electrical", "Body & Paint"
+  commissionRate Float    @default(0) // e.g., 10 for 10% labour commission
+  role           Role     @default(MECHANIC)
+
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 enum Role {
+  SUPER_ADMIN
+  OWNER
   ADMIN
+  MANAGER
+  ADVISOR
   ACCOUNTS
+  CASHIER
+  STOREKEEPER
   INSPECTOR
   MECHANIC
 }
@@ -58,6 +71,7 @@ model Customer {
   phone       String?
   email       String?
   address     String?
+  companyName String?   // For Fleet / Corporate accounts
 
   tenantId    String
   tenant      Tenant    @relation(fields: [tenantId], references: [id])
@@ -70,90 +84,136 @@ model Customer {
 }
 
 model Vehicle {
-  id             String    @id @default(uuid())
-  registrationNo String
-  make           String?
-  model          String?
-  vinNumber      String?
-  
-  customerId     String
-  customer       Customer  @relation(fields: [customerId], references: [id])
-  
-  jobCards       JobCard[]
+  id                 String    @id @default(uuid())
+  registrationNo     String
+  make               String?
+  model              String?
+  year               String?
+  color              String?
+  vinNumber          String?
+  engineNumber       String?
+  fuelType           String?   @default("Petrol") // Petrol, Diesel, Hybrid, Electric
+  nextServiceMileage Int?
+  nextServiceDate    DateTime?
 
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id])
+
+  jobCards           JobCard[]
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 // -------------------------------------
-// Job Cards (Receiving Memo)
+// Job Cards (Receiving Memo & Repair Order)
 // -------------------------------------
 
 model JobCard {
-  id             String        @id @default(uuid())
-  jobNumber      String?       // e.g. JC01021
-  tenantId       String
-  tenant         Tenant        @relation(fields: [tenantId], references: [id])
-  
-  customerId     String
-  customer       Customer      @relation(fields: [customerId], references: [id])
-  
-  vehicleId      String
-  vehicle        Vehicle       @relation(fields: [vehicleId], references: [id])
+  id                 String        @id @default(uuid())
+  jobNumber          String?       // e.g. JC01001
+  tenantId           String
+  tenant             Tenant        @relation(fields: [tenantId], references: [id])
 
-  odometer       Int?
-  fuelLevel      String?       // e.g., "1/4", "Half", "Full"
-  walkAroundData Json?         // Checklists & Damage Coordinates
-  workRequested  String?       
-  technician     String?       // Assigned technician name
-  priority       String        @default("Medium") // Low, Medium, High
-  dueDate        DateTime?
-  status         JobStatus     @default(BOOKED)
+  customerId         String
+  customer           Customer      @relation(fields: [customerId], references: [id])
 
-  estimates      Estimate[]
-  
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  vehicleId          String
+  vehicle            Vehicle       @relation(fields: [vehicleId], references: [id])
+
+  odometer           Int?
+  fuelLevel          String?       // e.g., "1/4", "Half", "Full"
+  walkAroundData     Json?         // Checklists, 360° Damage Markers, Diagnostic & QC Data
+  workRequested      String?
+  technician         String?       // Assigned technician name
+  bayNumber          String?       // e.g., "Bay 1 (Lift)", "Bay 2 (Pit)", "Electrical Bay"
+  priority           String        @default("Medium") // Low, Medium, High
+  dueDate            DateTime?
+  status             JobStatus     @default(BOOKED)
+
+  estimatedHours     Float?
+  actualHours        Float?
+  isWarranty         Boolean       @default(false)
+  warrantyNotes      String?
+  nextServiceMileage Int?
+  nextServiceDate    DateTime?
+
+  estimates          Estimate[]
+  stockMovements     StockMovement[]
+
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 }
 
 enum JobStatus {
   BOOKED
-  WAITING
+  INSPECTION
+  AWAITING_APPROVAL
   IN_PROGRESS
+  WAITING
+  QUALITY_CHECK
   READY
   COMPLETED
 }
 
 // -------------------------------------
-// Estimates & Invoicing
+// Spare Parts, Inventory & Stock Movements
 // -------------------------------------
 
 model PartCatalog {
-  id            String   @id @default(uuid())
-  partNumber    String
-  description   String
-  unitPrice     Float
-  stockQuantity Int      @default(10)
-  
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  id             String          @id @default(uuid())
+  partNumber     String
+  description    String
+  brand          String?
+  compatibility  String?         // e.g., "Toyota Hilux, Prado, Corolla"
+  costPrice      Float           @default(0) // Purchase cost for true profit calculation
+  unitPrice      Float           // Selling price
+  stockQuantity  Int             @default(10)
+  reorderLevel   Int             @default(5)
+  supplierName   String?
+  supplierPhone  String?
+  warrantyMonths Int             @default(6)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+
+  stockMovements StockMovement[]
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
+
+model StockMovement {
+  id        String   @id @default(uuid())
+  partId    String
+  part      PartCatalog @relation(fields: [partId], references: [id], onDelete: Cascade)
+
+  jobCardId String?
+  jobCard   JobCard? @relation(fields: [jobCardId], references: [id], onDelete: SetNull)
+
+  type      String   @default("ISSUED") // RECEIVED, ISSUED, RETURNED, ADJUSTED
+  quantity  Int      // positive for RECEIVED/RETURNED, negative or positive tracked by type
+  notes     String?
+
+  createdAt DateTime @default(now())
+}
+
+// -------------------------------------
+// Estimates, Invoicing & Payments
+// -------------------------------------
 
 model Estimate {
   id            String             @id @default(uuid())
   jobCardId     String
   jobCard       JobCard            @relation(fields: [jobCardId], references: [id])
-  
+
   subtotal      Float
   discountRate  Float              @default(0) // e.g., 20 for 20%
   taxRate       Float              @default(16) // e.g., 16 for 16% VAT
   total         Float
 
   status        EstimateStatus     @default(DRAFT)
-  
+
   lineItems     EstimateLineItem[]
   invoice       Invoice?
 
@@ -172,7 +232,9 @@ model EstimateLineItem {
   id          String   @id @default(uuid())
   estimateId  String
   estimate    Estimate @relation(fields: [estimateId], references: [id])
-  
+
+  itemType    String   @default("PART") // "PART" or "LABOUR"
+  partId      String?  // Optional link to PartCatalog for automatic stock deduction
   description String
   quantity    Int
   unitPrice   Float
@@ -180,15 +242,19 @@ model EstimateLineItem {
 }
 
 model Invoice {
-  id            String        @id @default(uuid())
-  estimateId    String        @unique
-  estimate      Estimate      @relation(fields: [estimateId], references: [id])
-  
-  paymentStatus PaymentStatus @default(UNPAID)
-  paymentMode   String?       // "MPESA", "CARD", "CASH"
+  id             String        @id @default(uuid())
+  estimateId     String        @unique
+  estimate       Estimate      @relation(fields: [estimateId], references: [id])
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  paymentStatus  PaymentStatus @default(UNPAID)
+  paymentMode    String?       // "MPESA", "CARD", "CASH", "BANK_TRANSFER"
+  amountPaid     Float         @default(0)
+  balanceDue     Float         @default(0)
+  mpesaReceiptNo String?       // e.g., "QKA8123XYZ"
+  paymentHistory Json?         // Array of { date, amount, mode, reference, note }
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 }
 
 enum PaymentStatus {
@@ -196,4 +262,42 @@ enum PaymentStatus {
   PARTIAL
   PAID
   PAY_LATER
+}
+
+// -------------------------------------
+// Appointments & Workshop Expenses
+// -------------------------------------
+
+model Appointment {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+
+  customerName   String
+  phone          String?
+  registrationNo String
+  vehicleMake    String?
+  serviceType    String   // e.g., "Periodic Maintenance", "Brake Inspection", "Diagnostic"
+  scheduledAt    DateTime
+  status         String   @default("SCHEDULED") // SCHEDULED, ARRIVED, COMPLETED, MISSED
+  notes          String?
+  reminderSent   Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  category    String   // e.g., "Parts Purchase", "Rent & Utilities", "Salaries", "Consumables"
+  description String
+  amount      Float
+  paymentMode String   @default("MPESA")
+  reference   String?
+  incurredAt  DateTime @default(now())
+
+  createdAt   DateTime @default(now())
 }

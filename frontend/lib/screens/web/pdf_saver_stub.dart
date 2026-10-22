@@ -13,3 +13,7 @@ Future<void> printPdfBytesImpl(Uint8List bytes, String docName) async {
     onLayout: (_) async => bytes,
   );
 }
+
+Future<void> openExternalUrlImpl(String url) async {
+  // Stub for non-web tests/platforms
+}

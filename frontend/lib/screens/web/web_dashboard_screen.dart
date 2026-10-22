@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'estimate_form.dart';
 import 'invoice_pdf_service.dart';
+import 'pdf_saver_stub.dart' if (dart.library.html) 'pdf_saver_web.dart';
 import '../mobile/vehicle_damage_map.dart';
 import '../mobile/walk_around_checklist.dart';
 
@@ -47,6 +48,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   List<dynamic> _invoices = [];
   List<dynamic> _customers = [];
   List<dynamic> _employees = [];
+  List<dynamic> _appointments = [];
+  List<dynamic> _expenses = [];
   Map<String, dynamic> _workshopSettings = {};
 
   bool _isLoading = true;
@@ -78,6 +81,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         http.get(Uri.parse('$_baseUrl/customers')),
         http.get(Uri.parse('$_baseUrl/employees')),
         http.get(Uri.parse('$_baseUrl/settings')),
+        http.get(Uri.parse('$_baseUrl/appointments')),
+        http.get(Uri.parse('$_baseUrl/expenses')),
       ]);
 
       if (!mounted) return;
@@ -90,6 +95,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         if (responses[5].statusCode == 200) _customers = json.decode(responses[5].body);
         if (responses[6].statusCode == 200) _employees = json.decode(responses[6].body);
         if (responses[7].statusCode == 200) _workshopSettings = json.decode(responses[7].body);
+        if (responses[8].statusCode == 200) _appointments = json.decode(responses[8].body);
+        if (responses[9].statusCode == 200) _expenses = json.decode(responses[9].body);
         _isLoading = false;
       });
     } catch (e) {
@@ -98,6 +105,23 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _launchWhatsAppMessage(String rawPhone, String message) {
+    String clean = rawPhone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (clean.startsWith('0') && clean.length == 10) {
+      clean = '254${clean.substring(1)}';
+    } else if (clean.isEmpty) {
+      clean = '254700000000';
+    }
+    final encoded = Uri.encodeComponent(message);
+    openExternalUrlImpl('https://wa.me/$clean?text=$encoded');
+  }
+
+  String _formatDate(dynamic isoString) {
+    if (isoString == null) return '-';
+    final str = isoString.toString();
+    return str.length >= 10 ? str.substring(0, 10) : str;
   }
 
   List<dynamic> get _filteredJobs {
@@ -171,10 +195,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
   Color _statusColor(String status) {
     switch (status) {
+      case 'INSPECTION':
+        return Colors.purple;
+      case 'AWAITING_APPROVAL':
+        return Colors.amber.shade800;
       case 'IN_PROGRESS':
         return Colors.blue;
       case 'WAITING':
         return Colors.orange;
+      case 'QUALITY_CHECK':
+        return Colors.cyan.shade700;
       case 'COMPLETED':
         return Colors.green;
       case 'READY':
@@ -187,16 +217,22 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
   String _statusLabel(String status) {
     switch (status) {
-      case 'IN_PROGRESS':
-        return 'In Progress';
-      case 'WAITING':
-        return 'Waiting (Parts)';
-      case 'COMPLETED':
-        return 'Completed';
-      case 'READY':
-        return 'Ready';
       case 'BOOKED':
-        return 'Booked';
+        return '1. Checked-In';
+      case 'INSPECTION':
+        return '2. Inspection';
+      case 'AWAITING_APPROVAL':
+        return '3. Awaiting Approval';
+      case 'IN_PROGRESS':
+        return '4. In Repair';
+      case 'WAITING':
+        return '5. Waiting Parts';
+      case 'QUALITY_CHECK':
+        return '6. Quality Check (QC)';
+      case 'READY':
+        return '7. Ready for Pickup';
+      case 'COMPLETED':
+        return 'Delivered / Closed';
       default:
         return status;
     }
@@ -227,10 +263,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final serviceCtrl = TextEditingController(text: existingJob?['workRequested'] ?? '');
     final techCtrl = TextEditingController(text: existingJob?['technician'] ?? '');
     final odometerCtrl = TextEditingController(text: existingJob?['odometer']?.toString() ?? '');
+    final nextMileageCtrl = TextEditingController(
+      text: (existingJob?['nextServiceMileage'] ?? existingJob?['vehicle']?['nextServiceMileage'])?.toString() ?? '',
+    );
+    final estHoursCtrl = TextEditingController(text: (existingJob?['estimatedHours'] ?? 2.0).toString());
+    final warrantyNotesCtrl = TextEditingController(text: existingJob?['warrantyNotes']?.toString() ?? '');
 
     String status = existingJob?['status'] ?? 'IN_PROGRESS';
     String priority = existingJob?['priority'] ?? 'Medium';
     String fuelLevel = existingJob?['fuelLevel'] ?? 'Half';
+    String bayNumber = existingJob?['bayNumber']?.toString() ?? 'Bay 1';
+    bool isWarranty = existingJob?['isWarranty'] == true;
     DateTime dueDate = existingJob?['dueDate'] != null
         ? (DateTime.tryParse(existingJob!['dueDate'].toString()) ?? DateTime.now().add(const Duration(days: 2)))
         : DateTime.now().add(const Duration(days: 2));
@@ -240,6 +283,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     ReceivingMemoDetails memoDetails = ReceivingMemoDetails(
       vinNumber: existingJob?['vehicle']?['vinNumber']?.toString() ?? '',
     );
+    Map<String, String> diagnostics = {
+      'Engine': 'Pass',
+      'Brakes': 'Pass',
+      'Suspension': 'Pass',
+      'Tyres': 'Pass',
+      'Battery': 'Pass',
+      'Electrical': 'Pass',
+      'AC': 'Pass',
+      'Transmission': 'Pass',
+    };
+    final obdCodesCtrl = TextEditingController();
+    bool qcPassed = false;
+    List<String> assetKeys = [];
+
     final existingWalkAround = existingJob?['walkAroundData'];
     if (existingWalkAround is Map) {
       if (existingWalkAround['bodyType'] != null) {
@@ -259,9 +316,25 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           Map<String, dynamic>.from(existingWalkAround['memoDetails']),
         );
       }
+      if (existingWalkAround['diagnostics'] is Map) {
+        final rawDiag = Map<String, dynamic>.from(existingWalkAround['diagnostics']);
+        for (final k in diagnostics.keys.toList()) {
+          if (rawDiag[k] != null) diagnostics[k] = rawDiag[k].toString();
+        }
+      }
+      if (existingWalkAround['obdCodes'] != null) {
+        obdCodesCtrl.text = existingWalkAround['obdCodes'].toString();
+      }
+      if (existingWalkAround['qcPassed'] == true) {
+        qcPassed = true;
+      }
+      if (existingWalkAround['assetKeys'] is List) {
+        assetKeys = (existingWalkAround['assetKeys'] as List).map((e) => e.toString()).toList();
+      }
     }
 
     bool isSaving = false;
+    const bayOptions = ['Bay 1', 'Bay 2', 'Bay 3', 'Lift 1', 'Lift 2', 'Diagnostics Bay', 'Body & Paint Bay'];
 
     await showDialog(
       context: context,
@@ -274,7 +347,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   ? 'Edit Job Card (${existingJob['jobNumber'] ?? existingJob['id'].toString().substring(0, 8).toUpperCase()})'
                   : 'Create New Job Card & Vehicle Walk-Around'),
               content: SizedBox(
-                width: 680,
+                width: 720,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -292,7 +365,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           Expanded(
                             child: TextField(
                               controller: phoneCtrl,
-                              decoration: const InputDecoration(labelText: 'Customer Phone', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: 'Customer Phone (WhatsApp)', border: OutlineInputBorder()),
                             ),
                           ),
                         ],
@@ -310,14 +383,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           Expanded(
                             child: TextField(
                               controller: makeCtrl,
-                              decoration: const InputDecoration(labelText: 'Vehicle Make (e.g. Honda)', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: 'Vehicle Make (e.g. Toyota)', border: OutlineInputBorder()),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: TextField(
                               controller: modelCtrl,
-                              decoration: const InputDecoration(labelText: 'Vehicle Model (e.g. CR-V)', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: 'Vehicle Model (e.g. Prado)', border: OutlineInputBorder()),
                             ),
                           ),
                         ],
@@ -355,6 +428,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 1,
+                            child: DropdownButtonFormField<String>(
+                              value: bayOptions.contains(bayNumber) ? bayNumber : 'Bay 1',
+                              decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
+                              items: bayOptions.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                              onChanged: (val) => setModalState(() => bayNumber = val ?? 'Bay 1'),
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -363,13 +446,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               value: status,
-                              decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: '7-Stage Workflow Status', border: OutlineInputBorder()),
                               items: const [
-                                DropdownMenuItem(value: 'BOOKED', child: Text('Booked')),
-                                DropdownMenuItem(value: 'IN_PROGRESS', child: Text('In Progress')),
-                                DropdownMenuItem(value: 'WAITING', child: Text('Waiting (Parts)')),
-                                DropdownMenuItem(value: 'READY', child: Text('Ready')),
-                                DropdownMenuItem(value: 'COMPLETED', child: Text('Completed')),
+                                DropdownMenuItem(value: 'BOOKED', child: Text('1. Checked-In')),
+                                DropdownMenuItem(value: 'INSPECTION', child: Text('2. Inspection & OBD-II')),
+                                DropdownMenuItem(value: 'AWAITING_APPROVAL', child: Text('3. Awaiting Approval')),
+                                DropdownMenuItem(value: 'IN_PROGRESS', child: Text('4. In Repair')),
+                                DropdownMenuItem(value: 'WAITING', child: Text('5. Waiting Parts')),
+                                DropdownMenuItem(value: 'QUALITY_CHECK', child: Text('6. Quality Check (QC)')),
+                                DropdownMenuItem(value: 'READY', child: Text('7. Ready for Pickup')),
+                                DropdownMenuItem(value: 'COMPLETED', child: Text('Delivered / Closed')),
                               ],
                               onChanged: (val) => setModalState(() => status = val ?? 'IN_PROGRESS'),
                             ),
@@ -403,7 +489,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               },
                               child: InputDecorator(
                                 decoration: const InputDecoration(
-                                  labelText: 'Due Date',
+                                  labelText: 'Expected Completion',
                                   border: OutlineInputBorder(),
                                   suffixIcon: Icon(Icons.calendar_today, size: 18),
                                 ),
@@ -420,7 +506,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             child: TextField(
                               controller: odometerCtrl,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(labelText: 'Odometer (km)', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: 'Current Odometer (km)', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: nextMileageCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Next Service Due (km)', border: OutlineInputBorder()),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -434,7 +528,114 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               onChanged: (val) => setModalState(() => fuelLevel = val ?? 'Half'),
                             ),
                           ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 110,
+                            child: TextField(
+                              controller: estHoursCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Est. Hrs', border: OutlineInputBorder()),
+                            ),
+                          ),
                         ],
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: isWarranty ? Colors.amber.shade50 : Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: isWarranty ? Colors.amber.shade300 : Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: isWarranty,
+                              onChanged: (v) => setModalState(() => isWarranty = v ?? false),
+                            ),
+                            const Text('Warranty / Comeback Rework Job', style: TextStyle(fontWeight: FontWeight.w600)),
+                            const SizedBox(width: 24),
+                            Checkbox(
+                              value: qcPassed,
+                              activeColor: Colors.green,
+                              onChanged: (v) => setModalState(() => qcPassed = v ?? false),
+                            ),
+                            const Text('Quality Control (QC) Road-Test Passed', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      if (isWarranty) ...[
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: warrantyNotesCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Warranty / Rework Claim Reference & Notes',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blueGrey.shade100),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Mechanical & OBD-II Diagnostic Health Check (Tap to toggle Pass / Attention / Fail)',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 8,
+                              children: diagnostics.keys.map((sys) {
+                                final currentVal = diagnostics[sys] ?? 'Pass';
+                                final chipColor = currentVal == 'Pass'
+                                    ? Colors.green
+                                    : currentVal == 'Attention'
+                                        ? Colors.orange
+                                        : Colors.red;
+                                return InkWell(
+                                  onTap: () {
+                                    setModalState(() {
+                                      diagnostics[sys] = currentVal == 'Pass'
+                                          ? 'Attention'
+                                          : currentVal == 'Attention'
+                                              ? 'Fail'
+                                              : 'Pass';
+                                    });
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: chipColor.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: chipColor.withOpacity(0.5)),
+                                    ),
+                                    child: Text(
+                                      '$sys: $currentVal',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: chipColor),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: obdCodesCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'OBD-II Fault Codes / Scanner Notes (e.g. P0300 Random Misfire, ABS C1201)',
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 16),
                       const Divider(),
@@ -530,15 +731,24 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   ? memoDetails.selectedCategories.join(', ')
                                   : serviceCtrl.text.trim(),
                               'technician': techCtrl.text.trim().isEmpty ? 'Unassigned' : techCtrl.text.trim(),
+                              'bayNumber': bayNumber,
                               'status': status,
                               'priority': priority,
                               'dueDate': dueDate.toIso8601String(),
                               'odometer': int.tryParse(odometerCtrl.text.trim()),
+                              'nextServiceMileage': int.tryParse(nextMileageCtrl.text.trim()),
                               'fuelLevel': fuelLevel,
+                              'estimatedHours': double.tryParse(estHoursCtrl.text.trim()) ?? 2.0,
+                              'isWarranty': isWarranty,
+                              'warrantyNotes': warrantyNotesCtrl.text.trim(),
                               'walkAroundData': {
                                 'bodyType': bodyType.name,
                                 'markers': markers.map((m) => m.toJson()).toList(),
                                 'memoDetails': memoDetails.toJson(),
+                                'diagnostics': diagnostics,
+                                'obdCodes': obdCodesCtrl.text.trim(),
+                                'qcPassed': qcPassed,
+                                'assetKeys': assetKeys,
                                 'updatedAt': DateTime.now().toIso8601String(),
                               },
                             };
@@ -587,6 +797,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     ReceivingMemoDetails memoDetails = ReceivingMemoDetails(
       vinNumber: vehicle['vinNumber']?.toString() ?? '',
     );
+    Map<String, dynamic> diagnostics = {};
+    String obdCodes = '';
+    bool qcPassed = false;
+    List<String> assetKeys = [];
+
     final walkAround = job['walkAroundData'];
     if (walkAround is Map) {
       if (walkAround['bodyType'] != null) {
@@ -606,232 +821,366 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           Map<String, dynamic>.from(walkAround['memoDetails']),
         );
       }
+      if (walkAround['diagnostics'] is Map) {
+        diagnostics = Map<String, dynamic>.from(walkAround['diagnostics']);
+      }
+      if (walkAround['obdCodes'] != null) {
+        obdCodes = walkAround['obdCodes'].toString();
+      }
+      if (walkAround['qcPassed'] == true) {
+        qcPassed = true;
+      }
+      if (walkAround['assetKeys'] is List) {
+        assetKeys = (walkAround['assetKeys'] as List).map((e) => e.toString()).toList();
+      }
     }
 
     await showDialog(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Job Card $jobNo — ${customer['name'] ?? ''}'),
-              Chip(
-                label: Text(_statusLabel(job['status'] ?? 'IN_PROGRESS'),
-                    style: TextStyle(color: _statusColor(job['status'] ?? 'IN_PROGRESS'), fontWeight: FontWeight.bold)),
-                backgroundColor: _statusColor(job['status'] ?? 'IN_PROGRESS').withOpacity(0.1),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 680,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Info summary grid
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey.shade200),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('CUSTOMER DETAILS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
-                              const SizedBox(height: 6),
-                              Text('Name: ${customer['name'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                              Text('Phone: ${customer['phone'] ?? '-'}'),
-                              const SizedBox(height: 12),
-                              const Text('WORKSHOP ASSIGNMENT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
-                              const SizedBox(height: 6),
-                              Text('Service: ${job['workRequested'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                              Text('Technician: ${job['technician'] ?? 'Unassigned'}'),
-                              Text('Priority: ${job['priority'] ?? 'Medium'} • Due: ${_formatDateShort(job['dueDate'])}'),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('VEHICLE DETAILS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
-                              const SizedBox(height: 6),
-                              Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                              Text('Make/Model: ${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'),
-                              Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}'),
-                              Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Walk-Around Damage Map (Tap to mark or update vehicle damages)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  VehicleDamageMap(
-                    initialMarkers: markers,
-                    initialBodyType: bodyType,
-                    onMarkersChanged: (updated) {
-                      markers = updated;
-                    },
-                    onBodyTypeChanged: (updatedType) {
-                      bodyType = updatedType;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  WalkAroundChecklistWidget(
-                    details: memoDetails,
-                    onChanged: () {},
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Linked Estimates (${estimates.length})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          setState(() {
-                            _activeSidebar = 'Estimates';
-                            _activeTab = 'Estimates';
-                            _showEstimateCreator = true;
-                            _preselectedJobIdForEstimate = job['id'];
-                          });
-                        },
-                        icon: const Icon(Icons.receipt_long, size: 16),
-                        label: const Text('Create Estimate for this Job'),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  Expanded(child: Text('Job Card $jobNo — ${customer['name'] ?? ''}')),
+                  if (job['isWarranty'] == true)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: const Text('WARRANTY', style: TextStyle(color: Colors.brown, fontWeight: FontWeight.bold, fontSize: 11)),
+                        backgroundColor: Colors.amber.shade100,
                       ),
-                    ],
+                    ),
+                  Chip(
+                    label: Text(_statusLabel(job['status'] ?? 'IN_PROGRESS'),
+                        style: TextStyle(color: _statusColor(job['status'] ?? 'IN_PROGRESS'), fontWeight: FontWeight.bold)),
+                    backgroundColor: _statusColor(job['status'] ?? 'IN_PROGRESS').withOpacity(0.1),
                   ),
-                  const SizedBox(height: 8),
-                  if (estimates.isEmpty)
-                    const Text('No estimates generated for this job card yet.', style: TextStyle(color: Colors.grey))
-                  else
-                    ...estimates.map((est) {
-                      return Card(
-                        child: ListTile(
-                          title: Text('Total: KSH ${(est['total'] as num).toStringAsFixed(2)} (Incl. 16% VAT & ${est['discountRate']}% Discount)'),
-                          subtitle: Text('Status: ${est['status']} • Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
-                        ),
-                      );
-                    }).toList(),
                 ],
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () {
-                final updatedJob = Map<String, dynamic>.from(job);
-                updatedJob['walkAroundData'] = {
-                  'bodyType': bodyType.name,
-                  'markers': markers.map((m) => m.toJson()).toList(),
-                  'memoDetails': memoDetails.toJson(),
-                };
-                InvoicePdfService.showJobCardPreviewModal(
-                  context: context,
-                  workshopSettings: _workshopSettings,
-                  job: updatedJob,
-                );
-              },
-              icon: const Icon(Icons.print_outlined, size: 17, color: Color(0xFF1D4ED8)),
-              label: const Text(
-                'Print / PDF Customer Copy',
-                style: TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
+              content: SizedBox(
+                width: 700,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Info summary grid
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('CUSTOMER DETAILS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                  const SizedBox(height: 6),
+                                  Text('Name: ${customer['name'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  Text('Phone: ${customer['phone'] ?? '-'}'),
+                                  const SizedBox(height: 12),
+                                  const Text('WORKSHOP ASSIGNMENT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                  const SizedBox(height: 6),
+                                  Text('Service: ${job['workRequested'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  •  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
+                                  Text('Priority: ${job['priority'] ?? 'Medium'} • Due: ${_formatDateShort(job['dueDate'])}'),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('VEHICLE & DIAGNOSTIC SUMMARY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                  const SizedBox(height: 6),
+                                  Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  Text('Make/Model: ${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'),
+                                  Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  •  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
+                                  Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  •  QC Passed: ${qcPassed ? 'YES ✓' : 'Pending'}'),
+                                  if (obdCodes.isNotEmpty)
+                                    Text('OBD-II Codes: $obdCodes', style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final key = 'jobs/$jobNo/inspection-${DateTime.now().millisecondsSinceEpoch}.txt';
+                              final reportText = 'Inspection Snapshot for $jobNo (${vehicle['registrationNo']}) - Status: ${job['status']} - OBD: $obdCodes - Damages: ${markers.length}';
+                              final resp = await http.post(
+                                Uri.parse('$_baseUrl/assets/upload'),
+                                headers: {'Content-Type': 'application/json'},
+                                body: json.encode({
+                                  'key': key,
+                                  'contentText': reportText,
+                                  'contentType': 'text/plain',
+                                  'jobCardId': job['id'],
+                                }),
+                              );
+                              if (resp.statusCode == 201) {
+                                setModalState(() {
+                                  if (!assetKeys.contains(key)) assetKeys.add(key);
+                                });
+                                if (ctx.mounted) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    SnackBar(backgroundColor: Colors.green, content: Text('Uploaded $key to Neon Object Storage!')),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.cloud_upload_outlined, size: 16),
+                            label: Text('Archive Inspection to Neon Cloud (${assetKeys.length})'),
+                          ),
+                          const SizedBox(width: 10),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              final msg = 'Hello ${customer['name'] ?? 'Customer'}, your vehicle ${vehicle['registrationNo'] ?? ''} (Job Card $jobNo) at ${_workshopSettings['name'] ?? 'MechanicHQ'} is currently in stage: ${_statusLabel(job['status'] ?? 'IN_PROGRESS')}.';
+                              _launchWhatsAppMessage(customer['phone']?.toString() ?? '', msg);
+                            },
+                            icon: const Icon(Icons.chat_outlined, size: 16, color: Colors.green),
+                            label: const Text('Send WhatsApp Status Update', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      const Text('Walk-Around Damage Map (Tap to mark or update vehicle damages)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      VehicleDamageMap(
+                        initialMarkers: markers,
+                        initialBodyType: bodyType,
+                        onMarkersChanged: (updated) {
+                          markers = updated;
+                        },
+                        onBodyTypeChanged: (updatedType) {
+                          bodyType = updatedType;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      WalkAroundChecklistWidget(
+                        details: memoDetails,
+                        onChanged: () {},
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Linked Estimates (${estimates.length})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              setState(() {
+                                _activeSidebar = 'Estimates';
+                                _activeTab = 'Estimates';
+                                _showEstimateCreator = true;
+                                _preselectedJobIdForEstimate = job['id'];
+                              });
+                            },
+                            icon: const Icon(Icons.receipt_long, size: 16),
+                            label: const Text('Create Estimate for this Job'),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (estimates.isEmpty)
+                        const Text('No estimates generated for this job card yet.', style: TextStyle(color: Colors.grey))
+                      else
+                        ...estimates.map((est) {
+                          return Card(
+                            child: ListTile(
+                              title: Text('Total: KSH ${(est['total'] as num).toStringAsFixed(2)} (Incl. 16% VAT & ${est['discountRate']}% Discount)'),
+                              subtitle: Text('Status: ${est['status']} • Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
+                            ),
+                          );
+                        }).toList(),
+                    ],
+                  ),
+                ),
               ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFF1D4ED8)),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                await http.put(
-                  Uri.parse('$_baseUrl/jobs/${job['id']}'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: json.encode({
-                    'walkAroundData': {
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    final updatedJob = Map<String, dynamic>.from(job);
+                    updatedJob['walkAroundData'] = {
                       'bodyType': bodyType.name,
                       'markers': markers.map((m) => m.toJson()).toList(),
                       'memoDetails': memoDetails.toJson(),
-                      'updatedAt': DateTime.now().toIso8601String(),
-                    }
-                  }),
-                );
-                if (mounted) Navigator.pop(ctx);
-                _refreshAllData();
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-              child: const Text('Save Inspection & Checklist'),
-            ),
-          ],
+                      'diagnostics': diagnostics,
+                      'obdCodes': obdCodes,
+                      'qcPassed': qcPassed,
+                      'assetKeys': assetKeys,
+                    };
+                    InvoicePdfService.showJobCardPreviewModal(
+                      context: context,
+                      workshopSettings: _workshopSettings,
+                      job: updatedJob,
+                    );
+                  },
+                  icon: const Icon(Icons.print_outlined, size: 17, color: Color(0xFF1D4ED8)),
+                  label: const Text(
+                    'Print / PDF Customer Copy',
+                    style: TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF1D4ED8)),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    await http.put(
+                      Uri.parse('$_baseUrl/jobs/${job['id']}'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({
+                        'walkAroundData': {
+                          'bodyType': bodyType.name,
+                          'markers': markers.map((m) => m.toJson()).toList(),
+                          'memoDetails': memoDetails.toJson(),
+                          'diagnostics': diagnostics,
+                          'obdCodes': obdCodes,
+                          'qcPassed': qcPassed,
+                          'assetKeys': assetKeys,
+                          'updatedAt': DateTime.now().toIso8601String(),
+                        }
+                      }),
+                    );
+                    if (mounted) Navigator.pop(ctx);
+                    _refreshAllData();
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                  child: const Text('Save Inspection & Checklist'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
   // ==========================================
-  // DIALOG: ADD / EDIT PART IN CATALOG
+  // DIALOG: ADD / EDIT PART IN CATALOG + STOCK LEDGER
   // ==========================================
   Future<void> _showPartDialog({Map<String, dynamic>? existingPart}) async {
     final isEdit = existingPart != null;
     final partNoCtrl = TextEditingController(text: existingPart?['partNumber'] ?? '');
     final descCtrl = TextEditingController(text: existingPart?['description'] ?? '');
+    final brandCtrl = TextEditingController(text: existingPart?['brand']?.toString() ?? '');
+    final compatCtrl = TextEditingController(text: existingPart?['compatibility']?.toString() ?? '');
+    final costCtrl = TextEditingController(text: existingPart?['costPrice']?.toString() ?? '');
     final priceCtrl = TextEditingController(text: existingPart?['unitPrice']?.toString() ?? '');
     final stockCtrl = TextEditingController(text: existingPart?['stockQuantity']?.toString() ?? '10');
+    final reorderCtrl = TextEditingController(text: (existingPart?['reorderLevel'] ?? 5).toString());
+    final supplierCtrl = TextEditingController(text: existingPart?['supplierName']?.toString() ?? '');
 
     await showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: Text(isEdit ? 'Edit Part' : 'Add New Part to Catalog'),
+          title: Text(isEdit ? 'Edit Spare Part & Supplier Info' : 'Add New Part to Catalog'),
           content: SizedBox(
-            width: 450,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: partNoCtrl,
-                  decoration: const InputDecoration(labelText: 'Part Number (e.g. BP-2040)', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descCtrl,
-                  decoration: const InputDecoration(labelText: 'Part Description (e.g. Ceramic Brake Pads)', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: priceCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Unit Price (KSH)', border: OutlineInputBorder()),
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: partNoCtrl,
+                          decoration: const InputDecoration(labelText: 'Part / SKU No (e.g. BP-2040)', border: OutlineInputBorder()),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: stockCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Stock Quantity', border: OutlineInputBorder()),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: brandCtrl,
+                          decoration: const InputDecoration(labelText: 'Brand (e.g. Toyota OEM / Denso)', border: OutlineInputBorder()),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: descCtrl,
+                    decoration: const InputDecoration(labelText: 'Part Description (e.g. Ceramic Front Brake Pads)', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: compatCtrl,
+                          decoration: const InputDecoration(labelText: 'Compatible Models (e.g. Hilux / Prado)', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: supplierCtrl,
+                          decoration: const InputDecoration(labelText: 'Supplier Name', border: OutlineInputBorder()),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: costCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Buying Cost (KSH)', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: priceCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Selling Price (KSH)', border: OutlineInputBorder()),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: stockCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Current Stock Qty', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: reorderCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Min Reorder Alert Qty', border: OutlineInputBorder()),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -839,11 +1188,18 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
               onPressed: () async {
+                final sellingPrice = double.tryParse(priceCtrl.text.trim()) ?? 0;
+                final buyingCost = double.tryParse(costCtrl.text.trim()) ?? (sellingPrice * 0.65);
                 final payload = {
                   'partNumber': partNoCtrl.text.trim(),
                   'description': descCtrl.text.trim(),
-                  'unitPrice': double.tryParse(priceCtrl.text.trim()) ?? 0,
+                  'brand': brandCtrl.text.trim(),
+                  'compatibility': compatCtrl.text.trim(),
+                  'supplierName': supplierCtrl.text.trim(),
+                  'costPrice': buyingCost,
+                  'unitPrice': sellingPrice,
                   'stockQuantity': int.tryParse(stockCtrl.text.trim()) ?? 0,
+                  'reorderLevel': int.tryParse(reorderCtrl.text.trim()) ?? 5,
                 };
                 if (isEdit) {
                   await http.put(
@@ -864,6 +1220,483 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               child: Text(isEdit ? 'Update Part' : 'Add Part'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showStockMovementDialog(Map<String, dynamic> part) async {
+    String moveType = 'RECEIVED';
+    final qtyCtrl = TextEditingController(text: '5');
+    final costCtrl = TextEditingController(text: (part['costPrice'] ?? 0).toString());
+    final supplierCtrl = TextEditingController(text: part['supplierName']?.toString() ?? '');
+    final refCtrl = TextEditingController();
+    final movements = (part['stockMovements'] as List<dynamic>?) ?? [];
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              title: Text('Stock Ledger: ${part['partNumber']} — ${part['description']}'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Current In-Stock: ${part['stockQuantity']} units', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: moveType,
+                              decoration: const InputDecoration(labelText: 'Movement Type', border: OutlineInputBorder()),
+                              items: const [
+                                DropdownMenuItem(value: 'RECEIVED', child: Text('Receive Stock (+ In)')),
+                                DropdownMenuItem(value: 'ISSUED', child: Text('Issue to Job (- Out)')),
+                                DropdownMenuItem(value: 'RETURNED', child: Text('Customer/Job Return (+ In)')),
+                                DropdownMenuItem(value: 'ADJUSTED', child: Text('Stocktake Set Exact (=)')),
+                              ],
+                              onChanged: (v) => setModalState(() => moveType = v ?? 'RECEIVED'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: qtyCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Quantity', border: OutlineInputBorder()),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: costCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: 'Unit Buying Cost (KSH)', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: supplierCtrl,
+                              decoration: const InputDecoration(labelText: 'Supplier / Source', border: OutlineInputBorder()),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: refCtrl,
+                        decoration: const InputDecoration(labelText: 'Reference (LPO #, Delivery Note, or Job Card #)', border: OutlineInputBorder()),
+                      ),
+                      if (movements.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        const Text('Recent Stock Movements', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const Divider(),
+                        ...movements.take(5).map((m) => ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text('${m['type']}: ${m['quantity']} units  •  Ref: ${m['reference'] ?? '-'}',
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                              subtitle: Text('Supplier: ${m['supplierName'] ?? '-'}  •  ${_formatDateShort(m['createdAt'])}',
+                                  style: const TextStyle(fontSize: 11)),
+                            )),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.save_alt, size: 16),
+                  label: const Text('Record Stock Movement'),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  onPressed: () async {
+                    await http.post(
+                      Uri.parse('$_baseUrl/parts/${part['id']}/stock'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({
+                        'type': moveType,
+                        'quantity': int.tryParse(qtyCtrl.text.trim()) ?? 0,
+                        'unitCost': double.tryParse(costCtrl.text.trim()),
+                        'supplierName': supplierCtrl.text.trim(),
+                        'reference': refCtrl.text.trim(),
+                      }),
+                    );
+                    if (mounted) Navigator.pop(ctx);
+                    _refreshAllData();
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showRecordPaymentDialog(Map<String, dynamic> inv) async {
+    final est = inv['estimate'] ?? {};
+    final total = (est['total'] as num?)?.toDouble() ?? 0.0;
+    final alreadyPaid = (inv['amountPaid'] as num?)?.toDouble() ?? 0.0;
+    final remaining = (total - alreadyPaid).clamp(0.0, total);
+    final amountCtrl = TextEditingController(text: remaining > 0 ? remaining.toStringAsFixed(0) : total.toStringAsFixed(0));
+    final refCtrl = TextEditingController(text: inv['mpesaReceiptNo']?.toString() ?? '');
+    String mode = inv['paymentMode']?.toString() ?? 'MPESA';
+    if (!['MPESA', 'CASH', 'BANK TRANSFER', 'CARD', 'INVOICE CREDIT'].contains(mode)) {
+      mode = 'MPESA';
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              title: Text('Record Payment / Deposit — INV-${inv['id'].toString().substring(0, 6).toUpperCase()}'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Invoice Total: KSH ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text('Already Paid: KSH ${alreadyPaid.toStringAsFixed(2)}  •  Balance Due: KSH ${remaining.toStringAsFixed(2)}',
+                        style: const TextStyle(color: Colors.blueGrey, fontSize: 13)),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: mode,
+                      decoration: const InputDecoration(labelText: 'Payment Mode', border: OutlineInputBorder()),
+                      items: const [
+                        DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa (Paybill / Till)')),
+                        DropdownMenuItem(value: 'CASH', child: Text('Cash')),
+                        DropdownMenuItem(value: 'BANK TRANSFER', child: Text('Bank Transfer / Cheque')),
+                        DropdownMenuItem(value: 'CARD', child: Text('POS Card')),
+                        DropdownMenuItem(value: 'INVOICE CREDIT', child: Text('Pay Later / Corporate Credit')),
+                      ],
+                      onChanged: (v) => setModalState(() => mode = v ?? 'MPESA'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: amountCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Amount Received Now (KSH) — Enter Deposit or Full Balance',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: refCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'M-Pesa Receipt / Bank Reference (e.g. QKA82910XY)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.payments_outlined, size: 16),
+                  label: const Text('Save Payment'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+                  onPressed: () async {
+                    final payAmt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+                    await http.put(
+                      Uri.parse('$_baseUrl/invoices/${inv['id']}'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({
+                        'paymentMode': mode,
+                        'paymentAmount': payAmt,
+                        'mpesaReceiptNo': refCtrl.text.trim(),
+                        if (mode == 'INVOICE CREDIT' && payAmt <= 0) 'paymentStatus': 'PAY_LATER',
+                      }),
+                    );
+                    if (mounted) Navigator.pop(ctx);
+                    _refreshAllData();
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showCustomerHistoryDialog(Map<String, dynamic> customer) async {
+    final vehicles = (customer['vehicles'] as List<dynamic>?) ?? [];
+    final jobs = (customer['jobCards'] as List<dynamic>?) ?? [];
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Vehicle & Service History — ${customer['name'] ?? ''}'),
+              OutlinedButton.icon(
+                onPressed: () {
+                  final firstReg = vehicles.isNotEmpty ? vehicles.first['registrationNo'] : 'your vehicle';
+                  final msg = 'Hello ${customer['name']}, this is a courtesy reminder from ${_workshopSettings['name'] ?? 'MechanicHQ'} that $firstReg is due for its scheduled routine maintenance service.';
+                  _launchWhatsAppMessage(customer['phone']?.toString() ?? '', msg);
+                },
+                icon: const Icon(Icons.chat_outlined, size: 16, color: Colors.green),
+                label: const Text('Send WhatsApp Service Reminder', style: TextStyle(color: Colors.green)),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 680,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Phone: ${customer['phone'] ?? '-'}  •  Registered Vehicles: ${vehicles.length}  •  Total Visits: ${jobs.length}',
+                      style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.w600)),
+                  const Divider(height: 24),
+                  if (jobs.isEmpty)
+                    const Padding(padding: EdgeInsets.all(24), child: Text('No job cards recorded for this customer yet.'))
+                  else
+                    ...jobs.map((j) {
+                      final v = j['vehicle'] ?? {};
+                      final ests = (j['estimates'] as List<dynamic>?) ?? [];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          title: Text(
+                            '${j['jobNumber'] ?? 'Job'} — ${v['registrationNo'] ?? ''} (${v['make'] ?? ''} ${v['model'] ?? ''})',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Work: ${j['workRequested'] ?? '-'}  •  Technician: ${j['technician'] ?? '-'}'),
+                              Text('Odometer: ${j['odometer'] ?? '-'} km  •  Date: ${_formatDateShort(j['createdAt'])}  •  Estimates: ${ests.length}'),
+                            ],
+                          ),
+                          trailing: Chip(
+                            label: Text(_statusLabel(j['status'] ?? 'IN_PROGRESS'), style: const TextStyle(fontSize: 11)),
+                          ),
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showAppointmentDialog() async {
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final regCtrl = TextEditingController();
+    final vehicleCtrl = TextEditingController();
+    final serviceCtrl = TextEditingController(text: 'Routine Service & Inspection');
+    final techCtrl = TextEditingController();
+    String bay = 'Bay 1';
+    DateTime scheduledAt = DateTime.now().add(const Duration(days: 1));
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              title: const Text('Book Customer Appointment & Workshop Bay'),
+              content: SizedBox(
+                width: 480,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Customer Name *', border: OutlineInputBorder()))),
+                        const SizedBox(width: 12),
+                        Expanded(child: TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Phone Number', border: OutlineInputBorder()))),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(child: TextField(controller: regCtrl, decoration: const InputDecoration(labelText: 'Reg No (e.g. KDA 456B)', border: OutlineInputBorder()))),
+                        const SizedBox(width: 12),
+                        Expanded(child: TextField(controller: vehicleCtrl, decoration: const InputDecoration(labelText: 'Make / Model', border: OutlineInputBorder()))),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(controller: serviceCtrl, decoration: const InputDecoration(labelText: 'Service Type', border: OutlineInputBorder())),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: bay,
+                            decoration: const InputDecoration(labelText: 'Assigned Bay', border: OutlineInputBorder()),
+                            items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift 1', 'Lift 2']
+                                .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                                .toList(),
+                            onChanged: (v) => setModalState(() => bay = v ?? 'Bay 1'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: ctx,
+                                initialDate: scheduledAt,
+                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                                lastDate: DateTime(2030),
+                              );
+                              if (picked != null) setModalState(() => scheduledAt = picked);
+                            },
+                            child: InputDecorator(
+                              decoration: const InputDecoration(labelText: 'Scheduled Date', border: OutlineInputBorder()),
+                              child: Text(_formatDateShort(scheduledAt.toIso8601String())),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  onPressed: () async {
+                    await http.post(
+                      Uri.parse('$_baseUrl/appointments'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({
+                        'customerName': nameCtrl.text.trim(),
+                        'phone': phoneCtrl.text.trim(),
+                        'registrationNo': regCtrl.text.trim(),
+                        'makeModel': vehicleCtrl.text.trim(),
+                        'serviceType': serviceCtrl.text.trim(),
+                        'assignedBay': bay,
+                        'technician': techCtrl.text.trim().isEmpty ? 'Unassigned' : techCtrl.text.trim(),
+                        'scheduledAt': scheduledAt.toIso8601String(),
+                      }),
+                    );
+                    if (mounted) Navigator.pop(ctx);
+                    _refreshAllData();
+                  },
+                  child: const Text('Book Appointment'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showExpenseDialog() async {
+    String category = 'Workshop Consumables';
+    final descCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    String mode = 'CASH';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              title: const Text('Record Workshop Operating Expense'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: category,
+                      decoration: const InputDecoration(labelText: 'Expense Category', border: OutlineInputBorder()),
+                      items: const [
+                        DropdownMenuItem(value: 'Workshop Consumables', child: Text('Workshop Consumables & Oils')),
+                        DropdownMenuItem(value: 'Rent & Utilities', child: Text('Rent, Electricity & Water')),
+                        DropdownMenuItem(value: 'Casual Labour & Allowances', child: Text('Casual Labour & Technician Allowances')),
+                        DropdownMenuItem(value: 'Tools & Equipment', child: Text('Tools & Equipment Maintenance')),
+                        DropdownMenuItem(value: 'Transport & Parts Delivery', child: Text('Transport & Parts Delivery')),
+                      ],
+                      onChanged: (v) => setModalState(() => category = v ?? 'Workshop Consumables'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder())),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: amountCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(labelText: 'Amount (KSH)', border: OutlineInputBorder()),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: mode,
+                            decoration: const InputDecoration(labelText: 'Paid Via', border: OutlineInputBorder()),
+                            items: const [
+                              DropdownMenuItem(value: 'CASH', child: Text('Cash')),
+                              DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa')),
+                              DropdownMenuItem(value: 'BANK', child: Text('Bank')),
+                            ],
+                            onChanged: (v) => setModalState(() => mode = v ?? 'CASH'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  onPressed: () async {
+                    await http.post(
+                      Uri.parse('$_baseUrl/expenses'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: json.encode({
+                        'category': category,
+                        'description': descCtrl.text.trim(),
+                        'amount': double.tryParse(amountCtrl.text.trim()) ?? 0,
+                        'paymentMode': mode,
+                      }),
+                    );
+                    if (mounted) Navigator.pop(ctx);
+                    _refreshAllData();
+                  },
+                  child: const Text('Save Expense'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -945,6 +1778,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 children: [
                   _sidebarItem(Icons.dashboard, 'Dashboard', tabTarget: 'Current Job Cards'),
                   _sidebarItem(Icons.directions_car, 'Job Cards', tabTarget: 'Current Job Cards'),
+                  _sidebarItem(Icons.calendar_month, 'Appointments'),
                   _sidebarItem(Icons.inventory, 'Parts Catalog', tabTarget: 'Parts Catalog'),
                   _sidebarItem(Icons.receipt, 'Estimates', tabTarget: 'Estimates'),
                   _sidebarItem(Icons.request_quote, 'Invoices', tabTarget: 'Invoices'),
@@ -1171,6 +2005,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // WORKSPACE SWITCHER (TABS & SIDEBAR VIEWS)
   // ==========================================
   Widget _buildMainWorkspaceSection() {
+    if (_activeSidebar == 'Appointments') return _buildAppointmentsSection();
     if (_activeSidebar == 'Customers') return _buildCustomersSection();
     if (_activeSidebar == 'Employees') return _buildEmployeesSection();
     if (_activeSidebar == 'Reports') return _buildReportsSection();
@@ -1299,11 +2134,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       icon: const Icon(Icons.keyboard_arrow_down, size: 16),
                       items: const [
                         DropdownMenuItem(value: 'All', child: Text('Status: All', style: TextStyle(fontSize: 14))),
-                        DropdownMenuItem(value: 'BOOKED', child: Text('Booked', style: TextStyle(fontSize: 14))),
-                        DropdownMenuItem(value: 'IN_PROGRESS', child: Text('In Progress', style: TextStyle(fontSize: 14))),
-                        DropdownMenuItem(value: 'WAITING', child: Text('Waiting (Parts)', style: TextStyle(fontSize: 14))),
-                        DropdownMenuItem(value: 'READY', child: Text('Ready', style: TextStyle(fontSize: 14))),
-                        DropdownMenuItem(value: 'COMPLETED', child: Text('Completed', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'BOOKED', child: Text('1. Checked-In', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'INSPECTION', child: Text('2. Inspection', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'AWAITING_APPROVAL', child: Text('3. Awaiting Approval', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'IN_PROGRESS', child: Text('4. In Repair', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'WAITING', child: Text('5. Waiting Parts', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'QUALITY_CHECK', child: Text('6. Quality Check', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'READY', child: Text('7. Ready for Pickup', style: TextStyle(fontSize: 14))),
+                        DropdownMenuItem(value: 'COMPLETED', child: Text('Delivered / Closed', style: TextStyle(fontSize: 14))),
                       ],
                       onChanged: (val) => setState(() => _statusFilter = val ?? 'All'),
                     ),
@@ -1549,20 +2387,24 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     headingRowColor: MaterialStateProperty.all(Colors.grey.shade50),
                     columns: const [
                       DataColumn(label: Text('Part Number', style: TextStyle(fontWeight: FontWeight.bold))),
-                      DataColumn(label: Text('Description', style: TextStyle(fontWeight: FontWeight.bold))),
-                      DataColumn(label: Text('Unit Price (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Description & Brand', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Cost / Retail (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
                       DataColumn(label: Text('Stock Qty', style: TextStyle(fontWeight: FontWeight.bold))),
                       DataColumn(label: Text('Stock Status', style: TextStyle(fontWeight: FontWeight.bold))),
                       DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                     ],
                     rows: _parts.map((part) {
                       final stock = (part['stockQuantity'] as num?)?.toInt() ?? 0;
-                      final isLow = stock <= 5;
+                      final reorder = (part['reorderLevel'] as num?)?.toInt() ?? 5;
+                      final isLow = stock <= reorder;
+                      final cost = (part['costPrice'] as num?)?.toDouble() ?? 0.0;
+                      final retail = (part['unitPrice'] as num?)?.toDouble() ?? 0.0;
+                      final brand = part['brand']?.toString() ?? '';
                       return DataRow(
                         cells: [
                           DataCell(Text(part['partNumber'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                          DataCell(Text(part['description'] ?? '')),
-                          DataCell(Text('KSH ${(part['unitPrice'] as num).toStringAsFixed(2)}')),
+                          DataCell(Text('${part['description'] ?? ''}${brand.isNotEmpty ? ' ($brand)' : ''}')),
+                          DataCell(Text('${cost.toStringAsFixed(0)} / ${retail.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.w600))),
                           DataCell(Text('$stock')),
                           DataCell(
                             Container(
@@ -1581,11 +2423,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _showStockMovementDialog(Map<String, dynamic>.from(part)),
+                                  icon: const Icon(Icons.inventory_2_outlined, size: 14),
+                                  label: const Text('+ Stock', style: TextStyle(fontSize: 12)),
+                                ),
+                                const SizedBox(width: 6),
                                 OutlinedButton(
                                   onPressed: () => _showPartDialog(existingPart: Map<String, dynamic>.from(part)),
                                   child: const Text('Edit', style: TextStyle(fontSize: 12)),
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 6),
                                 IconButton(
                                   icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
                                   onPressed: () async {
@@ -1737,7 +2585,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   // ==========================================
-  // TAB 4: INVOICES (Payment & Pay-Later)
+  // TAB 4: INVOICES (Deposits, Partial Payments, M-Pesa Ref & Pay-Later)
   // ==========================================
   Widget _buildInvoicesTabContent() {
     if (_invoices.isEmpty) {
@@ -1760,9 +2608,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               columns: const [
                 DataColumn(label: Text('Invoice #', style: TextStyle(fontWeight: FontWeight.bold))),
                 DataColumn(label: Text('Customer & Vehicle', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Amount Due (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
+                DataColumn(label: Text('Total / Balance (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
                 DataColumn(label: Text('Payment Status', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Payment Mode', style: TextStyle(fontWeight: FontWeight.bold))),
+                DataColumn(label: Text('Mode & M-Pesa Ref', style: TextStyle(fontWeight: FontWeight.bold))),
                 DataColumn(label: Text('Record Payment', style: TextStyle(fontWeight: FontWeight.bold))),
                 DataColumn(label: Text('A4 Invoice & PDF', style: TextStyle(fontWeight: FontWeight.bold))),
               ],
@@ -1770,22 +2618,36 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 final est = inv['estimate'] ?? {};
                 final job = est['jobCard'] ?? {};
                 final customer = job['customer']?['name'] ?? 'Customer';
+                final phone = job['customer']?['phone']?.toString() ?? '';
                 final reg = job['vehicle']?['registrationNo'] ?? '';
                 final total = (est['total'] as num?)?.toDouble() ?? 0.0;
                 final payStatus = inv['paymentStatus'] ?? 'UNPAID';
+                final paid = (inv['amountPaid'] as num?)?.toDouble() ?? (payStatus == 'PAID' ? total : 0.0);
+                final bal = (inv['balanceDue'] as num?)?.toDouble() ?? (total - paid).clamp(0.0, total);
+                final mpesaRef = inv['mpesaReceiptNo']?.toString() ?? '';
 
                 return DataRow(
                   cells: [
                     DataCell(Text('INV-${inv['id'].toString().substring(0, 6).toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold))),
                     DataCell(Text('$customer ($reg)')),
-                    DataCell(Text('KSH ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold))),
+                    DataCell(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('KSH ${total.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          if (paid > 0 && bal > 0)
+                            Text('Bal: KSH ${bal.toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
                     DataCell(
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           color: payStatus == 'PAID'
                               ? Colors.green.withOpacity(0.1)
-                              : payStatus == 'PAY_LATER'
+                              : (payStatus == 'PARTIAL' || payStatus == 'PAY_LATER')
                                   ? Colors.orange.withOpacity(0.1)
                                   : Colors.red.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
@@ -1795,7 +2657,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           style: TextStyle(
                             color: payStatus == 'PAID'
                                 ? Colors.green
-                                : payStatus == 'PAY_LATER'
+                                : (payStatus == 'PARTIAL' || payStatus == 'PAY_LATER')
                                     ? Colors.orange.shade800
                                     : Colors.red,
                             fontWeight: FontWeight.bold,
@@ -1804,13 +2666,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                     ),
-                    DataCell(Text(inv['paymentMode'] ?? 'N/A')),
+                    DataCell(Text('${inv['paymentMode'] ?? 'N/A'}${mpesaRef.isNotEmpty ? ' ($mpesaRef)' : ''}')),
                     DataCell(
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (payStatus != 'PAID') ...[
-                            ElevatedButton(
+                            ElevatedButton.icon(
+                              onPressed: () => _showRecordPaymentDialog(Map<String, dynamic>.from(inv)),
+                              icon: const Icon(Icons.payments_outlined, size: 14),
+                              label: const Text('Pay / Deposit', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+                            ),
+                            const SizedBox(width: 6),
+                            OutlinedButton(
                               onPressed: () async {
                                 await http.put(
                                   Uri.parse('$_baseUrl/invoices/${inv['id']}'),
@@ -1819,32 +2688,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 );
                                 _refreshAllData();
                               },
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                              child: const Text('Pay M-Pesa', style: TextStyle(fontSize: 12)),
-                            ),
-                            const SizedBox(width: 6),
-                            OutlinedButton(
-                              onPressed: () async {
-                                await http.put(
-                                  Uri.parse('$_baseUrl/invoices/${inv['id']}'),
-                                  headers: {'Content-Type': 'application/json'},
-                                  body: json.encode({'paymentStatus': 'PAID', 'paymentMode': 'CASH'}),
-                                );
-                                _refreshAllData();
-                              },
-                              child: const Text('Pay Cash', style: TextStyle(fontSize: 12)),
-                            ),
-                            const SizedBox(width: 6),
-                            OutlinedButton(
-                              onPressed: () async {
-                                await http.put(
-                                  Uri.parse('$_baseUrl/invoices/${inv['id']}'),
-                                  headers: {'Content-Type': 'application/json'},
-                                  body: json.encode({'paymentStatus': 'PAY_LATER', 'paymentMode': 'INVOICE CREDIT'}),
-                                );
-                                _refreshAllData();
-                              },
-                              child: const Text('Pay Later', style: TextStyle(fontSize: 12)),
+                              child: const Text('Full M-Pesa', style: TextStyle(fontSize: 12)),
                             ),
                           ] else
                             const Text('Paid in Full ✓', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
@@ -1891,6 +2735,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               isInvoice: true,
                             ),
                           ),
+                          IconButton(
+                            tooltip: 'Send WhatsApp Invoice Summary',
+                            icon: const Icon(Icons.chat_outlined, color: Colors.green, size: 20),
+                            onPressed: () {
+                              final msg = 'Hello $customer, your invoice INV-${inv['id'].toString().substring(0, 6).toUpperCase()} for $reg at ${_workshopSettings['name'] ?? 'MechanicHQ'} is KSH ${total.toStringAsFixed(0)} (Paid: KSH ${paid.toStringAsFixed(0)}, Balance Due: KSH ${bal.toStringAsFixed(0)}). Thank you!';
+                              _launchWhatsAppMessage(phone, msg);
+                            },
+                          ),
                         ],
                       ),
                     ),
@@ -1905,8 +2757,131 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   // ==========================================
-  // SIDEBAR SECTIONS: CUSTOMERS, EMPLOYEES, REPORTS, SETTINGS
+  // SIDEBAR SECTIONS: APPOINTMENTS, CUSTOMERS, EMPLOYEES, REPORTS, SETTINGS
   // ==========================================
+  Widget _buildAppointmentsSection() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Appointments & Bay Schedule (${_appointments.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ElevatedButton.icon(
+                onPressed: _showAppointmentDialog,
+                icon: const Icon(Icons.calendar_month, size: 18),
+                label: const Text('+ Book Appointment'),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          if (_appointments.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: Text('No appointments scheduled yet. Click "+ Book Appointment" to reserve a bay or mechanic.')),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('Scheduled Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Vehicle Reg', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Service Type', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Bay / Lift', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                ],
+                rows: _appointments.map((a) {
+                  final status = a['status'] ?? 'SCHEDULED';
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(_formatDate(a['scheduledAt']))),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(a['customerName'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            if ((a['customerPhone'] ?? '').toString().isNotEmpty)
+                              Text(a['customerPhone'].toString(), style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                          ],
+                        ),
+                      ),
+                      DataCell(Text(a['registrationNo'] ?? '-', style: const TextStyle(fontWeight: FontWeight.w600))),
+                      DataCell(Text(a['serviceType'] ?? '-')),
+                      DataCell(Text(a['bayNumber'] ?? 'Unassigned')),
+                      DataCell(
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: status == 'ARRIVED' ? Colors.green.shade50 : Colors.blue.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            status.toString(),
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: status == 'ARRIVED' ? Colors.green.shade800 : Colors.blue.shade800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      DataCell(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () async {
+                                await http.put(
+                                  Uri.parse('$_baseUrl/appointments/${a['id']}'),
+                                  headers: {'Content-Type': 'application/json'},
+                                  body: json.encode({'status': 'ARRIVED'}),
+                                );
+                                _refreshAllData();
+                                _showJobCardDialog();
+                              },
+                              icon: const Icon(Icons.assignment_add, size: 15, color: Color(0xFF2563EB)),
+                              label: const Text('Convert to Job Card', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            ),
+                            if ((a['customerPhone'] ?? '').toString().isNotEmpty)
+                              IconButton(
+                                tooltip: 'WhatsApp Appointment Reminder',
+                                icon: const Icon(Icons.chat, size: 16, color: Color(0xFF16A34A)),
+                                onPressed: () {
+                                  _launchWhatsAppMessage(
+                                    a['customerPhone'].toString(),
+                                    'Hello ${a['customerName']}, reminder of your ${a['serviceType']} appointment for ${a['registrationNo']} on ${_formatDate(a['scheduledAt'])} (${a['bayNumber'] ?? 'Workshop'}).',
+                                  );
+                                },
+                              ),
+                            IconButton(
+                              tooltip: 'Delete Appointment',
+                              icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
+                              onPressed: () async {
+                                await http.delete(Uri.parse('$_baseUrl/appointments/${a['id']}'));
+                                _refreshAllData();
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCustomersSection() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -1917,7 +2892,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Registered Customers (${_customers.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('Registered Customers & Vehicle History (${_customers.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ElevatedButton.icon(
                 onPressed: () => _showJobCardDialog(),
                 icon: const Icon(Icons.person_add, size: 18),
@@ -1930,25 +2905,65 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           if (_customers.isEmpty)
             const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No customers recorded yet.')))
           else
-            DataTable(
-              columns: const [
-                DataColumn(label: Text('Customer Name', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Phone', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Vehicles', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Total Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
-              ],
-              rows: _customers.map((c) {
-                final vehicles = (c['vehicles'] as List<dynamic>?) ?? [];
-                final jobs = (c['jobCards'] as List<dynamic>?) ?? [];
-                return DataRow(
-                  cells: [
-                    DataCell(Text(c['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                    DataCell(Text(c['phone'] ?? '-')),
-                    DataCell(Text(vehicles.map((v) => v['registrationNo']).join(', '))),
-                    DataCell(Text('${jobs.length}')),
-                  ],
-                );
-              }).toList(),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('Customer Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Phone', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Vehicles (Reg & Make)', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Total Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Service History & Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                ],
+                rows: _customers.map((c) {
+                  final vehicles = (c['vehicles'] as List<dynamic>?) ?? [];
+                  final jobs = (c['jobCards'] as List<dynamic>?) ?? [];
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(c['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
+                      DataCell(Text(c['phone'] ?? '-')),
+                      DataCell(
+                        Text(
+                          vehicles.map((v) => '${v['registrationNo']} (${v['make']} ${v['model']})').join(', '),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      DataCell(Text('${jobs.length}', style: const TextStyle(fontWeight: FontWeight.bold))),
+                      DataCell(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () => _showCustomerHistoryDialog(Map<String, dynamic>.from(c)),
+                              icon: const Icon(Icons.history, size: 15),
+                              label: const Text('Service History', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.indigo.shade50,
+                                foregroundColor: Colors.indigo.shade800,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if ((c['phone'] ?? '').toString().isNotEmpty)
+                              IconButton(
+                                tooltip: 'WhatsApp Service Reminder',
+                                icon: const Icon(Icons.chat, size: 17, color: Color(0xFF16A34A)),
+                                onPressed: () {
+                                  final firstReg = vehicles.isNotEmpty ? vehicles.first['registrationNo'] : 'your vehicle';
+                                  _launchWhatsAppMessage(
+                                    c['phone'].toString(),
+                                    'Hello ${c['name']}, friendly reminder from ${_workshopSettings['name'] ?? 'our Auto Workshop'} that $firstReg may be due for periodic maintenance/service. Reply to book a bay!',
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
             ),
         ],
       ),
@@ -1960,107 +2975,278 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final emailCtrl = TextEditingController();
     String selectedRole = 'MECHANIC';
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Workshop Technicians & Employees', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Row(
+    return StatefulBuilder(
+      builder: (context, setEmpState) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: 'Technician / Employee Name', border: OutlineInputBorder()),
-                ),
+              const Text('Workshop Technicians, Service Advisors & Staff', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Staff / Technician Name', border: OutlineInputBorder()),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: emailCtrl,
+                      decoration: const InputDecoration(labelText: 'Email Address', border: OutlineInputBorder()),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 1,
+                    child: DropdownButtonFormField<String>(
+                      value: selectedRole,
+                      decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
+                      items: const [
+                        DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC')),
+                        DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR')),
+                        DropdownMenuItem(value: 'MANAGER', child: Text('MANAGER')),
+                        DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER')),
+                        DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER')),
+                      ],
+                      onChanged: (v) => setEmpState(() => selectedRole = v ?? 'MECHANIC'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      if (nameCtrl.text.trim().isEmpty) return;
+                      await http.post(
+                        Uri.parse('$_baseUrl/employees'),
+                        headers: {'Content-Type': 'application/json'},
+                        body: json.encode({
+                          'name': nameCtrl.text.trim(),
+                          'email': emailCtrl.text.trim(),
+                          'role': selectedRole,
+                        }),
+                      );
+                      _refreshAllData();
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Staff'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: emailCtrl,
-                  decoration: const InputDecoration(labelText: 'Email Address', border: OutlineInputBorder()),
+              const Divider(height: 32),
+              if (_employees.isEmpty)
+                const Padding(padding: EdgeInsets.all(24), child: Text('No employees added yet. Add technicians above so they appear in Job Card assignments.'))
+              else
+                DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: _employees.map((e) {
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(e['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(e['email'] ?? '')),
+                        DataCell(Chip(label: Text(e['role'] ?? 'MECHANIC', style: const TextStyle(fontSize: 11)))),
+                        DataCell(
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () async {
+                              await http.delete(Uri.parse('$_baseUrl/employees/${e['id']}'));
+                              _refreshAllData();
+                            },
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
                 ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  if (nameCtrl.text.trim().isEmpty) return;
-                  await http.post(
-                    Uri.parse('$_baseUrl/employees'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: json.encode({
-                      'name': nameCtrl.text.trim(),
-                      'email': emailCtrl.text.trim(),
-                      'role': selectedRole,
-                    }),
-                  );
-                  _refreshAllData();
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add Technician'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                ),
-              ),
             ],
           ),
-          const Divider(height: 32),
-          if (_employees.isEmpty)
-            const Padding(padding: EdgeInsets.all(24), child: Text('No employees added yet. Add technicians above so they appear in Job Card assignments.'))
-          else
-            DataTable(
-              columns: const [
-                DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
-              ],
-              rows: _employees.map((e) {
-                return DataRow(
-                  cells: [
-                    DataCell(Text(e['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                    DataCell(Text(e['email'] ?? '')),
-                    DataCell(Chip(label: Text(e['role'] ?? 'MECHANIC', style: const TextStyle(fontSize: 11)))),
-                    DataCell(
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () async {
-                          await http.delete(Uri.parse('$_baseUrl/employees/${e['id']}'));
-                          _refreshAllData();
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   Widget _buildReportsSection() {
     final rev = (_dashboard['totalRevenue'] as num?)?.toDouble() ?? 0.0;
+    final billed = (_dashboard['totalBilled'] as num?)?.toDouble() ?? rev;
+    final outstanding = (_dashboard['outstandingBalance'] as num?)?.toDouble() ?? 0.0;
+    final partsCostCogs = (_dashboard['partsCostCogs'] as num?)?.toDouble() ?? 0.0;
+    final totalExpenses = (_dashboard['totalExpenses'] as num?)?.toDouble() ?? 0.0;
+    final netProfit = (_dashboard['netProfit'] as num?)?.toDouble() ?? (rev - partsCostCogs - totalExpenses);
+    final labourRev = (_dashboard['labourRevenue'] as num?)?.toDouble() ?? 0.0;
+    final partsRev = (_dashboard['partsRevenue'] as num?)?.toDouble() ?? 0.0;
+    final stockValCost = (_dashboard['stockValuationCost'] as num?)?.toDouble() ?? 0.0;
+    final stockValRetail = (_dashboard['stockValuationRetail'] as num?)?.toDouble() ?? 0.0;
+    final mechProd = (_dashboard['mechanicProductivity'] as List<dynamic>?) ?? [];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top Financial P&L Cards
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Workshop Profit & Loss (P&L) & Financial Analytics', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ElevatedButton.icon(
+                    onPressed: _showExpenseDialog,
+                    icon: const Icon(Icons.receipt_long, size: 18),
+                    label: const Text('+ Record Workshop Expense'),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEA580C), foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+              const Divider(height: 24),
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  _pnlCard('Collected Revenue', 'KSH ${rev.toStringAsFixed(0)}', 'Total Billed: KSH ${billed.toStringAsFixed(0)}', Colors.blue.shade700, Colors.blue.shade50),
+                  _pnlCard('Spare Parts COGS', 'KSH ${partsCostCogs.toStringAsFixed(0)}', 'Buying cost of parts sold', Colors.orange.shade800, Colors.orange.shade50),
+                  _pnlCard('Workshop Expenses', 'KSH ${totalExpenses.toStringAsFixed(0)}', '${_expenses.length} recorded expenses', Colors.red.shade700, Colors.red.shade50),
+                  _pnlCard('True Net Profit', 'KSH ${netProfit.toStringAsFixed(0)}', 'Revenue - COGS - Expenses', netProfit >= 0 ? Colors.green.shade800 : Colors.red.shade900, netProfit >= 0 ? Colors.green.shade50 : Colors.red.shade50),
+                  _pnlCard('Outstanding Debtors', 'KSH ${outstanding.toStringAsFixed(0)}', 'Unpaid / Partial Invoices', Colors.purple.shade800, Colors.purple.shade50),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _summaryRow('Labour Charges Revenue (Estimates & Repairs)', 'KSH ${labourRev.toStringAsFixed(2)}'),
+              _summaryRow('Spare Parts Sales Revenue', 'KSH ${partsRev.toStringAsFixed(2)}'),
+              _summaryRow('Inventory Stock Valuation (At Buying Cost)', 'KSH ${stockValCost.toStringAsFixed(2)}'),
+              _summaryRow('Inventory Stock Valuation (At Retail Selling Price)', 'KSH ${stockValRetail.toStringAsFixed(2)}'),
+              _summaryRow('Total Job Cards / Active / Completed', '${_dashboard['totalJobsCount'] ?? 0} Total • ${_dashboard['activeJobsCount'] ?? 0} Active • ${_dashboard['completedJobsCount'] ?? 0} Completed'),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // Mechanic Productivity & Turnaround Table
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Mechanic Productivity & Turnaround Performance', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Divider(height: 20),
+              if (mechProd.isEmpty)
+                const Text('No technicians assigned to jobs yet.', style: TextStyle(color: Colors.grey))
+              else
+                DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Assigned Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Completed Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Est. Hours Logged', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: mechProd.map((m) {
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(m['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(m['role'] ?? 'MECHANIC')),
+                        DataCell(Text('${m['assignedJobs'] ?? 0}')),
+                        DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
+                        DataCell(Text('${m['totalEstimatedHours'] ?? 0} hrs')),
+                      ],
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // Workshop Expenses Ledger
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Workshop Operating Expenses (${_expenses.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  TextButton.icon(
+                    onPressed: _showExpenseDialog,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Add Expense'),
+                  ),
+                ],
+              ),
+              const Divider(height: 20),
+              if (_expenses.isEmpty)
+                const Text('No workshop expenses recorded yet.', style: TextStyle(color: Colors.grey))
+              else
+                DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Description', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Amount (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: _expenses.map((e) {
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(_formatDate(e['incurredAt']))),
+                        DataCell(Chip(label: Text(e['category'] ?? 'GENERAL', style: const TextStyle(fontSize: 11)))),
+                        DataCell(Text(e['description'] ?? '')),
+                        DataCell(Text('KSH ${((e['amount'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red))),
+                        DataCell(
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                            onPressed: () async {
+                              await http.delete(Uri.parse('$_baseUrl/expenses/${e['id']}'));
+                              _refreshAllData();
+                            },
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _pnlCard(String title, String value, String subtitle, Color textColor, Color bgColor) {
     return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+      width: 210,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: textColor.withOpacity(0.2)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Workshop Operational & Financial Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const Divider(height: 24),
-          _summaryRow('Total Realized & Approved Revenue', 'KSH ${rev.toStringAsFixed(2)}'),
-          _summaryRow('Total Job Cards Created', '${_dashboard['totalJobsCount'] ?? 0}'),
-          _summaryRow('Active / In-Progress Job Cards', '${_dashboard['activeJobsCount'] ?? 0}'),
-          _summaryRow('Completed Job Cards', '${_dashboard['completedJobsCount'] ?? 0}'),
-          _summaryRow('Total Estimates Generated', '${_estimates.length}'),
-          _summaryRow('Total Invoices Issued', '${_invoices.length}'),
-          _summaryRow('Registered Customers', '${_dashboard['customersCount'] ?? 0}'),
-          _summaryRow('Catalog Parts Count', '${_parts.length}'),
+          Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: textColor)),
+          const SizedBox(height: 6),
+          Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: textColor)),
+          const SizedBox(height: 4),
+          Text(subtitle, style: const TextStyle(fontSize: 11, color: Colors.black54)),
         ],
       ),
     );

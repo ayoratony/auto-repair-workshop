@@ -40,3 +40,7 @@ Future<void> printPdfBytesImpl(Uint8List bytes, String docName) async {
     }
   });
 }
+
+Future<void> openExternalUrlImpl(String url) async {
+  html.window.open(url, '_blank');
+}

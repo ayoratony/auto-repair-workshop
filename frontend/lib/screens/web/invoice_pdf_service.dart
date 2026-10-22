@@ -408,6 +408,10 @@ class InvoicePdfService {
                                     ),
                                     pw.SizedBox(height: 6),
                                     pw.Text('Payment Mode: ${d.paymentMode}', style: pw.TextStyle(font: fontBold, fontSize: 9.5, color: navyDark)),
+                                    if (d.mpesaReceiptNo.isNotEmpty) ...[
+                                      pw.SizedBox(height: 2),
+                                      pw.Text('Ref / M-Pesa Receipt: ${d.mpesaReceiptNo}', style: pw.TextStyle(font: fontBold, fontSize: 9, color: const PdfColor.fromInt(0xFF15803D))),
+                                    ],
                                     pw.SizedBox(height: 3),
                                     pw.Text('M-Pesa Paybill: 400200  |  Account: ${d.docNumber}', style: const pw.TextStyle(fontSize: 9, color: textDark)),
                                     pw.Text('Bank: Stanbic / KCB Auto Workshop Account', style: const pw.TextStyle(fontSize: 9, color: textMuted)),
@@ -462,6 +466,24 @@ class InvoicePdfService {
                               ],
                               pw.SizedBox(height: 6),
                               _summaryLine(fontRegular, fontBold, 'VAT (${d.taxRate.toStringAsFixed(0)}%)', '+ KSH ${_formatCurrency(d.taxAmount)}'),
+                              if (isInvoice && d.amountPaid > 0) ...[
+                                pw.SizedBox(height: 6),
+                                _summaryLine(
+                                  fontRegular,
+                                  fontBold,
+                                  'Amount Paid / Deposit',
+                                  '- KSH ${_formatCurrency(d.amountPaid)}',
+                                  valueColor: const PdfColor.fromInt(0xFF15803D),
+                                ),
+                                pw.SizedBox(height: 6),
+                                _summaryLine(
+                                  fontRegular,
+                                  fontBold,
+                                  'Balance Due',
+                                  'KSH ${_formatCurrency(d.balanceDue)}',
+                                  valueColor: d.balanceDue > 0 ? const PdfColor.fromInt(0xFFB91C1C) : const PdfColor.fromInt(0xFF15803D),
+                                ),
+                              ],
                               pw.SizedBox(height: 10),
                               pw.Container(
                                 padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -473,7 +495,7 @@ class InvoicePdfService {
                                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                                   children: [
                                     pw.Text(
-                                      isInvoice ? 'TOTAL DUE' : 'ESTIMATE TOTAL',
+                                      isInvoice ? 'INVOICE TOTAL' : 'ESTIMATE TOTAL',
                                       style: pw.TextStyle(font: fontBold, fontSize: 10, color: PdfColors.white),
                                     ),
                                     pw.Text(
@@ -1023,6 +1045,10 @@ class InvoicePdfService {
                                     ),
                                     const SizedBox(height: 8),
                                     Text('Payment Mode: ${d.paymentMode}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F172A))),
+                                    if (d.mpesaReceiptNo.isNotEmpty) ...[
+                                      const SizedBox(height: 3),
+                                      Text('Ref / M-Pesa Receipt: ${d.mpesaReceiptNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, color: Color(0xFF15803D))),
+                                    ],
                                     const SizedBox(height: 4),
                                     Text('M-Pesa Paybill: 400200  •  Account: ${d.docNumber}', style: const TextStyle(fontSize: 12, color: Color(0xFF1E293B))),
                                     const Text('Bank: Stanbic / KCB Auto Workshop Account', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
@@ -1074,6 +1100,20 @@ class InvoicePdfService {
                               ],
                               const SizedBox(height: 8),
                               _previewSummaryLine('VAT (${d.taxRate.toStringAsFixed(0)}%)', '+ KSH ${_formatCurrency(d.taxAmount)}'),
+                              if (isInvoice && d.amountPaid > 0) ...[
+                                const SizedBox(height: 8),
+                                _previewSummaryLine(
+                                  'Amount Paid / Deposit',
+                                  '- KSH ${_formatCurrency(d.amountPaid)}',
+                                  valueColor: const Color(0xFF15803D),
+                                ),
+                                const SizedBox(height: 8),
+                                _previewSummaryLine(
+                                  'Balance Due',
+                                  'KSH ${_formatCurrency(d.balanceDue)}',
+                                  valueColor: d.balanceDue > 0 ? const Color(0xFFB91C1C) : const Color(0xFF15803D),
+                                ),
+                              ],
                               const SizedBox(height: 12),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1085,7 +1125,7 @@ class InvoicePdfService {
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
-                                      isInvoice ? 'TOTAL DUE' : 'ESTIMATE TOTAL',
+                                      isInvoice ? 'INVOICE TOTAL' : 'ESTIMATE TOTAL',
                                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white),
                                     ),
                                     Text(
@@ -1245,6 +1285,13 @@ class InvoicePdfService {
         ? (invoice?['paymentStatus']?.toString() ?? 'UNPAID')
         : (estimate['status']?.toString() ?? 'APPROVED');
     final paymentMode = isInvoice ? (invoice?['paymentMode']?.toString() ?? 'MPESA / CASH') : 'N/A';
+    final amountPaid = isInvoice
+        ? ((invoice?['amountPaid'] as num?)?.toDouble() ?? (paymentStatus == 'PAID' ? grandTotal : 0.0))
+        : 0.0;
+    final balanceDue = isInvoice
+        ? ((invoice?['balanceDue'] as num?)?.toDouble() ?? (grandTotal - amountPaid).clamp(0.0, grandTotal))
+        : grandTotal;
+    final mpesaReceiptNo = isInvoice ? (invoice?['mpesaReceiptNo']?.toString() ?? '') : '';
 
     final monogram = workshopName.substring(0, workshopName.length >= 3 ? 3 : 1).toUpperCase();
 
@@ -1277,6 +1324,9 @@ class InvoicePdfService {
       grandTotal: grandTotal,
       paymentStatus: paymentStatus,
       paymentMode: paymentMode,
+      amountPaid: amountPaid,
+      balanceDue: balanceDue,
+      mpesaReceiptNo: mpesaReceiptNo,
     );
   }
 
@@ -3020,6 +3070,9 @@ class _DocData {
   final double grandTotal;
   final String paymentStatus;
   final String paymentMode;
+  final double amountPaid;
+  final double balanceDue;
+  final String mpesaReceiptNo;
 
   _DocData({
     required this.workshopName,
@@ -3050,5 +3103,8 @@ class _DocData {
     required this.grandTotal,
     required this.paymentStatus,
     required this.paymentMode,
+    this.amountPaid = 0.0,
+    this.balanceDue = 0.0,
+    this.mpesaReceiptNo = '',
   });
 }

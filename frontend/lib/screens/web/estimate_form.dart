@@ -20,6 +20,7 @@ class _EstimateFormState extends State<EstimateForm> {
   List<dynamic> _parts = [];
   String? _selectedJobCardId;
   Map<String, dynamic>? _selectedPart;
+  String _selectedItemType = 'PART';
 
   final TextEditingController _descController = TextEditingController();
   final TextEditingController _qtyController = TextEditingController(text: '1');
@@ -71,6 +72,8 @@ class _EstimateFormState extends State<EstimateForm> {
       setState(() {
         _items.add({
           'description': _descController.text.trim(),
+          'itemType': _selectedItemType,
+          'partId': (_selectedItemType == 'PART' && _selectedPart != null) ? _selectedPart!['id'] : null,
           'quantity': int.tryParse(_qtyController.text.trim()) ?? 1,
           'unitPrice': double.tryParse(_priceController.text.trim()) ?? 0.0,
         });
@@ -80,6 +83,18 @@ class _EstimateFormState extends State<EstimateForm> {
         _selectedPart = null;
       });
     }
+  }
+
+  double get _partsSubtotal {
+    return _items
+        .where((i) => (i['itemType'] ?? 'PART') == 'PART')
+        .fold(0.0, (sum, item) => sum + (item['quantity'] * item['unitPrice']));
+  }
+
+  double get _labourSubtotal {
+    return _items
+        .where((i) => (i['itemType'] ?? 'PART') == 'LABOUR')
+        .fold(0.0, (sum, item) => sum + (item['quantity'] * item['unitPrice']));
   }
 
   double get _subtotal {
@@ -225,20 +240,22 @@ class _EstimateFormState extends State<EstimateForm> {
             DropdownButtonFormField<Map<String, dynamic>>(
               value: _selectedPart,
               decoration: const InputDecoration(
-                labelText: 'Quick-Pick from Parts Catalog (Optional)',
+                labelText: 'Quick-Pick Spare Part from Catalog (Auto-Deducts Stock on Invoice)',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.inventory_2_outlined),
               ),
               items: _parts.map<DropdownMenuItem<Map<String, dynamic>>>((part) {
+                final brand = (part['brand'] != null && part['brand'].toString().isNotEmpty) ? ' [${part['brand']}]' : '';
                 return DropdownMenuItem<Map<String, dynamic>>(
                   value: part,
-                  child: Text('${part['partNumber']} - ${part['description']} (KSH ${part['unitPrice']}) [Stock: ${part['stockQuantity']}]'),
+                  child: Text('${part['partNumber']} - ${part['description']}$brand (KSH ${part['unitPrice']}) [Stock: ${part['stockQuantity']}]'),
                 );
               }).toList(),
               onChanged: (part) {
                 if (part != null) {
                   setState(() {
                     _selectedPart = part;
+                    _selectedItemType = 'PART';
                     _descController.text = '${part['partNumber']} - ${part['description']}';
                     _priceController.text = part['unitPrice'].toString();
                   });
@@ -251,11 +268,37 @@ class _EstimateFormState extends State<EstimateForm> {
           // Form Row to Add Line Item
           Row(
             children: [
+              SizedBox(
+                width: 135,
+                child: DropdownButtonFormField<String>(
+                  value: _selectedItemType,
+                  decoration: const InputDecoration(
+                    labelText: 'Line Type',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'PART', child: Text('Spare Part')),
+                    DropdownMenuItem(value: 'LABOUR', child: Text('Labour')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() {
+                        _selectedItemType = v;
+                        if (v == 'LABOUR') _selectedPart = null;
+                      });
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 flex: 3,
                 child: TextField(
                   controller: _descController,
-                  decoration: const InputDecoration(labelText: 'Part / Labor Description', border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                    labelText: _selectedItemType == 'LABOUR' ? 'Labour / Service Task Description' : 'Spare Part Description',
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -264,7 +307,10 @@ class _EstimateFormState extends State<EstimateForm> {
                 child: TextField(
                   controller: _qtyController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Qty', border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                    labelText: _selectedItemType == 'LABOUR' ? 'Hrs / Qty' : 'Qty',
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -273,7 +319,10 @@ class _EstimateFormState extends State<EstimateForm> {
                 child: TextField(
                   controller: _priceController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Unit Price (KSH)', border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                    labelText: _selectedItemType == 'LABOUR' ? 'Rate (KSH)' : 'Unit Price (KSH)',
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -291,13 +340,13 @@ class _EstimateFormState extends State<EstimateForm> {
           ),
 
           const SizedBox(height: 20),
-          const Text('Line Items', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Text('Line Items (Parts & Labour)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const Divider(),
 
           if (_items.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 20.0),
-              child: Center(child: Text('No line items added yet. Add parts or labor above.', style: TextStyle(color: Colors.grey))),
+              child: Center(child: Text('No line items added yet. Add spare parts or labour charges above.', style: TextStyle(color: Colors.grey))),
             )
           else
             ListView.separated(
@@ -307,9 +356,26 @@ class _EstimateFormState extends State<EstimateForm> {
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final item = _items[index];
+                final isLabour = (item['itemType'] ?? 'PART') == 'LABOUR';
                 final total = (item['quantity'] as num) * (item['unitPrice'] as num);
                 return ListTile(
                   dense: true,
+                  leading: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isLabour ? Colors.purple.shade50 : Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: isLabour ? Colors.purple.shade200 : Colors.blue.shade200),
+                    ),
+                    child: Text(
+                      isLabour ? 'LABOUR' : 'PART',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: isLabour ? Colors.purple.shade800 : Colors.blue.shade800,
+                      ),
+                    ),
+                  ),
                   title: Text(item['description'], style: const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text('Qty: ${item['quantity']}  ×  KSH ${(item['unitPrice'] as num).toStringAsFixed(2)}'),
                   trailing: Row(
@@ -338,7 +404,13 @@ class _EstimateFormState extends State<EstimateForm> {
             ),
             child: Column(
               children: [
-                _calcRow('Parts & Labor Subtotal:', 'KSH ${_subtotal.toStringAsFixed(2)}'),
+                if (_partsSubtotal > 0 || _labourSubtotal > 0) ...[
+                  _calcRow('Spare Parts Subtotal:', 'KSH ${_partsSubtotal.toStringAsFixed(2)}', color: Colors.blueGrey.shade700),
+                  const SizedBox(height: 4),
+                  _calcRow('Workshop Labour Subtotal:', 'KSH ${_labourSubtotal.toStringAsFixed(2)}', color: Colors.blueGrey.shade700),
+                  const Divider(height: 14),
+                ],
+                _calcRow('Gross Parts & Labour Subtotal:', 'KSH ${_subtotal.toStringAsFixed(2)}'),
                 const SizedBox(height: 6),
                 _calcRow('Discount (${_discountRate.toStringAsFixed(0)}%):', '- KSH ${_discountAmount.toStringAsFixed(2)}', color: Colors.orange.shade800),
                 const SizedBox(height: 6),

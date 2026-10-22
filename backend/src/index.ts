@@ -20,7 +20,7 @@ const prisma = new PrismaClient();
 const PORT = Number(process.env.PORT) || 5001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 // Helper to get or create the active workshop tenant
 async function getActiveTenant() {
@@ -75,31 +75,59 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
       parts,
       customersCount,
       employeesCount,
+      appointments,
+      expenses,
     ] = await Promise.all([
       prisma.jobCard.findMany({
         include: { customer: true, vehicle: true },
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.estimate.findMany({
-        include: { jobCard: { include: { customer: true, vehicle: true } }, invoice: true },
+        include: {
+          lineItems: true,
+          jobCard: { include: { customer: true, vehicle: true } },
+          invoice: true,
+        },
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.invoice.findMany({
-        include: { estimate: { include: { jobCard: { include: { customer: true, vehicle: true } } } } },
+        include: {
+          estimate: {
+            include: {
+              lineItems: true,
+              jobCard: { include: { customer: true, vehicle: true } },
+            },
+          },
+        },
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.partCatalog.findMany(),
       prisma.customer.count(),
       prisma.user.count(),
+      prisma.appointment.findMany({
+        orderBy: { scheduledAt: 'asc' },
+      }),
+      prisma.expense.findMany({
+        orderBy: { incurredAt: 'desc' },
+      }),
     ]);
 
-    // Calculate Total Revenue from PAID/PARTIAL invoices, or fallback to APPROVED estimates
+    // Calculate Total Collected Revenue and Outstanding Debtors Balance
     let totalRevenue = 0;
+    let outstandingBalance = 0;
+
     for (const inv of invoices) {
-      if (inv.paymentStatus === 'PAID' && inv.estimate) {
-        totalRevenue += inv.estimate.total;
+      const estTotal = inv.estimate?.total || 0;
+      if (inv.paymentStatus === 'PAID') {
+        totalRevenue += inv.amountPaid > 0 ? inv.amountPaid : estTotal;
+      } else if (inv.paymentStatus === 'PARTIAL') {
+        totalRevenue += inv.amountPaid;
+        outstandingBalance += inv.balanceDue > 0 ? inv.balanceDue : Math.max(0, estTotal - inv.amountPaid);
+      } else if (inv.paymentStatus === 'UNPAID') {
+        outstandingBalance += inv.balanceDue > 0 ? inv.balanceDue : estTotal;
       }
     }
+
     if (totalRevenue === 0) {
       for (const est of estimates) {
         if (est.status === 'APPROVED') {
@@ -108,10 +136,102 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
       }
     }
 
+    // Calculate Labour vs Parts Revenue and Parts COGS
+    let labourRevenue = 0;
+    let partsRevenue = 0;
+    let partsCostTotal = 0;
+    const partMap = new Map(parts.map((p) => [p.id, p]));
+
+    for (const est of estimates) {
+      if (est.status === 'APPROVED' || est.invoice) {
+        for (const li of est.lineItems || []) {
+          if ((li.itemType || 'PART').toUpperCase() === 'LABOUR') {
+            labourRevenue += li.total;
+          } else {
+            partsRevenue += li.total;
+            const matchedPart =
+              (li.partId && partMap.get(li.partId)) ||
+              parts.find(
+                (p) =>
+                  li.description.toLowerCase().includes(p.partNumber.toLowerCase()) ||
+                  li.description.toLowerCase().includes(p.description.toLowerCase())
+              );
+            const unitCost =
+              matchedPart && matchedPart.costPrice > 0
+                ? matchedPart.costPrice
+                : li.unitPrice * 0.65;
+            partsCostTotal += unitCost * li.quantity;
+          }
+        }
+      }
+    }
+
+    const expensesTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const netProfit = totalRevenue - partsCostTotal - expensesTotal;
+
+    const stockValuationCost = parts.reduce(
+      (sum, p) => sum + p.stockQuantity * (p.costPrice > 0 ? p.costPrice : p.unitPrice * 0.65),
+      0
+    );
+    const stockValuationRetail = parts.reduce(
+      (sum, p) => sum + p.stockQuantity * p.unitPrice,
+      0
+    );
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(now.getTime() - 7 * 86400000);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
     const activeJobsCount = jobs.filter((j) => j.status !== 'COMPLETED').length;
     const completedJobsCount = jobs.filter((j) => j.status === 'COMPLETED').length;
-    const pendingEstimatesCount = estimates.filter((e) => e.status === 'DRAFT' || e.status === 'SENT').length;
-    const lowStockCount = parts.filter((p) => p.stockQuantity <= 5).length;
+    const todayJobsCount = jobs.filter((j) => new Date(j.createdAt) >= startOfToday).length;
+    const weekJobsCount = jobs.filter((j) => new Date(j.createdAt) >= startOfWeek).length;
+    const monthJobsCount = jobs.filter((j) => new Date(j.createdAt) >= startOfMonth).length;
+    const overdueJobsCount = jobs.filter(
+      (j) => j.status !== 'COMPLETED' && j.dueDate && new Date(j.dueDate) < now
+    ).length;
+
+    const pendingEstimatesCount = estimates.filter(
+      (e) => e.status === 'DRAFT' || e.status === 'SENT'
+    ).length;
+    const lowStockCount = parts.filter(
+      (p) => p.stockQuantity <= (p.reorderLevel || 5)
+    ).length;
+
+    // Mechanic Productivity breakdown
+    const techStatsMap = new Map<
+      string,
+      {
+        technician: string;
+        totalJobs: number;
+        completedJobs: number;
+        activeJobs: number;
+        estimatedHours: number;
+        actualHours: number;
+      }
+    >();
+
+    for (const j of jobs) {
+      const techName = j.technician || 'Unassigned';
+      const entry = techStatsMap.get(techName) || {
+        technician: techName,
+        totalJobs: 0,
+        completedJobs: 0,
+        activeJobs: 0,
+        estimatedHours: 0,
+        actualHours: 0,
+      };
+      entry.totalJobs += 1;
+      if (j.status === 'COMPLETED' || j.status === 'READY') {
+        entry.completedJobs += 1;
+      } else {
+        entry.activeJobs += 1;
+      }
+      entry.estimatedHours += j.estimatedHours || 2;
+      entry.actualHours += j.actualHours || (j.status === 'COMPLETED' ? j.estimatedHours || 2 : 0);
+      techStatsMap.set(techName, entry);
+    }
 
     // Weekly Jobs (Mon - Sat counts based on createdAt day of week)
     const weeklyCounts = [0, 0, 0, 0, 0, 0]; // Mon(0) .. Sat(5)
@@ -154,13 +274,27 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
 
     res.json({
       totalRevenue,
+      outstandingBalance,
+      labourRevenue,
+      partsRevenue,
+      partsCostTotal,
+      expensesTotal,
+      netProfit,
+      stockValuationCost,
+      stockValuationRetail,
       activeJobsCount,
       completedJobsCount,
+      todayJobsCount,
+      weekJobsCount,
+      monthJobsCount,
+      overdueJobsCount,
       totalJobsCount: jobs.length,
       pendingEstimatesCount,
       lowStockCount,
       customersCount,
       employeesCount,
+      upcomingAppointmentsCount: appointments.filter((a) => a.status !== 'CANCELLED').length,
+      mechanicProductivity: Array.from(techStatsMap.values()),
       weeklyJobs: [
         { day: 'M', count: weeklyCounts[0] },
         { day: 'T', count: weeklyCounts[1] },
@@ -178,7 +312,7 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
 });
 
 // ==========================================
-// JOB CARDS API
+// JOB CARDS API (7-Stage Workflow + Diagnostics + Warranty + Bay)
 // ==========================================
 app.get('/api/jobs', async (req: Request, res: Response) => {
   try {
@@ -214,7 +348,8 @@ app.get('/api/jobs', async (req: Request, res: Response) => {
           j.vehicle.registrationNo.toLowerCase().includes(q) ||
           (j.vehicle.make && j.vehicle.make.toLowerCase().includes(q)) ||
           (j.vehicle.model && j.vehicle.model.toLowerCase().includes(q)) ||
-          (j.workRequested && j.workRequested.toLowerCase().includes(q))
+          (j.workRequested && j.workRequested.toLowerCase().includes(q)) ||
+          (j.bayNumber && j.bayNumber.toLowerCase().includes(q))
       );
       return res.json(filtered);
     }
@@ -237,14 +372,25 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       registrationNo,
       make,
       model,
+      year,
+      color,
+      engineNumber,
+      fuelType,
       vinNumber,
       service,
       technician,
+      bayNumber,
       priority,
       dueDate,
       status,
       odometer,
       fuelLevel,
+      estimatedHours,
+      actualHours,
+      isWarranty,
+      warrantyNotes,
+      nextServiceMileage,
+      nextServiceDate,
       walkAroundData,
     } = req.body;
 
@@ -330,17 +476,29 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
             registrationNo: cleanRegNo,
             make: make || '',
             model: model || '',
+            year: year ? String(year) : null,
+            color: color || null,
+            engineNumber: engineNumber || null,
+            fuelType: fuelType || 'Petrol',
             vinNumber: vinNumber || '',
+            nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null,
+            nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null,
             customerId: customer.id,
           },
         });
-      } else if (make || model || vinNumber) {
+      } else {
         vehicle = await prisma.vehicle.update({
           where: { id: vehicle.id },
           data: {
             ...(make ? { make } : {}),
             ...(model ? { model } : {}),
+            ...(year ? { year: String(year) } : {}),
+            ...(color ? { color } : {}),
+            ...(engineNumber ? { engineNumber } : {}),
+            ...(fuelType ? { fuelType } : {}),
             ...(vinNumber ? { vinNumber } : {}),
+            ...(nextServiceMileage ? { nextServiceMileage: Number(nextServiceMileage) } : {}),
+            ...(nextServiceDate ? { nextServiceDate: new Date(nextServiceDate) } : {}),
           },
         });
       }
@@ -355,11 +513,18 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
           vehicleId: vehicle.id,
           workRequested: cleanService,
           technician: technician || 'Unassigned',
+          bayNumber: bayNumber || 'Bay 1',
           priority: priority || 'Medium',
           dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 2 * 86400000),
           status: (status as JobStatus) || 'IN_PROGRESS',
           odometer: odometer ? Number(odometer) : null,
           fuelLevel: fuelLevel || null,
+          estimatedHours: estimatedHours !== undefined ? Number(estimatedHours) : 2.0,
+          actualHours: actualHours !== undefined ? Number(actualHours) : null,
+          isWarranty: Boolean(isWarranty),
+          warrantyNotes: warrantyNotes || null,
+          nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null,
+          nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null,
           walkAroundData: walkAroundData || undefined,
         },
         include: {
@@ -392,13 +557,25 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       registrationNo,
       make,
       model,
+      year,
+      color,
+      engineNumber,
+      fuelType,
+      vinNumber,
       service,
       technician,
+      bayNumber,
       priority,
       dueDate,
       status,
       odometer,
       fuelLevel,
+      estimatedHours,
+      actualHours,
+      isWarranty,
+      warrantyNotes,
+      nextServiceMileage,
+      nextServiceDate,
       walkAroundData,
     } = req.body;
 
@@ -421,13 +598,35 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       });
     }
 
-    if (registrationNo || make !== undefined || model !== undefined) {
+    if (
+      registrationNo ||
+      make !== undefined ||
+      model !== undefined ||
+      year !== undefined ||
+      color !== undefined ||
+      engineNumber !== undefined ||
+      fuelType !== undefined ||
+      vinNumber !== undefined ||
+      nextServiceMileage !== undefined ||
+      nextServiceDate !== undefined
+    ) {
       await prisma.vehicle.update({
         where: { id: existing.vehicleId },
         data: {
           ...(registrationNo ? { registrationNo } : {}),
           ...(make !== undefined ? { make } : {}),
           ...(model !== undefined ? { model } : {}),
+          ...(year !== undefined ? { year: year ? String(year) : null } : {}),
+          ...(color !== undefined ? { color } : {}),
+          ...(engineNumber !== undefined ? { engineNumber } : {}),
+          ...(fuelType !== undefined ? { fuelType } : {}),
+          ...(vinNumber !== undefined ? { vinNumber } : {}),
+          ...(nextServiceMileage !== undefined
+            ? { nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null }
+            : {}),
+          ...(nextServiceDate !== undefined
+            ? { nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null }
+            : {}),
         },
       });
     }
@@ -437,11 +636,26 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       data: {
         ...(service !== undefined ? { workRequested: service } : {}),
         ...(technician !== undefined ? { technician } : {}),
+        ...(bayNumber !== undefined ? { bayNumber } : {}),
         ...(priority !== undefined ? { priority } : {}),
         ...(dueDate ? { dueDate: new Date(dueDate) } : {}),
         ...(status ? { status: status as JobStatus } : {}),
         ...(odometer !== undefined ? { odometer: odometer ? Number(odometer) : null } : {}),
         ...(fuelLevel !== undefined ? { fuelLevel } : {}),
+        ...(estimatedHours !== undefined
+          ? { estimatedHours: estimatedHours !== null ? Number(estimatedHours) : null }
+          : {}),
+        ...(actualHours !== undefined
+          ? { actualHours: actualHours !== null ? Number(actualHours) : null }
+          : {}),
+        ...(isWarranty !== undefined ? { isWarranty: Boolean(isWarranty) } : {}),
+        ...(warrantyNotes !== undefined ? { warrantyNotes } : {}),
+        ...(nextServiceMileage !== undefined
+          ? { nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null }
+          : {}),
+        ...(nextServiceDate !== undefined
+          ? { nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null }
+          : {}),
         ...(walkAroundData !== undefined ? { walkAroundData } : {}),
       },
       include: {
@@ -476,11 +690,17 @@ app.delete('/api/jobs/:id', async (req: Request, res: Response) => {
 });
 
 // ==========================================
-// PARTS CATALOG API
+// PARTS CATALOG & STOCK LEDGER API
 // ==========================================
 app.get('/api/parts', async (_req: Request, res: Response) => {
   try {
     const parts = await prisma.partCatalog.findMany({
+      include: {
+        stockMovements: {
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json(parts);
@@ -492,17 +712,57 @@ app.get('/api/parts', async (_req: Request, res: Response) => {
 
 app.post('/api/parts', async (req: Request, res: Response) => {
   try {
-    const { partNumber, description, unitPrice, stockQuantity } = req.body;
+    const {
+      partNumber,
+      description,
+      brand,
+      compatibility,
+      costPrice,
+      unitPrice,
+      stockQuantity,
+      reorderLevel,
+      supplierName,
+      supplierPhone,
+      warrantyMonths,
+    } = req.body;
     const tenant = await getActiveTenant();
+    const initialQty = stockQuantity !== undefined ? Number(stockQuantity) : 10;
+    const parsedCost = costPrice !== undefined ? Number(costPrice) : Number(unitPrice || 0) * 0.65;
+    const parsedUnit = Number(unitPrice) || 0;
+
     const part = await prisma.partCatalog.create({
       data: {
         partNumber: partNumber || 'PART-001',
         description: description || 'Auto Part',
-        unitPrice: Number(unitPrice) || 0,
-        stockQuantity: stockQuantity !== undefined ? Number(stockQuantity) : 10,
+        brand: brand || null,
+        compatibility: compatibility || null,
+        costPrice: parsedCost,
+        unitPrice: parsedUnit,
+        stockQuantity: initialQty,
+        reorderLevel: reorderLevel !== undefined ? Number(reorderLevel) : 5,
+        supplierName: supplierName || null,
+        supplierPhone: supplierPhone || null,
+        warrantyMonths: warrantyMonths !== undefined ? Number(warrantyMonths) : 6,
         tenantId: tenant.id,
       },
     });
+
+    if (initialQty > 0) {
+      await prisma.stockMovement.create({
+        data: {
+          partId: part.id,
+          type: 'RECEIVED',
+          quantity: initialQty,
+          unitCost: parsedCost,
+          unitPrice: parsedUnit,
+          supplierName: supplierName || null,
+          reference: 'Initial Stock',
+          notes: 'Initial catalog entry',
+          tenantId: tenant.id,
+        },
+      });
+    }
+
     res.status(201).json(part);
   } catch (error) {
     console.error(error);
@@ -513,14 +773,33 @@ app.post('/api/parts', async (req: Request, res: Response) => {
 app.put('/api/parts/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
-    const { partNumber, description, unitPrice, stockQuantity } = req.body;
+    const {
+      partNumber,
+      description,
+      brand,
+      compatibility,
+      costPrice,
+      unitPrice,
+      stockQuantity,
+      reorderLevel,
+      supplierName,
+      supplierPhone,
+      warrantyMonths,
+    } = req.body;
     const part = await prisma.partCatalog.update({
       where: { id },
       data: {
         ...(partNumber !== undefined ? { partNumber } : {}),
         ...(description !== undefined ? { description } : {}),
+        ...(brand !== undefined ? { brand } : {}),
+        ...(compatibility !== undefined ? { compatibility } : {}),
+        ...(costPrice !== undefined ? { costPrice: Number(costPrice) } : {}),
         ...(unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
         ...(stockQuantity !== undefined ? { stockQuantity: Number(stockQuantity) } : {}),
+        ...(reorderLevel !== undefined ? { reorderLevel: Number(reorderLevel) } : {}),
+        ...(supplierName !== undefined ? { supplierName } : {}),
+        ...(supplierPhone !== undefined ? { supplierPhone } : {}),
+        ...(warrantyMonths !== undefined ? { warrantyMonths: Number(warrantyMonths) } : {}),
       },
     });
     res.json(part);
@@ -530,9 +809,78 @@ app.put('/api/parts/:id', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/parts/:id/stock', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { type = 'RECEIVED', quantity = 0, unitCost, unitPrice, supplierName, reference, notes, jobCardId } = req.body;
+    const tenant = await getActiveTenant();
+    const existing = await prisma.partCatalog.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Part not found' });
+    }
+
+    const qty = Number(quantity) || 0;
+    let newStock = existing.stockQuantity;
+    const movementType = String(type).toUpperCase();
+
+    if (movementType === 'RECEIVED' || movementType === 'RETURNED') {
+      newStock = existing.stockQuantity + qty;
+    } else if (movementType === 'ISSUED') {
+      newStock = Math.max(0, existing.stockQuantity - qty);
+    } else if (movementType === 'ADJUSTED') {
+      newStock = Math.max(0, qty);
+    }
+
+    const updatedPart = await prisma.partCatalog.update({
+      where: { id },
+      data: {
+        stockQuantity: newStock,
+        ...(unitCost !== undefined ? { costPrice: Number(unitCost) } : {}),
+        ...(unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
+        ...(supplierName ? { supplierName } : {}),
+      },
+    });
+
+    const movement = await prisma.stockMovement.create({
+      data: {
+        partId: id,
+        type: movementType,
+        quantity: qty,
+        unitCost: unitCost !== undefined ? Number(unitCost) : existing.costPrice,
+        unitPrice: unitPrice !== undefined ? Number(unitPrice) : existing.unitPrice,
+        supplierName: supplierName || existing.supplierName,
+        reference: reference || null,
+        notes: notes || null,
+        jobCardId: jobCardId || null,
+        tenantId: tenant.id,
+      },
+    });
+
+    res.json({ part: updatedPart, movement });
+  } catch (error) {
+    console.error('Stock adjustment error:', error);
+    res.status(500).json({ error: 'Failed to record stock movement' });
+  }
+});
+
+app.get('/api/stock-movements', async (_req: Request, res: Response) => {
+  try {
+    const movements = await prisma.stockMovement.findMany({
+      include: { part: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json(movements);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch stock movements' });
+  }
+});
+
 app.delete('/api/parts/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
+    await prisma.stockMovement.deleteMany({ where: { partId: id } });
     await prisma.partCatalog.delete({ where: { id } });
     res.json({ success: true });
   } catch (error) {
@@ -542,7 +890,7 @@ app.delete('/api/parts/:id', async (req: Request, res: Response) => {
 });
 
 // ==========================================
-// ESTIMATES API (Discount & 16% VAT logic)
+// ESTIMATES API (PART vs LABOUR + Discount & 16% VAT logic)
 // ==========================================
 app.get('/api/estimates', async (_req: Request, res: Response) => {
   try {
@@ -597,6 +945,8 @@ app.post('/api/estimates', async (req: Request, res: Response) => {
         lineItems: {
           create: (items || []).map((item: any) => ({
             description: item.description,
+            itemType: item.itemType ? String(item.itemType).toUpperCase() : 'PART',
+            partId: item.partId || null,
             quantity: Number(item.quantity),
             unitPrice: Number(item.unitPrice),
             total: Number(item.quantity) * Number(item.unitPrice),
@@ -651,7 +1001,7 @@ app.delete('/api/estimates/:id', async (req: Request, res: Response) => {
 });
 
 // ==========================================
-// INVOICES API
+// INVOICES API (Auto Stock Deduction + Deposits & Partial Payments)
 // ==========================================
 app.get('/api/invoices', async (_req: Request, res: Response) => {
   try {
@@ -680,24 +1030,109 @@ app.get('/api/invoices', async (_req: Request, res: Response) => {
 
 app.post('/api/invoices', async (req: Request, res: Response) => {
   try {
-    const { estimateId, paymentStatus = 'UNPAID', paymentMode = 'CASH' } = req.body;
+    const {
+      estimateId,
+      paymentStatus = 'UNPAID',
+      paymentMode = 'CASH',
+      amountPaid: rawAmountPaid,
+      mpesaReceiptNo,
+    } = req.body;
 
     // Approve the estimate automatically when converting to an invoice
-    await prisma.estimate.update({
+    const est = await prisma.estimate.update({
       where: { id: estimateId },
       data: { status: 'APPROVED' },
+      include: { lineItems: true, jobCard: true },
     });
 
-    const existing = await prisma.invoice.findUnique({ where: { estimateId } });
+    const existing = await prisma.invoice.findUnique({
+      where: { estimateId },
+      include: {
+        estimate: {
+          include: {
+            lineItems: true,
+            jobCard: { include: { customer: true, vehicle: true } },
+          },
+        },
+      },
+    });
     if (existing) {
       return res.json(existing);
     }
 
+    // Automatically deduct stock for PART line items on new invoice creation
+    const tenant = await getActiveTenant();
+    const allParts = await prisma.partCatalog.findMany();
+    for (const item of est.lineItems || []) {
+      if ((item.itemType || 'PART').toUpperCase() === 'LABOUR') continue;
+      const matchedPart =
+        (item.partId && allParts.find((p) => p.id === item.partId)) ||
+        allParts.find(
+          (p) =>
+            item.description.toLowerCase().includes(p.partNumber.toLowerCase()) ||
+            item.description.toLowerCase().includes(p.description.toLowerCase())
+        );
+      if (matchedPart) {
+        const deductQty = Math.max(1, Math.round(item.quantity));
+        const updatedQty = Math.max(0, matchedPart.stockQuantity - deductQty);
+        matchedPart.stockQuantity = updatedQty;
+        await prisma.partCatalog.update({
+          where: { id: matchedPart.id },
+          data: { stockQuantity: updatedQty },
+        });
+        await prisma.stockMovement.create({
+          data: {
+            partId: matchedPart.id,
+            type: 'ISSUED',
+            quantity: deductQty,
+            unitCost: matchedPart.costPrice,
+            unitPrice: item.unitPrice,
+            reference: est.jobCard?.jobNumber || est.jobCardId,
+            notes: `Auto-deducted on Invoice for ${est.jobCard?.jobNumber || 'Job'}`,
+            jobCardId: est.jobCardId,
+            tenantId: tenant.id,
+          },
+        });
+      }
+    }
+
+    const total = est.total || 0;
+    const initialPaid =
+      paymentStatus === 'PAID'
+        ? total
+        : rawAmountPaid !== undefined
+        ? Number(rawAmountPaid)
+        : 0;
+    const balanceDue = Math.max(0, total - initialPaid);
+    const resolvedStatus: PaymentStatus =
+      balanceDue <= 0 && total > 0
+        ? 'PAID'
+        : initialPaid > 0
+        ? 'PARTIAL'
+        : (paymentStatus as PaymentStatus);
+
+    const paymentHistory =
+      initialPaid > 0
+        ? [
+            {
+              date: new Date().toISOString(),
+              amount: initialPaid,
+              mode: paymentMode || 'CASH',
+              reference: mpesaReceiptNo || '',
+              notes: resolvedStatus === 'PAID' ? 'Full Payment' : 'Initial Deposit',
+            },
+          ]
+        : [];
+
     const invoice = await prisma.invoice.create({
       data: {
         estimateId,
-        paymentStatus: paymentStatus as PaymentStatus,
+        paymentStatus: resolvedStatus,
         paymentMode,
+        amountPaid: initialPaid,
+        balanceDue,
+        mpesaReceiptNo: mpesaReceiptNo || null,
+        paymentHistory,
       },
       include: {
         estimate: {
@@ -719,12 +1154,72 @@ app.post('/api/invoices', async (req: Request, res: Response) => {
 app.put('/api/invoices/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
-    const { paymentStatus, paymentMode } = req.body;
+    const {
+      paymentStatus,
+      paymentMode,
+      paymentAmount,
+      amountPaid: explicitAmountPaid,
+      mpesaReceiptNo,
+      notes,
+    } = req.body;
+
+    const existing = await prisma.invoice.findUnique({
+      where: { id },
+      include: { estimate: true },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const estTotal = existing.estimate?.total || 0;
+    let newAmountPaid = existing.amountPaid || 0;
+    const history: any[] = Array.isArray(existing.paymentHistory)
+      ? [...(existing.paymentHistory as any[])]
+      : [];
+
+    if (paymentAmount !== undefined && Number(paymentAmount) > 0) {
+      const added = Number(paymentAmount);
+      newAmountPaid = Math.min(estTotal, newAmountPaid + added);
+      history.push({
+        date: new Date().toISOString(),
+        amount: added,
+        mode: paymentMode || existing.paymentMode || 'CASH',
+        reference: mpesaReceiptNo || existing.mpesaReceiptNo || '',
+        notes: notes || (newAmountPaid >= estTotal ? 'Balance Cleared' : 'Partial Payment / Deposit'),
+      });
+    } else if (explicitAmountPaid !== undefined) {
+      newAmountPaid = Number(explicitAmountPaid);
+    } else if (paymentStatus === 'PAID') {
+      const remaining = Math.max(0, estTotal - newAmountPaid);
+      newAmountPaid = estTotal;
+      if (remaining > 0) {
+        history.push({
+          date: new Date().toISOString(),
+          amount: remaining,
+          mode: paymentMode || existing.paymentMode || 'CASH',
+          reference: mpesaReceiptNo || existing.mpesaReceiptNo || '',
+          notes: 'Full Payment',
+        });
+      }
+    }
+
+    const newBalanceDue = Math.max(0, estTotal - newAmountPaid);
+    const resolvedStatus: PaymentStatus =
+      newBalanceDue <= 0 && estTotal > 0
+        ? 'PAID'
+        : newAmountPaid > 0
+        ? 'PARTIAL'
+        : (paymentStatus as PaymentStatus) || existing.paymentStatus;
+
     const invoice = await prisma.invoice.update({
       where: { id },
       data: {
-        ...(paymentStatus ? { paymentStatus: paymentStatus as PaymentStatus } : {}),
+        paymentStatus: resolvedStatus,
         ...(paymentMode !== undefined ? { paymentMode } : {}),
+        amountPaid: newAmountPaid,
+        balanceDue: newBalanceDue,
+        ...(mpesaReceiptNo !== undefined ? { mpesaReceiptNo } : {}),
+        paymentHistory: history,
       },
       include: {
         estimate: {
@@ -736,15 +1231,12 @@ app.put('/api/invoices/:id', async (req: Request, res: Response) => {
       },
     });
 
-    // If paid, mark job card as COMPLETED
-    if (paymentStatus === 'PAID') {
-      const est = await prisma.estimate.findUnique({ where: { id: invoice.estimateId } });
-      if (est?.jobCardId) {
-        await prisma.jobCard.update({
-          where: { id: est.jobCardId },
-          data: { status: 'COMPLETED' },
-        });
-      }
+    // If paid in full, mark job card as COMPLETED
+    if (resolvedStatus === 'PAID' && invoice.estimate?.jobCardId) {
+      await prisma.jobCard.update({
+        where: { id: invoice.estimate.jobCardId },
+        data: { status: 'COMPLETED' },
+      });
     }
 
     res.json(invoice);
@@ -755,7 +1247,7 @@ app.put('/api/invoices/:id', async (req: Request, res: Response) => {
 });
 
 // ==========================================
-// CUSTOMERS & EMPLOYEES & SETTINGS API
+// CUSTOMERS, VEHICLE SERVICE HISTORY, APPOINTMENTS & EXPENSES API
 // ==========================================
 app.get('/api/customers', async (_req: Request, res: Response) => {
   try {
@@ -778,7 +1270,15 @@ app.get('/api/customers', async (_req: Request, res: Response) => {
     const customers = await prisma.customer.findMany({
       include: {
         vehicles: true,
-        jobCards: true,
+        jobCards: {
+          include: {
+            vehicle: true,
+            estimates: {
+              include: { lineItems: true, invoice: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -786,6 +1286,34 @@ app.get('/api/customers', async (_req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch customers' });
+  }
+});
+
+app.get('/api/customers/:id/history', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      include: {
+        vehicles: true,
+        jobCards: {
+          include: {
+            vehicle: true,
+            estimates: {
+              include: { lineItems: true, invoice: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    res.json(customer);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch customer service history' });
   }
 });
 
@@ -807,6 +1335,152 @@ app.post('/api/customers', async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+// ==========================================
+// APPOINTMENTS & BOOKING SCHEDULE API
+// ==========================================
+app.get('/api/appointments', async (_req: Request, res: Response) => {
+  try {
+    const appointments = await prisma.appointment.findMany({
+      orderBy: { scheduledAt: 'asc' },
+    });
+    res.json(appointments);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch appointments' });
+  }
+});
+
+app.post('/api/appointments', async (req: Request, res: Response) => {
+  try {
+    const {
+      customerName,
+      phone,
+      registrationNo,
+      makeModel,
+      serviceType,
+      scheduledAt,
+      assignedBay,
+      technician,
+      status,
+      notes,
+    } = req.body;
+    const tenant = await getActiveTenant();
+    const appointment = await prisma.appointment.create({
+      data: {
+        customerName: customerName || 'Walk-in Customer',
+        phone: phone || '',
+        registrationNo: (registrationNo || 'TBA').toUpperCase(),
+        makeModel: makeModel || '',
+        serviceType: serviceType || 'General Service',
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(Date.now() + 86400000),
+        assignedBay: assignedBay || 'Bay 1',
+        technician: technician || 'Unassigned',
+        status: status || 'SCHEDULED',
+        notes: notes || null,
+        tenantId: tenant.id,
+      },
+    });
+    res.status(201).json(appointment);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create appointment' });
+  }
+});
+
+app.put('/api/appointments/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const {
+      customerName,
+      phone,
+      registrationNo,
+      makeModel,
+      serviceType,
+      scheduledAt,
+      assignedBay,
+      technician,
+      status,
+      notes,
+    } = req.body;
+    const updated = await prisma.appointment.update({
+      where: { id },
+      data: {
+        ...(customerName !== undefined ? { customerName } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(registrationNo !== undefined ? { registrationNo } : {}),
+        ...(makeModel !== undefined ? { makeModel } : {}),
+        ...(serviceType !== undefined ? { serviceType } : {}),
+        ...(scheduledAt ? { scheduledAt: new Date(scheduledAt) } : {}),
+        ...(assignedBay !== undefined ? { assignedBay } : {}),
+        ...(technician !== undefined ? { technician } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update appointment' });
+  }
+});
+
+app.delete('/api/appointments/:id', async (req: Request, res: Response) => {
+  try {
+    await prisma.appointment.delete({ where: { id: String(req.params.id) } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete appointment' });
+  }
+});
+
+// ==========================================
+// WORKSHOP EXPENSES API (For Net Profit Reporting)
+// ==========================================
+app.get('/api/expenses', async (_req: Request, res: Response) => {
+  try {
+    const expenses = await prisma.expense.findMany({
+      orderBy: { incurredAt: 'desc' },
+    });
+    res.json(expenses);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch expenses' });
+  }
+});
+
+app.post('/api/expenses', async (req: Request, res: Response) => {
+  try {
+    const { category, description, amount, paymentMode, reference, incurredAt } = req.body;
+    const tenant = await getActiveTenant();
+    const expense = await prisma.expense.create({
+      data: {
+        category: category || 'Workshop Consumables',
+        description: description || 'Expense',
+        amount: Number(amount) || 0,
+        paymentMode: paymentMode || 'CASH',
+        reference: reference || null,
+        incurredAt: incurredAt ? new Date(incurredAt) : new Date(),
+        tenantId: tenant.id,
+      },
+    });
+    res.status(201).json(expense);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to record expense' });
+  }
+});
+
+app.delete('/api/expenses/:id', async (req: Request, res: Response) => {
+  try {
+    await prisma.expense.delete({ where: { id: String(req.params.id) } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete expense' });
   }
 });
 

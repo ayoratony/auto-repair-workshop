@@ -17,6 +17,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
   int _selectedIndex = 1;
   List<dynamic> _jobs = [];
+  List<dynamic> _appointments = [];
   bool _isLoadingJobs = false;
   bool _isSubmitting = false;
 
@@ -28,9 +29,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   final TextEditingController _modelController = TextEditingController();
   final TextEditingController _odometerController = TextEditingController();
   final TextEditingController _serviceController = TextEditingController();
+  final TextEditingController _obdController = TextEditingController();
 
   String _fuelLevel = 'Half';
   String _priority = 'Medium';
+  String _bayNumber = 'Bay 1';
   VehicleBodyType _selectedBodyType = VehicleBodyType.sedan;
   List<DamageMarker> _damageMarkers = [];
   ReceivingMemoDetails _memoDetails = ReceivingMemoDetails();
@@ -45,10 +48,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   Future<void> _fetchJobs() async {
     setState(() => _isLoadingJobs = true);
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/jobs'));
-      if (response.statusCode == 200 && mounted) {
+      final results = await Future.wait([
+        http.get(Uri.parse('$_baseUrl/jobs')),
+        http.get(Uri.parse('$_baseUrl/appointments')),
+      ]);
+      if (mounted) {
         setState(() {
-          _jobs = json.decode(response.body);
+          if (results[0].statusCode == 200) _jobs = json.decode(results[0].body);
+          if (results[1].statusCode == 200) _appointments = json.decode(results[1].body);
         });
       }
     } catch (_) {
@@ -93,10 +100,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           'odometer': int.tryParse(_odometerController.text.trim()),
           'fuelLevel': _fuelLevel,
           'priority': _priority,
+          'bayNumber': _bayNumber,
           'service': _serviceController.text.trim().isEmpty
               ? _memoDetails.selectedCategories.join(', ')
               : _serviceController.text.trim(),
           'status': 'BOOKED',
+          'diagnosticChecklist': {
+            'obdCodes': _obdController.text.trim(),
+          },
           'walkAroundData': {
             'bodyType': _selectedBodyType.name,
             'markers': _damageMarkers.map((m) => m.toJson()).toList(),
@@ -121,6 +132,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         _modelController.clear();
         _odometerController.clear();
         _serviceController.clear();
+        _obdController.clear();
         setState(() {
           _damageMarkers = [];
           _memoDetails = ReceivingMemoDetails();
@@ -204,14 +216,24 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             ? 'Active Workshop Jobs'
             : _selectedIndex == 1
                 ? 'Digital Vehicle Intake'
-                : 'Workshop Schedule'),
+                : 'Workshop & Bay Schedule'),
         backgroundColor: const Color(0xFF0F4C81),
         foregroundColor: Colors.white,
         actions: [
+          if (_selectedIndex == 2)
+            IconButton(
+              tooltip: 'Book Appointment',
+              icon: const Icon(Icons.add_box_outlined),
+              onPressed: _showMobileAppointmentDialog,
+            ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchJobs),
         ],
       ),
-      body: _selectedIndex == 1 ? _buildIntakeForm() : _buildJobsList(),
+      body: _selectedIndex == 0
+          ? _buildJobsList()
+          : _selectedIndex == 1
+              ? _buildIntakeForm()
+              : _buildScheduleView(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed,
@@ -393,6 +415,28 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _bayNumber,
+                  decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
+                  items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
+                      .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _obdController,
+                  decoration: const InputDecoration(labelText: 'OBD-II Codes (e.g. P0300)', border: OutlineInputBorder()),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _serviceController,
             maxLines: 2,
@@ -429,6 +473,136 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   : const Text('Submit Job Card to Workshop', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               onPressed: _isSubmitting ? null : _submitIntakeJobCard,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScheduleView() {
+    if (_isLoadingJobs) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _showMobileAppointmentDialog,
+              icon: const Icon(Icons.calendar_month),
+              label: const Text('+ Book Customer Appointment & Bay'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F4C81),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _appointments.isEmpty
+              ? const Center(
+                  child: Text('No appointments scheduled yet.', style: TextStyle(color: Colors.grey)),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: _appointments.length,
+                  itemBuilder: (context, index) {
+                    final appt = _appointments[index];
+                    final status = appt['status'] ?? 'SCHEDULED';
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Color(0xFF0F4C81),
+                          child: Icon(Icons.event_available, color: Colors.white, size: 18),
+                        ),
+                        title: Text(
+                          '${appt['registrationNo'] ?? 'Vehicle'} • ${appt['customerName'] ?? ''}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          'Service: ${appt['serviceType'] ?? '-'}\nBay: ${appt['bayNumber'] ?? 'Bay 1'} • Status: $status',
+                        ),
+                        isThreeLine: true,
+                        trailing: TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _customerController.text = appt['customerName']?.toString() ?? '';
+                              _phoneController.text = appt['customerPhone']?.toString() ?? '';
+                              _regController.text = appt['registrationNo']?.toString() ?? '';
+                              _serviceController.text = appt['serviceType']?.toString() ?? '';
+                              _selectedIndex = 1;
+                            });
+                          },
+                          child: const Text('Start Intake'),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _showMobileAppointmentDialog() {
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final regCtrl = TextEditingController();
+    final serviceCtrl = TextEditingController(text: 'Periodic Maintenance Service');
+    String bay = 'Bay 1';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Book Workshop Appointment'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Customer Name *')),
+              const SizedBox(height: 8),
+              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Customer Phone')),
+              const SizedBox(height: 8),
+              TextField(controller: regCtrl, decoration: const InputDecoration(labelText: 'Vehicle Reg No *')),
+              const SizedBox(height: 8),
+              TextField(controller: serviceCtrl, decoration: const InputDecoration(labelText: 'Service Type')),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: bay,
+                decoration: const InputDecoration(labelText: 'Assign Bay / Lift'),
+                items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
+                    .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                    .toList(),
+                onChanged: (v) => bay = v ?? 'Bay 1',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameCtrl.text.trim().isEmpty || regCtrl.text.trim().isEmpty) return;
+              await http.post(
+                Uri.parse('$_baseUrl/appointments'),
+                headers: {'Content-Type': 'application/json'},
+                body: json.encode({
+                  'customerName': nameCtrl.text.trim(),
+                  'customerPhone': phoneCtrl.text.trim(),
+                  'registrationNo': regCtrl.text.trim().toUpperCase(),
+                  'serviceType': serviceCtrl.text.trim(),
+                  'bayNumber': bay,
+                  'scheduledAt': DateTime.now().add(const Duration(days: 1)).toIso8601String(),
+                }),
+              );
+              if (mounted) Navigator.pop(ctx);
+              _fetchJobs();
+            },
+            child: const Text('Book'),
           ),
         ],
       ),
