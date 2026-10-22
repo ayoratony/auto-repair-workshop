@@ -362,6 +362,38 @@ export function createInventoryRouter(
     });
   }));
 
+  // Direct departmental dispatch of workshop consumables (walk-up issue)
+  router.post('/consume', route(async (a, req) => {
+    require_(a, 'stock:issue', 'issue operational consumables');
+    const { itemId, quantity, department, issuedTo, purpose, notes } = req.body;
+    if (!text(itemId)) throw new HttpError(400, 'itemId is required');
+    const qty = posInt(quantity, 'quantity');
+    const dept = text(department) || 'Workshop';
+    const recipient = text(issuedTo) || a.name;
+    const reason = text(purpose) || `Operational supplies for ${dept}`;
+
+    return txn(async (tx) => {
+      const info = await itemInfo(tx, a.tenantId, 'CONSUMABLE', String(itemId));
+      await moveStock(tx, a.tenantId, 'CONSUMABLE', String(itemId), -qty);
+      const entry = await ledger(tx, a, {
+        type: 'ISSUE',
+        category: 'CONSUMABLE',
+        inventoryItemId: String(itemId),
+        itemName: info.name,
+        quantity: -qty,
+        quantityDetail: qty,
+        unitCost: info.cost,
+        department: dept,
+        recipientName: recipient,
+        reason,
+        notes: text(notes),
+        location: info.location,
+      });
+      const updated = await tx.inventoryItem.findUnique({ where: { id: String(itemId) } });
+      return { item: updated, transaction: entry };
+    });
+  }));
+
   // =====================================================================
   // 1. TECHNICIAN REQUESTS
   // =====================================================================

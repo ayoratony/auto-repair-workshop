@@ -1145,10 +1145,20 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                       DataCell(Text('KES ${(c['unitCost'] ?? 0).toString()}')),
                       DataCell(Text(c['location'] ?? 'Main Store')),
                       DataCell(
-                        IconButton(
-                          tooltip: 'Receive Supply Stock',
-                          icon: const Icon(Icons.add_box_outlined, color: Colors.blue),
-                          onPressed: () => _showReceiveStockDialog(c, isSparePart: false),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Issue / Dispatch to Department',
+                              icon: const Icon(Icons.outbox, color: Colors.green),
+                              onPressed: () => _showDispatchConsumableDialog(c),
+                            ),
+                            IconButton(
+                              tooltip: 'Receive Supply Stock',
+                              icon: const Icon(Icons.add_box_outlined, color: Colors.blue),
+                              onPressed: () => _showReceiveStockDialog(c, isSparePart: false),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -1158,6 +1168,124 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showDispatchConsumableDialog(dynamic item) {
+    final qtyCtrl = TextEditingController(text: '1');
+    final employeeCtrl = TextEditingController(text: 'Kamau Tech');
+    final purposeCtrl = TextEditingController(text: 'Daily workshop operations');
+    final notesCtrl = TextEditingController();
+    String department = 'Mechanical Workshop';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: Text('Issue Consumable: ${item['name']}'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('SKU: ${item['sku']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text('Available: ${item['quantityOnHand']} ${item['unit'] ?? 'units'}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: qtyCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Quantity to Issue (${item['unit'] ?? 'units'}) *',
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: department,
+                    decoration: const InputDecoration(labelText: 'Receiving Department *', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: 'Mechanical Workshop', child: Text('Mechanical Workshop')),
+                      DropdownMenuItem(value: 'Bodyshop & Paint', child: Text('Bodyshop & Paint')),
+                      DropdownMenuItem(value: 'Auto Electrical Bay', child: Text('Auto Electrical Bay')),
+                      DropdownMenuItem(value: 'Car Wash & Detailing', child: Text('Car Wash & Detailing')),
+                      DropdownMenuItem(value: 'Administrative Office', child: Text('Administrative Office')),
+                    ],
+                    onChanged: (v) => setDlg(() => department = v ?? 'Mechanical Workshop'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: employeeCtrl,
+                    decoration: const InputDecoration(labelText: 'Receiving Employee *', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: purposeCtrl,
+                    decoration: const InputDecoration(labelText: 'Purpose / Work Reference *', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: notesCtrl,
+                    decoration: const InputDecoration(labelText: 'Additional Notes', border: OutlineInputBorder()),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
+              onPressed: () async {
+                final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                if (qty <= 0) {
+                  _toast('Enter a valid quantity', color: Colors.orange);
+                  return;
+                }
+                if (qty > (item['quantityOnHand'] ?? 0)) {
+                  _toast('Cannot issue more than available on-hand stock', color: Colors.red);
+                  return;
+                }
+                final res = await http.post(
+                  Uri.parse('$_baseUrl/inventory/consume'),
+                  headers: _headers,
+                  body: json.encode({
+                    'itemId': item['id'],
+                    'quantity': qty,
+                    'department': department,
+                    'issuedTo': employeeCtrl.text.trim(),
+                    'purpose': purposeCtrl.text.trim(),
+                    'notes': notesCtrl.text.trim(),
+                  }),
+                );
+                if (res.statusCode == 200) {
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _toast('Consumable issued to $department! Logged in audit trail.', color: Colors.green);
+                  _fetchAllInventoryData();
+                  widget.onDataChanged();
+                } else {
+                  final err = json.decode(res.body)['error'] ?? 'Dispatch failed';
+                  _toast(err, color: Colors.red);
+                }
+              },
+              child: const Text('Confirm Dispatch'),
+            ),
+          ],
+        ),
       ),
     );
   }
