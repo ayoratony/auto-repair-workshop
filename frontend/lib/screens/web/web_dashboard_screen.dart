@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'estimate_form.dart';
@@ -21,6 +21,74 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   String _activeSidebar = 'Dashboard';
   String _activeTab = 'Current Job Cards';
   String _activeUserRole = 'ADMIN';
+
+  // Role-Based Access Control: what each role may open (nav:*) or do (other keys).
+  static const Map<String, Set<String>> _rolePerms = {
+    'ADMIN': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings',
+      'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
+      'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
+    },
+    'MANAGER': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports',
+      'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
+      'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
+    },
+    'ADVISOR': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Estimates', 'nav:Invoices', 'nav:Customers',
+      'job:create', 'job:edit', 'estimate:edit', 'appt:edit',
+    },
+    'MECHANIC': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Parts Catalog',
+      'job:edit',
+    },
+    'STOREKEEPER': {
+      'nav:Dashboard', 'nav:Parts Catalog',
+      'part:edit', 'stock:adjust',
+    },
+    'CASHIER': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Reports',
+      'payment:record', 'expense:record',
+    },
+  };
+
+  static const Map<String, String> _tabToNav = {
+    'Current Job Cards': 'Job Cards',
+    'Parts Catalog': 'Parts Catalog',
+    'Estimates': 'Estimates',
+    'Invoices': 'Invoices',
+  };
+
+  bool _can(String perm) => _rolePerms[_activeUserRole]?.contains(perm) ?? false;
+
+  /// Returns true (and warns) when the active role is NOT allowed to do [perm].
+  bool _deny(String perm, String action) {
+    if (_can(perm)) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.orange,
+        content: Text('Role Guard: $_activeUserRole is not allowed to $action.'),
+      ),
+    );
+    return true;
+  }
+
+  String _firstAllowedTab() {
+    for (final t in _tabToNav.keys) {
+      if (_can('nav:${_tabToNav[t]}')) return t;
+    }
+    return 'Current Job Cards';
+  }
+
+  void _changeRole(String role) {
+    setState(() {
+      _activeUserRole = role;
+      _activeSidebar = 'Dashboard';
+      _activeTab = _firstAllowedTab();
+    });
+  }
 
   // Real data collections from PostgreSQL
   Map<String, dynamic> _dashboard = {
@@ -255,6 +323,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // DIALOGS: CREATE / EDIT / VIEW JOB CARD
   // ==========================================
   Future<void> _showJobCardDialog({Map<String, dynamic>? existingJob}) async {
+    if (_deny(existingJob == null ? 'job:create' : 'job:edit', existingJob == null ? 'create job cards' : 'edit job cards')) return;
     final isEdit = existingJob != null;
     final customerNameCtrl = TextEditingController(text: existingJob?['customer']?['name'] ?? '');
     final phoneCtrl = TextEditingController(text: existingJob?['customer']?['phone'] ?? '');
@@ -652,7 +721,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       const Divider(),
                       const SizedBox(height: 8),
                       const Text(
-                        '360° Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
+                        '360Â° Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
                       ),
                       const SizedBox(height: 8),
@@ -681,6 +750,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     onPressed: isSaving
                         ? null
                         : () async {
+                            if (_deny('job:delete', 'delete job cards')) return;
                             setModalState(() => isSaving = true);
                             try {
                               await http.delete(Uri.parse('$_baseUrl/jobs/${existingJob['id']}'));
@@ -856,7 +926,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               title: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(child: Text('Job Card $jobNo — ${customer['name'] ?? ''}')),
+                  Expanded(child: Text('Job Card $jobNo â€” ${customer['name'] ?? ''}')),
                   if (job['isWarranty'] == true)
                     Padding(
                       padding: const EdgeInsets.only(right: 8.0),
@@ -901,8 +971,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   const Text('WORKSHOP ASSIGNMENT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   const SizedBox(height: 6),
                                   Text('Service: ${job['workRequested'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  •  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
-                                  Text('Priority: ${job['priority'] ?? 'Medium'} • Due: ${_formatDateShort(job['dueDate'])}'),
+                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  â€¢  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
+                                  Text('Priority: ${job['priority'] ?? 'Medium'} â€¢ Due: ${_formatDateShort(job['dueDate'])}'),
                                 ],
                               ),
                             ),
@@ -914,8 +984,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   const SizedBox(height: 6),
                                   Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
                                   Text('Make/Model: ${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'),
-                                  Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  •  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
-                                  Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  •  QC Passed: ${qcPassed ? 'YES ✓' : 'Pending'}'),
+                                  Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  â€¢  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
+                                  Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  â€¢  QC Passed: ${qcPassed ? 'YES âœ“' : 'Pending'}'),
                                   if (obdCodes.isNotEmpty)
                                     Text('OBD-II Codes: $obdCodes', style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600)),
                                 ],
@@ -1013,7 +1083,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           return Card(
                             child: ListTile(
                               title: Text('Total: KSH ${(est['total'] as num).toStringAsFixed(2)} (Incl. 16% VAT & ${est['discountRate']}% Discount)'),
-                              subtitle: Text('Status: ${est['status']} • Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
+                              subtitle: Text('Status: ${est['status']} â€¢ Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
                             ),
                           );
                         }).toList(),
@@ -1089,6 +1159,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // DIALOG: ADD / EDIT PART IN CATALOG + STOCK LEDGER
   // ==========================================
   Future<void> _showPartDialog({Map<String, dynamic>? existingPart}) async {
+    if (_deny('part:edit', 'add or edit spare parts')) return;
     final isEdit = existingPart != null;
     final partNoCtrl = TextEditingController(text: existingPart?['partNumber'] ?? '');
     final descCtrl = TextEditingController(text: existingPart?['description'] ?? '');
@@ -1238,6 +1309,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Future<void> _showStockMovementDialog(Map<String, dynamic> part) async {
+    if (_deny('stock:adjust', 'adjust stock')) return;
     String moveType = 'RECEIVED';
     final qtyCtrl = TextEditingController(text: '5');
     final costCtrl = TextEditingController(text: (part['costPrice'] ?? 0).toString());
@@ -1251,7 +1323,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             return AlertDialog(
-              title: Text('Stock Ledger: ${part['partNumber']} — ${part['description']}'),
+              title: Text('Stock Ledger: ${part['partNumber']} â€” ${part['description']}'),
               content: SizedBox(
                 width: 520,
                 child: SingleChildScrollView(
@@ -1318,9 +1390,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ...movements.take(5).map((m) => ListTile(
                               dense: true,
                               contentPadding: EdgeInsets.zero,
-                              title: Text('${m['type']}: ${m['quantity']} units  •  Ref: ${m['reference'] ?? '-'}',
+                              title: Text('${m['type']}: ${m['quantity']} units  â€¢  Ref: ${m['reference'] ?? '-'}',
                                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                              subtitle: Text('Supplier: ${m['supplierName'] ?? '-'}  •  ${_formatDateShort(m['createdAt'])}',
+                              subtitle: Text('Supplier: ${m['supplierName'] ?? '-'}  â€¢  ${_formatDateShort(m['createdAt'])}',
                                   style: const TextStyle(fontSize: 11)),
                             )),
                       ],
@@ -1359,6 +1431,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Future<void> _showRecordPaymentDialog(Map<String, dynamic> inv) async {
+    if (_deny('payment:record', 'record payments')) return;
     final est = inv['estimate'] ?? {};
     final total = (est['total'] as num?)?.toDouble() ?? 0.0;
     final alreadyPaid = (inv['amountPaid'] as num?)?.toDouble() ?? 0.0;
@@ -1376,7 +1449,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             return AlertDialog(
-              title: Text('Record Payment / Deposit — INV-${inv['id'].toString().substring(0, 6).toUpperCase()}'),
+              title: Text('Record Payment / Deposit â€” INV-${inv['id'].toString().substring(0, 6).toUpperCase()}'),
               content: SizedBox(
                 width: 440,
                 child: Column(
@@ -1384,7 +1457,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Invoice Total: KSH ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Already Paid: KSH ${alreadyPaid.toStringAsFixed(2)}  •  Balance Due: KSH ${remaining.toStringAsFixed(2)}',
+                    Text('Already Paid: KSH ${alreadyPaid.toStringAsFixed(2)}  â€¢  Balance Due: KSH ${remaining.toStringAsFixed(2)}',
                         style: const TextStyle(color: Colors.blueGrey, fontSize: 13)),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
@@ -1404,7 +1477,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       controller: amountCtrl,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'Amount Received Now (KSH) — Enter Deposit or Full Balance',
+                        labelText: 'Amount Received Now (KSH) â€” Enter Deposit or Full Balance',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -1460,7 +1533,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Vehicle & Service History — ${customer['name'] ?? ''}'),
+              Text('Vehicle & Service History â€” ${customer['name'] ?? ''}'),
               OutlinedButton.icon(
                 onPressed: () {
                   final firstReg = vehicles.isNotEmpty ? vehicles.first['registrationNo'] : 'your vehicle';
@@ -1478,7 +1551,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Phone: ${customer['phone'] ?? '-'}  •  Registered Vehicles: ${vehicles.length}  •  Total Visits: ${jobs.length}',
+                  Text('Phone: ${customer['phone'] ?? '-'}  â€¢  Registered Vehicles: ${vehicles.length}  â€¢  Total Visits: ${jobs.length}',
                       style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.w600)),
                   const Divider(height: 24),
                   if (jobs.isEmpty)
@@ -1491,14 +1564,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
                           title: Text(
-                            '${j['jobNumber'] ?? 'Job'} — ${v['registrationNo'] ?? ''} (${v['make'] ?? ''} ${v['model'] ?? ''})',
+                            '${j['jobNumber'] ?? 'Job'} â€” ${v['registrationNo'] ?? ''} (${v['make'] ?? ''} ${v['model'] ?? ''})',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Work: ${j['workRequested'] ?? '-'}  •  Technician: ${j['technician'] ?? '-'}'),
-                              Text('Odometer: ${j['odometer'] ?? '-'} km  •  Date: ${_formatDateShort(j['createdAt'])}  •  Estimates: ${ests.length}'),
+                              Text('Work: ${j['workRequested'] ?? '-'}  â€¢  Technician: ${j['technician'] ?? '-'}'),
+                              Text('Odometer: ${j['odometer'] ?? '-'} km  â€¢  Date: ${_formatDateShort(j['createdAt'])}  â€¢  Estimates: ${ests.length}'),
                             ],
                           ),
                           trailing: Chip(
@@ -1520,6 +1593,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Future<void> _showAppointmentDialog() async {
+    if (_deny('appt:edit', 'book appointments')) return;
     final nameCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
     final regCtrl = TextEditingController();
@@ -1627,6 +1701,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Future<void> _showExpenseDialog() async {
+    if (_deny('expense:record', 'record expenses')) return;
     String category = 'Workshop Consumables';
     final descCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
@@ -1822,6 +1897,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   Widget _sidebarItem(IconData icon, String title, {String? tabTarget}) {
+    if (!_can('nav:${title == 'Dashboard' ? 'Dashboard' : title}')) return const SizedBox.shrink();
     final isActive = _activeSidebar == title;
     return Container(
       color: isActive ? Colors.white.withOpacity(0.1) : Colors.transparent,
@@ -1838,7 +1914,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         onTap: () {
           setState(() {
             _activeSidebar = title;
-            if (tabTarget != null) {
+            if (title == 'Dashboard') {
+              _activeTab = _firstAllowedTab();
+            } else if (tabTarget != null) {
               _activeTab = tabTarget;
             }
           });
@@ -1914,7 +1992,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     DropdownMenuItem(value: 'STOREKEEPER', child: Text('Role: Storekeeper')),
                     DropdownMenuItem(value: 'CASHIER', child: Text('Role: Cashier')),
                   ],
-                  onChanged: (val) => setState(() => _activeUserRole = val ?? 'ADMIN'),
+                  onChanged: (val) => _changeRole(val ?? 'ADMIN'),
                 ),
               ),
             ),
@@ -1948,7 +2026,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         _statCard(
           'Total Revenue',
           'KSH ${rev.toStringAsFixed(2)}',
-          '↑ Paid & Approved',
+          'â†‘ Paid & Approved',
           Colors.green,
           Icons.show_chart,
           Colors.blue,
@@ -1961,7 +2039,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         _statCard(
           'Active Jobs',
           '$activeJobs',
-          '↑ Total Jobs: ${_dashboard['totalJobsCount'] ?? 0}',
+          'â†‘ Total Jobs: ${_dashboard['totalJobsCount'] ?? 0}',
           Colors.green,
           Icons.bar_chart,
           Colors.blue,
@@ -2090,16 +2168,22 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ),
           ),
           const Divider(height: 32),
-          if (_activeTab == 'Current Job Cards') _buildJobCardsTabContent(),
-          if (_activeTab == 'Parts Catalog') _buildPartsCatalogTabContent(),
-          if (_activeTab == 'Estimates') _buildEstimatesTabContent(),
-          if (_activeTab == 'Invoices') _buildInvoicesTabContent(),
+          if (_activeTab == 'Current Job Cards' && _can('nav:Job Cards')) _buildJobCardsTabContent(),
+          if (_activeTab == 'Parts Catalog' && _can('nav:Parts Catalog')) _buildPartsCatalogTabContent(),
+          if (_activeTab == 'Estimates' && _can('nav:Estimates')) _buildEstimatesTabContent(),
+          if (_activeTab == 'Invoices' && _can('nav:Invoices')) _buildInvoicesTabContent(),
+          if (!_can('nav:${_tabToNav[_activeTab]}'))
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Your role ($_activeUserRole) has no access to this section.'),
+            ),
         ],
       ),
     );
   }
 
   Widget _buildTabItem(String text) {
+    if (!_can('nav:${_tabToNav[text]}')) return const SizedBox.shrink();
     final isActive = _activeTab == text;
     return InkWell(
       onTap: () {
@@ -2500,6 +2584,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 IconButton(
                                   icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
                                   onPressed: () async {
+                                    if (_deny('part:delete', 'delete spare parts')) return;
                                     await http.delete(Uri.parse('$_baseUrl/parts/${part['id']}'));
                                     _refreshAllData();
                                   },
@@ -2609,8 +2694,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 items: const [
                                   DropdownMenuItem(value: 'DRAFT', child: Text('DRAFT')),
                                   DropdownMenuItem(value: 'SENT', child: Text('SENT TO CUSTOMER')),
-                                  DropdownMenuItem(value: 'APPROVED', child: Text('APPROVED ✓')),
-                                  DropdownMenuItem(value: 'REJECTED', child: Text('REJECTED ✗')),
+                                  DropdownMenuItem(value: 'APPROVED', child: Text('APPROVED âœ“')),
+                                  DropdownMenuItem(value: 'REJECTED', child: Text('REJECTED âœ—')),
                                 ],
                                 onChanged: (newSt) async {
                                   if (newSt == null) return;
@@ -2644,7 +2729,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
                                   )
                                 else
-                                  const Text('Invoiced ✓', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                                  const Text('Invoiced âœ“', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                                 const SizedBox(width: 8),
                                 OutlinedButton.icon(
                                   onPressed: () => InvoicePdfService.showPreviewModal(
@@ -2669,6 +2754,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   tooltip: 'Delete Estimate',
                                   icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
                                   onPressed: () async {
+                                    if (_deny('estimate:delete', 'delete estimates')) return;
                                     await http.delete(Uri.parse('$_baseUrl/estimates/${est['id']}'));
                                     _refreshAllData();
                                   },
@@ -2795,7 +2881,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               child: const Text('Full M-Pesa', style: TextStyle(fontSize: 12)),
                             ),
                           ] else
-                            const Text('Paid in Full ✓', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                            const Text('Paid in Full âœ“', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -2954,7 +3040,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 ),
                                 items: const [
                                   DropdownMenuItem(value: 'SCHEDULED', child: Text('SCHEDULED')),
-                                  DropdownMenuItem(value: 'ARRIVED', child: Text('ARRIVED ✓')),
+                                  DropdownMenuItem(value: 'ARRIVED', child: Text('ARRIVED âœ“')),
                                   DropdownMenuItem(value: 'COMPLETED', child: Text('COMPLETED')),
                                   DropdownMenuItem(value: 'MISSED', child: Text('MISSED / NO-SHOW')),
                                 ],
@@ -3353,12 +3439,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 children: [
                   Text('Workshop Role-Based Access Control (RBAC) Matrix', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   Divider(height: 20),
-                  Text('• Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('• Service Advisor: Create Job Cards, 360° Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('• Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('• Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('• Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('• Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Service Advisor: Create Job Cards, 360Â° Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('â€¢ Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
                 ],
               ),
             ),
@@ -3424,7 +3510,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               _summaryRow('Inventory Stock Valuation (At Buying Cost)', 'KSH ${stockValCost.toStringAsFixed(2)}'),
               _summaryRow('Inventory Stock Valuation (At Retail Selling Price)', 'KSH ${stockValRetail.toStringAsFixed(2)}'),
               _summaryRow('Projected Inventory Gross Margin', 'KSH ${(stockValRetail - stockValCost).toStringAsFixed(2)}'),
-              _summaryRow('Today / This Week / This Month Jobs', '${_dashboard['todayJobsCount'] ?? 0} Today • ${_dashboard['weekJobsCount'] ?? 0} Week • ${_dashboard['monthJobsCount'] ?? 0} Month'),
+              _summaryRow('Today / This Week / This Month Jobs', '${_dashboard['todayJobsCount'] ?? 0} Today â€¢ ${_dashboard['weekJobsCount'] ?? 0} Week â€¢ ${_dashboard['monthJobsCount'] ?? 0} Month'),
             ],
           ),
         ),
@@ -3523,8 +3609,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             dense: true,
                             contentPadding: EdgeInsets.zero,
                             leading: const CircleAvatar(backgroundColor: Color(0xFFEFF6FF), child: Icon(Icons.directions_car, size: 16, color: Color(0xFF1D4ED8))),
-                            title: Text('${v['registrationNo']} — ${v['makeModel']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text('Owner: ${v['customerName']} • Last: ${v['lastService']}'),
+                            title: Text('${v['registrationNo']} â€” ${v['makeModel']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('Owner: ${v['customerName']} â€¢ Last: ${v['lastService']}'),
                             trailing: Chip(label: Text('${v['jobsCount']} Visits', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
                           )),
                   ],
@@ -3763,10 +3849,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                       title: Text(
-                        '${part['partNumber'] ?? 'Part'} • ${part['description'] ?? ''} (${isOut ? '-' : '+'}${m['quantity'] ?? 0})',
+                        '${part['partNumber'] ?? 'Part'} â€¢ ${part['description'] ?? ''} (${isOut ? '-' : '+'}${m['quantity'] ?? 0})',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      subtitle: Text('Reason: ${m['reason'] ?? '-'} • Date: ${_formatDate(m['createdAt'])}'),
+                      subtitle: Text('Reason: ${m['reason'] ?? '-'} â€¢ Date: ${_formatDate(m['createdAt'])}'),
                       trailing: Chip(
                         label: Text(type, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         backgroundColor: isOut ? Colors.orange.shade50 : Colors.green.shade50,
@@ -4023,3 +4109,4 @@ class _WeeklyJobsChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
