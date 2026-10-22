@@ -1,0 +1,13 @@
+{
+  "name": "auto-repair-workshop",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "npm --prefix backend run build",
+    "dev": "npm --prefix backend run dev",
+    "start": "npm --prefix backend run start"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
+  }
+}

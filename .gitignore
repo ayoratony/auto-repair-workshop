@@ -1,0 +1,13 @@
+.neon
+node_modules/
+backend/node_modules/
+backend/dist/
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+*.log

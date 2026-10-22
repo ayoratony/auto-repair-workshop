@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// -------------------------------------
+// Core / Auth & Multi-Tenancy
+// -------------------------------------
+
+model Tenant {
+  id          String   @id @default(uuid())
+  name        String
+  address     String?
+  taxPin      String?  // e.g. KRA Pin
+  logoUrl     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  customers   Customer[]
+  jobCards    JobCard[]
+  parts       PartCatalog[]
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String   // Hashed
+  name        String
+  role        Role     @default(MECHANIC)
+  
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum Role {
+  ADMIN
+  ACCOUNTS
+  INSPECTOR
+  MECHANIC
+}
+
+// -------------------------------------
+// Customers & Vehicles
+// -------------------------------------
+
+model Customer {
+  id          String    @id @default(uuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+
+  vehicles    Vehicle[]
+  jobCards    JobCard[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Vehicle {
+  id             String    @id @default(uuid())
+  registrationNo String
+  make           String?
+  model          String?
+  vinNumber      String?
+  
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id])
+  
+  jobCards       JobCard[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// -------------------------------------
+// Job Cards (Receiving Memo)
+// -------------------------------------
+
+model JobCard {
+  id             String        @id @default(uuid())
+  jobNumber      String?       // e.g. JC01021
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  
+  customerId     String
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  
+  vehicleId      String
+  vehicle        Vehicle       @relation(fields: [vehicleId], references: [id])
+
+  odometer       Int?
+  fuelLevel      String?       // e.g., "1/4", "Half", "Full"
+  walkAroundData Json?         // Checklists & Damage Coordinates
+  workRequested  String?       
+  technician     String?       // Assigned technician name
+  priority       String        @default("Medium") // Low, Medium, High
+  dueDate        DateTime?
+  status         JobStatus     @default(BOOKED)
+
+  estimates      Estimate[]
+  
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+enum JobStatus {
+  BOOKED
+  WAITING
+  IN_PROGRESS
+  READY
+  COMPLETED
+}
+
+// -------------------------------------
+// Estimates & Invoicing
+// -------------------------------------
+
+model PartCatalog {
+  id            String   @id @default(uuid())
+  partNumber    String
+  description   String
+  unitPrice     Float
+  stockQuantity Int      @default(10)
+  
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Estimate {
+  id            String             @id @default(uuid())
+  jobCardId     String
+  jobCard       JobCard            @relation(fields: [jobCardId], references: [id])
+  
+  subtotal      Float
+  discountRate  Float              @default(0) // e.g., 20 for 20%
+  taxRate       Float              @default(16) // e.g., 16 for 16% VAT
+  total         Float
+
+  status        EstimateStatus     @default(DRAFT)
+  
+  lineItems     EstimateLineItem[]
+  invoice       Invoice?
+
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+}
+
+model EstimateLineItem {
+  id          String   @id @default(uuid())
+  estimateId  String
+  estimate    Estimate @relation(fields: [estimateId], references: [id])
+  
+  description String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  estimateId    String        @unique
+  estimate      Estimate      @relation(fields: [estimateId], references: [id])
+  
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMode   String?       // "MPESA", "CARD", "CASH"
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  PAY_LATER
+}
