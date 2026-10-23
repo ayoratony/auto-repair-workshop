@@ -1148,18 +1148,29 @@ export function createInventoryRouter(
     const rows = await prisma.inventoryTransaction.findMany({
       where: { tenantId: a.tenantId, jobCardId: job.id, category: 'SPARE_PART', OR: [{ type: 'ISSUE' }, { type: 'INSPECT', quantity: { gt: 0 } }] },
     });
-    const map = new Map<string, { partId: string; description: string; qty: number }>();
+    const map = new Map<string, { partId: string; description: string; qty: number; unitCost: number; unitPrice: number }>();
     for (const t of rows) {
-      const k = t.partId!;
-      const e = map.get(k) || { partId: k, description: t.itemName || '', qty: 0 };
+      const k = t.partId || t.inventoryItemId || t.itemName || 'custom-item';
+      const e = map.get(k) || { partId: t.partId || '', description: t.itemName || 'Item', qty: 0, unitCost: Number(t.unitCost ?? 0), unitPrice: 0 };
       e.qty += t.type === 'ISSUE' ? t.quantityDetail : -t.quantityDetail;
+      if (!e.unitCost && t.unitCost) e.unitCost = Number(t.unitCost);
       map.set(k, e);
     }
-    const partIds = [...map.keys()];
-    const catalog = await prisma.partCatalog.findMany({ where: { id: { in: partIds }, tenantId: a.tenantId } });
+    const partIds = [...map.values()].map((l) => l.partId).filter(Boolean);
+    const catalog = partIds.length ? await prisma.partCatalog.findMany({ where: { id: { in: partIds }, tenantId: a.tenantId } }) : [];
     const lines = [...map.values()].filter((l) => l.qty > 0).map((l) => {
-      const p = catalog.find((c) => c.id === l.partId);
-      return { ...l, unitCost: p?.costPrice ?? 0, unitPrice: p?.unitPrice ?? 0, totalCost: (p?.costPrice ?? 0) * l.qty, totalPrice: (p?.unitPrice ?? 0) * l.qty };
+      const p = l.partId ? catalog.find((c) => c.id === l.partId) : undefined;
+      const cost = p?.costPrice ?? l.unitCost ?? 0;
+      const price = p?.unitPrice ?? (cost > 0 ? cost * 1.25 : 0);
+      return {
+        partId: l.partId || null,
+        description: l.description,
+        qty: l.qty,
+        unitCost: cost,
+        unitPrice: price,
+        totalCost: cost * l.qty,
+        totalPrice: price * l.qty,
+      };
     });
     const totals = { cost: lines.reduce((s, l) => s + l.totalCost, 0), price: lines.reduce((s, l) => s + l.totalPrice, 0) };
     return can(a, 'report:cost') ? { jobCardId: job.id, jobNumber: job.jobNumber, vehicleId: job.vehicleId, lines, totals } : { jobCardId: job.id, jobNumber: job.jobNumber, vehicleId: job.vehicleId, lines: lines.map((l) => ({ ...l, unitCost: undefined, totalCost: undefined })), totals: { price: totals.price } };
