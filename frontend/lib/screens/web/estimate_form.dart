@@ -200,6 +200,7 @@ class _EstimateFormState extends State<EstimateForm> {
               Expanded(
                 flex: 3,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _jobs.any((j) => j['id'] == _selectedJobCardId) ? _selectedJobCardId : null,
                   decoration: const InputDecoration(
                     labelText: 'Select Job Card (Customer & Vehicle)',
@@ -211,7 +212,7 @@ class _EstimateFormState extends State<EstimateForm> {
                     final vehicle = '${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} (${job['vehicle']?['registrationNo'] ?? ''})';
                     return DropdownMenuItem<String>(
                       value: job['id'],
-                      child: Text('$jobNo - $customer - $vehicle'),
+                      child: Text('$jobNo - $customer - $vehicle', overflow: TextOverflow.ellipsis),
                     );
                   }).toList(),
                   onChanged: (val) => setState(() => _selectedJobCardId = val),
@@ -238,6 +239,7 @@ class _EstimateFormState extends State<EstimateForm> {
           // Optional Quick Fill from Parts Catalog
           if (_parts.isNotEmpty) ...[
             DropdownButtonFormField<Map<String, dynamic>>(
+              isExpanded: true,
               value: _selectedPart,
               decoration: const InputDecoration(
                 labelText: 'Quick-Pick Spare Part from Catalog (Auto-Deducts Stock on Invoice)',
@@ -248,7 +250,7 @@ class _EstimateFormState extends State<EstimateForm> {
                 final brand = (part['brand'] != null && part['brand'].toString().isNotEmpty) ? ' [${part['brand']}]' : '';
                 return DropdownMenuItem<Map<String, dynamic>>(
                   value: part,
-                  child: Text('${part['partNumber']} - ${part['description']}$brand (KSH ${part['unitPrice']}) [Stock: ${part['stockQuantity']}]'),
+                  child: Text('${part['partNumber']} - ${part['description']}$brand (KSH ${part['unitPrice']}) [Stock: ${part['stockQuantity']}]', overflow: TextOverflow.ellipsis),
                 );
               }).toList(),
               onChanged: (part) {
@@ -271,14 +273,15 @@ class _EstimateFormState extends State<EstimateForm> {
               SizedBox(
                 width: 135,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _selectedItemType,
                   decoration: const InputDecoration(
                     labelText: 'Line Type',
                     border: OutlineInputBorder(),
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'PART', child: Text('Spare Part')),
-                    DropdownMenuItem(value: 'LABOUR', child: Text('Labour')),
+                    DropdownMenuItem(value: 'PART', child: Text('Spare Part', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'LABOUR', child: Text('Labour', overflow: TextOverflow.ellipsis)),
                   ],
                   onChanged: (v) {
                     if (v != null) {

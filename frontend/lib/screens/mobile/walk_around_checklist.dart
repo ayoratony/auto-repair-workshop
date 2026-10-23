@@ -186,7 +186,12 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
           children: [
             Icon(Icons.gavel, color: Color(0xFF0F4C81)),
             SizedBox(width: 10),
-            Text('Workshop Receiving Terms & Conditions'),
+            Expanded(
+              child: Text(
+                'Workshop Receiving Terms & Conditions',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
           ],
         ),
         content: const SizedBox(
@@ -268,9 +273,12 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
             children: [
               Icon(Icons.assignment_turned_in, size: 18, color: Color(0xFF0F4C81)),
               SizedBox(width: 8),
-              Text(
-                'RECEIVING MEMO DETAILS & SERVICE CATEGORIES',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A), letterSpacing: 0.4),
+              Expanded(
+                child: Text(
+                  'RECEIVING MEMO DETAILS & SERVICE CATEGORIES',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A), letterSpacing: 0.4),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),
@@ -310,13 +318,19 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
               SizedBox(
                 width: 170,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: kVisitTypes.contains(d.visitType) ? d.visitType : kVisitTypes.first,
                   decoration: const InputDecoration(
                     labelText: 'Customer Visit Type',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  items: kVisitTypes.map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 13)))).toList(),
+                  items: kVisitTypes
+                      .map((v) => DropdownMenuItem(
+                            value: v,
+                            child: Text(v, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
                   onChanged: widget.readOnly
                       ? null
                       : (val) {
@@ -328,13 +342,19 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
               SizedBox(
                 width: 180,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: kPaymentModes.contains(d.paymentMode) ? d.paymentMode : kPaymentModes.first,
                   decoration: const InputDecoration(
                     labelText: 'Mode of Payment',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  items: kPaymentModes.map((p) => DropdownMenuItem(value: p, child: Text(p, style: const TextStyle(fontSize: 13)))).toList(),
+                  items: kPaymentModes
+                      .map((p) => DropdownMenuItem(
+                            value: p,
+                            child: Text(p, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
                   onChanged: widget.readOnly
                       ? null
                       : (val) {
@@ -344,15 +364,21 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
                 ),
               ),
               SizedBox(
-                width: 240,
+                width: 250,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: kWorkshopSections.contains(d.workshopSection) ? d.workshopSection : kWorkshopSections.first,
                   decoration: const InputDecoration(
                     labelText: 'Workshop Section (LC/HC/Body)',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  items: kWorkshopSections.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 12)))).toList(),
+                  items: kWorkshopSections
+                      .map((s) => DropdownMenuItem(
+                            value: s,
+                            child: Text(s, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
                   onChanged: widget.readOnly
                       ? null
                       : (val) {
@@ -453,23 +479,33 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
           const Divider(height: 28),
 
           // Section 2: Walk-Around Inventory Checklist (14 items from the form)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(Icons.fact_check_outlined, size: 18, color: Color(0xFF0F4C81)),
                   const SizedBox(width: 8),
                   Text(
-                    'WALK-AROUND INVENTORY CHECK ($checkedCount / ${kWalkAroundChecklistItems.length} Present)',
+                    'WALK-AROUND INVENTORY ($checkedCount / ${kWalkAroundChecklistItems.length})',
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
                   ),
                 ],
               ),
               if (!widget.readOnly)
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       onPressed: () {
                         setState(() {
                           for (final k in kWalkAroundChecklistItems) {
@@ -480,7 +516,13 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
                       },
                       child: const Text('Tick All', style: TextStyle(fontSize: 12)),
                     ),
+                    const SizedBox(width: 8),
                     TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       onPressed: () {
                         setState(() {
                           for (final k in kWalkAroundChecklistItems) {
@@ -602,36 +644,53 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
                 color: d.termsAccepted ? const Color(0xFF93C5FD) : const Color(0xFFFDE68A),
               ),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Checkbox(
-                  value: d.termsAccepted,
-                  activeColor: const Color(0xFF2563EB),
-                  onChanged: widget.readOnly
-                      ? null
-                      : (val) {
-                          setState(() => d.termsAccepted = val ?? false);
-                          widget.onChanged();
-                        },
-                ),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: widget.readOnly
-                        ? null
-                        : () {
-                            setState(() => d.termsAccepted = !d.termsAccepted);
-                            widget.onChanged();
-                          },
-                    child: const Text(
-                      'Customer agrees to Workshop Receiving Terms & Conditions (authorizing repairs, road test, and confirming inventory check above). *',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Checkbox(
+                      value: d.termsAccepted,
+                      activeColor: const Color(0xFF2563EB),
+                      onChanged: widget.readOnly
+                          ? null
+                          : (val) {
+                              setState(() => d.termsAccepted = val ?? false);
+                              widget.onChanged();
+                            },
                     ),
-                  ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: widget.readOnly
+                            ? null
+                            : () {
+                                setState(() => d.termsAccepted = !d.termsAccepted);
+                                widget.onChanged();
+                              },
+                        child: const Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Text(
+                            'Customer agrees to Workshop Receiving Terms & Conditions (authorizing repairs, road test, and confirming inventory check above). *',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                TextButton.icon(
-                  onPressed: () => _showTermsDialog(context),
-                  icon: const Icon(Icons.menu_book_outlined, size: 16),
-                  label: const Text('Read Terms', style: TextStyle(fontSize: 12)),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => _showTermsDialog(context),
+                    icon: const Icon(Icons.menu_book_outlined, size: 16),
+                    label: const Text('Read Full Terms & Conditions', style: TextStyle(fontSize: 12)),
+                  ),
                 ),
               ],
             ),

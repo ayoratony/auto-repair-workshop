@@ -1855,6 +1855,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: DropdownButtonFormField<String>(
+              isExpanded: true,
               value: (_techName == 'All' || _technicians.contains(_techName)) ? _techName : 'All',
               decoration: InputDecoration(
                 labelText: 'Technician Bay Filter (Admin View)',
@@ -1863,7 +1864,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 fillColor: Colors.white,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
               ),
-              items: ['All', ..._technicians].map((t) => DropdownMenuItem(value: t, child: Text(t == 'All' ? 'All technicians (bay view)' : t))).toList(),
+              items: ['All', ..._technicians]
+                  .map((t) => DropdownMenuItem(
+                        value: t,
+                        child: Text(t == 'All' ? 'All technicians (bay view)' : t, overflow: TextOverflow.ellipsis),
+                      ))
+                  .toList(),
               onChanged: (v) {
                 setState(() => _techName = v ?? 'All');
                 _fetchJobs();
@@ -2208,12 +2214,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               TextField(controller: qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity to Return', border: OutlineInputBorder())),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 value: condition,
                 decoration: const InputDecoration(labelText: 'Condition', border: OutlineInputBorder()),
                 items: const [
-                  DropdownMenuItem(value: 'GOOD', child: Text('Good - Unused')),
-                  DropdownMenuItem(value: 'DAMAGED', child: Text('Damaged')),
-                  DropdownMenuItem(value: 'DEFECTIVE', child: Text('Defective / Faulty')),
+                  DropdownMenuItem(value: 'GOOD', child: Text('Good - Unused', overflow: TextOverflow.ellipsis)),
+                  DropdownMenuItem(value: 'DAMAGED', child: Text('Damaged', overflow: TextOverflow.ellipsis)),
+                  DropdownMenuItem(value: 'DEFECTIVE', child: Text('Defective / Faulty', overflow: TextOverflow.ellipsis)),
                 ],
                 onChanged: (v) => setSheet(() => condition = v ?? 'GOOD'),
               ),
@@ -2442,12 +2449,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: customCategory,
                     decoration: const InputDecoration(labelText: 'Item Category', border: OutlineInputBorder()),
                     items: const [
-                      DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)')),
-                      DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable')),
-                      DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment')),
+                      DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)', overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable', overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment', overflow: TextOverflow.ellipsis)),
                     ],
                     onChanged: (v) => setSheet(() => customCategory = v ?? 'SPARE_PART'),
                   ),
@@ -2459,10 +2467,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 if (preselectedJobId == null) ...[
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: linkedJobId,
                     decoration: const InputDecoration(labelText: 'Select Assigned Vehicle / Job Card *', border: OutlineInputBorder()),
                     items: [
-                      const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Job Card) --')),
+                      const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Job Card) --', overflow: TextOverflow.ellipsis)),
                       ..._jobs.where((j) => j['status'] != 'COMPLETED').map((j) {
                         final plate = j['vehicle']?['registrationNo'] ?? j['vehiclePlate'] ?? '';
                         final make = j['vehicle']?['make'] ?? '';
@@ -2471,7 +2480,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         final jNo = j['jobNumber'] ?? id.substring(0, 8).toUpperCase();
                         return DropdownMenuItem(
                           value: id,
-                          child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 12)),
+                          child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
                         );
                       }),
                     ],
@@ -2631,9 +2640,15 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 if (!techMode) ...[
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: techOptions.contains(assigned) ? assigned : null,
                     decoration: const InputDecoration(labelText: 'Assign Technician', border: OutlineInputBorder()),
-                    items: techOptions.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                    items: techOptions
+                        .map((t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(t, overflow: TextOverflow.ellipsis),
+                            ))
+                        .toList(),
                     onChanged: (v) => setSheet(() => assigned = v ?? ''),
                   ),
                 ],
@@ -3074,10 +3089,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _fuelLevel,
                   decoration: const InputDecoration(labelText: 'Fuel Level', border: OutlineInputBorder()),
                   items: ['Empty', '1/4', 'Half', '3/4', 'Full']
-                      .map((f) => DropdownMenuItem(value: f, child: Text(f)))
+                      .map((f) => DropdownMenuItem(value: f, child: Text(f, overflow: TextOverflow.ellipsis)))
                       .toList(),
                   onChanged: (val) => setState(() => _fuelLevel = val ?? 'Half'),
                 ),
@@ -3085,10 +3101,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _priority,
                   decoration: const InputDecoration(labelText: 'Priority', border: OutlineInputBorder()),
                   items: ['Low', 'Medium', 'High']
-                      .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                      .map((p) => DropdownMenuItem(value: p, child: Text(p, overflow: TextOverflow.ellipsis)))
                       .toList(),
                   onChanged: (val) => setState(() => _priority = val ?? 'Medium'),
                 ),
@@ -3097,10 +3114,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            isExpanded: true,
             value: _bayNumber,
             decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
             items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
-                .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                .map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis)))
                 .toList(),
             onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
           ),
@@ -3303,10 +3321,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               TextField(controller: serviceCtrl, decoration: const InputDecoration(labelText: 'Service Type')),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 value: bay,
                 decoration: const InputDecoration(labelText: 'Assign Bay / Lift'),
                 items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
-                    .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                    .map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis)))
                     .toList(),
                 onChanged: (v) => bay = v ?? 'Bay 1',
               ),

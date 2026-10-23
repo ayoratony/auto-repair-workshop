@@ -824,6 +824,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: selectedJobId,
                       decoration: const InputDecoration(
                         labelText: 'Assign to Vehicle / Job Card *',
@@ -831,7 +832,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                         prefixIcon: Icon(Icons.directions_car),
                       ),
                       items: [
-                        const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Vehicle Assigned) --')),
+                        const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Vehicle Assigned) --', overflow: TextOverflow.ellipsis)),
                         ...activeJobs.map((j) {
                           final plate = j['vehicle']?['registrationNo'] ?? j['vehiclePlate'] ?? 'Vehicle';
                           final make = j['vehicle']?['make'] ?? '';
@@ -839,7 +840,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                           final jNo = j['jobNumber'] ?? j['id'].toString().substring(0, 8).toUpperCase();
                           return DropdownMenuItem<String>(
                             value: j['id'].toString(),
-                            child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 13)),
+                            child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
                           );
                         }),
                       ],
@@ -962,12 +963,13 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                       ),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: customCategory,
                         decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
                         items: const [
-                          DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)')),
-                          DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable')),
-                          DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment')),
+                          DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment', overflow: TextOverflow.ellipsis)),
                         ],
                         onChanged: (v) => setModalState(() => customCategory = v ?? 'SPARE_PART'),
                       ),
@@ -1550,9 +1552,12 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: condition,
                   decoration: const InputDecoration(labelText: 'Condition Upon Return'),
-                  items: ['GOOD', 'FAIR', 'DAMAGED', 'LOST'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  items: ['GOOD', 'FAIR', 'DAMAGED', 'LOST']
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
+                      .toList(),
                   onChanged: (v) => setDlg(() => condition = v ?? 'GOOD'),
                 ),
                 const SizedBox(height: 8),
@@ -1874,14 +1879,15 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                       ),
                     ] else ...[
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: department,
                         decoration: const InputDecoration(labelText: 'Receiving Department *', border: OutlineInputBorder()),
                         items: const [
-                          DropdownMenuItem(value: 'Mechanical Workshop', child: Text('Mechanical Workshop')),
-                          DropdownMenuItem(value: 'Bodyshop & Paint', child: Text('Bodyshop & Paint')),
-                          DropdownMenuItem(value: 'Auto Electrical Bay', child: Text('Auto Electrical Bay')),
-                          DropdownMenuItem(value: 'Car Wash & Detailing', child: Text('Car Wash & Detailing')),
-                          DropdownMenuItem(value: 'Administrative Office', child: Text('Administrative Office')),
+                          DropdownMenuItem(value: 'Mechanical Workshop', child: Text('Mechanical Workshop', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Bodyshop & Paint', child: Text('Bodyshop & Paint', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Auto Electrical Bay', child: Text('Auto Electrical Bay', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Car Wash & Detailing', child: Text('Car Wash & Detailing', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Administrative Office', child: Text('Administrative Office', overflow: TextOverflow.ellipsis)),
                         ],
                         onChanged: (v) => setDlg(() => department = v ?? 'Mechanical Workshop'),
                       ),
@@ -2067,6 +2073,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Supply Name * (e.g. Nitrile Gloves)', border: OutlineInputBorder())),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: selectedUnit,
                     decoration: const InputDecoration(labelText: 'Counting Unit *', border: OutlineInputBorder()),
                     items: commonUnits.map((u) {
@@ -2080,7 +2087,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                       if (u == 'roll') label = 'Rolls (roll) - Tape, Wire';
                       if (u == 'set') label = 'Sets (set)';
                       if (u == 'Other') label = 'Other (Custom Unit)';
-                      return DropdownMenuItem(value: u, child: Text(label));
+                      return DropdownMenuItem(value: u, child: Text(label, overflow: TextOverflow.ellipsis));
                     }).toList(),
                     onChanged: (v) => setDlg(() => selectedUnit = v ?? 'pcs'),
                   ),
@@ -2289,12 +2296,13 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: outcome,
                   decoration: const InputDecoration(labelText: 'Inspection Outcome *'),
                   items: const [
-                    DropdownMenuItem(value: 'RESTOCK', child: Text('RESTOCK (Restore to Available Inventory)')),
-                    DropdownMenuItem(value: 'QUARANTINE', child: Text('QUARANTINE (Keep in QC Quarantine for Repair)')),
-                    DropdownMenuItem(value: 'WRITE_OFF', child: Text('WRITE OFF (Damaged/Destroyed - Manager Auth)')),
+                    DropdownMenuItem(value: 'RESTOCK', child: Text('RESTOCK (Restore to Available Inventory)', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'QUARANTINE', child: Text('QUARANTINE (Keep in QC Quarantine for Repair)', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'WRITE_OFF', child: Text('WRITE OFF (Damaged/Destroyed - Manager Auth)', overflow: TextOverflow.ellipsis)),
                   ],
                   onChanged: (v) => setDlg(() => outcome = v ?? 'RESTOCK'),
                 ),
@@ -2440,11 +2448,12 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: category,
                     decoration: const InputDecoration(labelText: 'Category'),
                     items: const [
-                      DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Parts')),
-                      DropdownMenuItem(value: 'CONSUMABLE', child: Text('Consumables')),
+                      DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Parts', overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(value: 'CONSUMABLE', child: Text('Consumables', overflow: TextOverflow.ellipsis)),
                     ],
                     onChanged: (v) => setDlg(() {
                       category = v ?? 'SPARE_PART';
@@ -2453,11 +2462,12 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: itemId,
                     decoration: const InputDecoration(labelText: 'Select Item to Count *'),
                     items: items.map<DropdownMenuItem<String>>((it) {
                       final name = category == 'SPARE_PART' ? it['description'] : it['name'];
-                      return DropdownMenuItem(value: it['id'].toString(), child: Text(name.toString()));
+                      return DropdownMenuItem(value: it['id'].toString(), child: Text(name.toString(), overflow: TextOverflow.ellipsis));
                     }).toList(),
                     onChanged: (v) => setDlg(() => itemId = v),
                   ),

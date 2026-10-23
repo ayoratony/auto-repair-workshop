@@ -601,9 +601,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           Expanded(
                             flex: 1,
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: bayOptions.contains(bayNumber) ? bayNumber : 'Bay 1',
                               decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
-                              items: bayOptions.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                              items: bayOptions.map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis))).toList(),
                               onChanged: (val) => setModalState(() => bayNumber = val ?? 'Bay 1'),
                             ),
                           ),
@@ -614,17 +615,18 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: status,
                               decoration: const InputDecoration(labelText: '7-Stage Workflow Status', border: OutlineInputBorder()),
                               items: const [
-                                DropdownMenuItem(value: 'BOOKED', child: Text('1. Checked-In')),
-                                DropdownMenuItem(value: 'INSPECTION', child: Text('2. Inspection & OBD-II')),
-                                DropdownMenuItem(value: 'AWAITING_APPROVAL', child: Text('3. Awaiting Approval')),
-                                DropdownMenuItem(value: 'IN_PROGRESS', child: Text('4. In Repair')),
-                                DropdownMenuItem(value: 'WAITING', child: Text('5. Waiting Parts')),
-                                DropdownMenuItem(value: 'QUALITY_CHECK', child: Text('6. Quality Check (QC)')),
-                                DropdownMenuItem(value: 'READY', child: Text('7. Ready for Pickup')),
-                                DropdownMenuItem(value: 'COMPLETED', child: Text('Delivered / Closed')),
+                                DropdownMenuItem(value: 'BOOKED', child: Text('1. Checked-In', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'INSPECTION', child: Text('2. Inspection & OBD-II', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'AWAITING_APPROVAL', child: Text('3. Awaiting Approval', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'IN_PROGRESS', child: Text('4. In Repair', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'WAITING', child: Text('5. Waiting Parts', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'QUALITY_CHECK', child: Text('6. Quality Check (QC)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'READY', child: Text('7. Ready for Pickup', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'COMPLETED', child: Text('Delivered / Closed', overflow: TextOverflow.ellipsis)),
                               ],
                               onChanged: (val) => setModalState(() => status = val ?? 'IN_PROGRESS'),
                             ),
@@ -632,12 +634,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: priority,
                               decoration: const InputDecoration(labelText: 'Priority', border: OutlineInputBorder()),
                               items: const [
-                                DropdownMenuItem(value: 'Low', child: Text('Low')),
-                                DropdownMenuItem(value: 'Medium', child: Text('Medium')),
-                                DropdownMenuItem(value: 'High', child: Text('High')),
+                                DropdownMenuItem(value: 'Low', child: Text('Low', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'Medium', child: Text('Medium', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'High', child: Text('High', overflow: TextOverflow.ellipsis)),
                               ],
                               onChanged: (val) => setModalState(() => priority = val ?? 'Medium'),
                             ),
@@ -689,10 +692,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: ['Empty', '1/4', 'Half', '3/4', 'Full'].contains(fuelLevel) ? fuelLevel : 'Half',
                               decoration: const InputDecoration(labelText: 'Fuel Level', border: OutlineInputBorder()),
                               items: ['Empty', '1/4', 'Half', '3/4', 'Full']
-                                  .map((f) => DropdownMenuItem(value: f, child: Text(f)))
+                                  .map((f) => DropdownMenuItem(value: f, child: Text(f, overflow: TextOverflow.ellipsis)))
                                   .toList(),
                               onChanged: (val) => setModalState(() => fuelLevel = val ?? 'Half'),
                             ),
@@ -1515,12 +1519,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     ),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: customCategory,
                       decoration: const InputDecoration(labelText: 'Item Category', border: OutlineInputBorder()),
                       items: const [
-                        DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)')),
-                        DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable')),
-                        DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment')),
+                        DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment', overflow: TextOverflow.ellipsis)),
                       ],
                       onChanged: (v) => setModalState(() => customCategory = v ?? 'SPARE_PART'),
                     ),
@@ -1774,13 +1779,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: moveType,
                               decoration: const InputDecoration(labelText: 'Movement Type', border: OutlineInputBorder()),
                               items: const [
-                                DropdownMenuItem(value: 'RECEIVED', child: Text('Receive Stock (+ In)')),
-                                DropdownMenuItem(value: 'ISSUED', child: Text('Issue to Job (- Out)')),
-                                DropdownMenuItem(value: 'RETURNED', child: Text('Customer/Job Return (+ In)')),
-                                DropdownMenuItem(value: 'ADJUSTED', child: Text('Stocktake Set Exact (=)')),
+                                DropdownMenuItem(value: 'RECEIVED', child: Text('Receive Stock (+ In)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'ISSUED', child: Text('Issue to Job (- Out)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'RETURNED', child: Text('Customer/Job Return (+ In)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'ADJUSTED', child: Text('Stocktake Set Exact (=)', overflow: TextOverflow.ellipsis)),
                               ],
                               onChanged: (v) => setModalState(() => moveType = v ?? 'RECEIVED'),
                             ),
@@ -1898,14 +1904,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         style: const TextStyle(color: Colors.blueGrey, fontSize: 13)),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: mode,
                       decoration: const InputDecoration(labelText: 'Payment Mode', border: OutlineInputBorder()),
                       items: const [
-                        DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa (Paybill / Till)')),
-                        DropdownMenuItem(value: 'CASH', child: Text('Cash')),
-                        DropdownMenuItem(value: 'BANK TRANSFER', child: Text('Bank Transfer / Cheque')),
-                        DropdownMenuItem(value: 'CARD', child: Text('POS Card')),
-                        DropdownMenuItem(value: 'INVOICE CREDIT', child: Text('Pay Later / Corporate Credit')),
+                        DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa (Paybill / Till)', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'CASH', child: Text('Cash', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'BANK TRANSFER', child: Text('Bank Transfer / Cheque', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'CARD', child: Text('POS Card', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'INVOICE CREDIT', child: Text('Pay Later / Corporate Credit', overflow: TextOverflow.ellipsis)),
                       ],
                       onChanged: (v) => setModalState(() => mode = v ?? 'MPESA'),
                     ),
@@ -2074,10 +2081,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: bay,
                             decoration: const InputDecoration(labelText: 'Assigned Bay', border: OutlineInputBorder()),
                             items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift 1', 'Lift 2']
-                                .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                                .map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis)))
                                 .toList(),
                             onChanged: (v) => setModalState(() => bay = v ?? 'Bay 1'),
                           ),
@@ -2157,14 +2165,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: category,
                       decoration: const InputDecoration(labelText: 'Expense Category', border: OutlineInputBorder()),
                       items: const [
-                        DropdownMenuItem(value: 'Workshop Consumables', child: Text('Workshop Consumables & Oils')),
-                        DropdownMenuItem(value: 'Rent & Utilities', child: Text('Rent, Electricity & Water')),
-                        DropdownMenuItem(value: 'Casual Labour & Allowances', child: Text('Casual Labour & Technician Allowances')),
-                        DropdownMenuItem(value: 'Tools & Equipment', child: Text('Tools & Equipment Maintenance')),
-                        DropdownMenuItem(value: 'Transport & Parts Delivery', child: Text('Transport & Parts Delivery')),
+                        DropdownMenuItem(value: 'Workshop Consumables', child: Text('Workshop Consumables & Oils', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Rent & Utilities', child: Text('Rent, Electricity & Water', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Casual Labour & Allowances', child: Text('Casual Labour & Technician Allowances', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Tools & Equipment', child: Text('Tools & Equipment Maintenance', overflow: TextOverflow.ellipsis)),
+                        DropdownMenuItem(value: 'Transport & Parts Delivery', child: Text('Transport & Parts Delivery', overflow: TextOverflow.ellipsis)),
                       ],
                       onChanged: (v) => setModalState(() => category = v ?? 'Workshop Consumables'),
                     ),
@@ -2183,12 +2192,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: mode,
                             decoration: const InputDecoration(labelText: 'Paid Via', border: OutlineInputBorder()),
                             items: const [
-                              DropdownMenuItem(value: 'CASH', child: Text('Cash')),
-                              DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa')),
-                              DropdownMenuItem(value: 'BANK', child: Text('Bank')),
+                              DropdownMenuItem(value: 'CASH', child: Text('Cash', overflow: TextOverflow.ellipsis)),
+                              DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa', overflow: TextOverflow.ellipsis)),
+                              DropdownMenuItem(value: 'BANK', child: Text('Bank', overflow: TextOverflow.ellipsis)),
                             ],
                             onChanged: (v) => setModalState(() => mode = v ?? 'CASH'),
                           ),
@@ -3897,6 +3907,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
+                          isExpanded: true,
                           value: selectedRole,
                           decoration: const InputDecoration(
                             labelText: 'Assigned Role *',
@@ -3904,14 +3915,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             border: OutlineInputBorder(),
                           ),
                           items: const [
-                            DropdownMenuItem(value: 'OWNER', child: Text('OWNER (Full Admin Control)')),
-                            DropdownMenuItem(value: 'MANAGER', child: Text('WORKSHOP MANAGER')),
-                            DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR (Reception & Estimates)')),
-                            DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC (Technician & Parts Req)')),
-                            DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER (Store & Requisitions)')),
-                            DropdownMenuItem(value: 'INVENTORY_MANAGER', child: Text('INVENTORY MANAGER (Stock & Audits)')),
-                            DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER (Invoices & POS)')),
-                            DropdownMenuItem(value: 'ACCOUNTS', child: Text('ACCOUNTANT (Financials)')),
+                            DropdownMenuItem(value: 'OWNER', child: Text('OWNER (Full Admin Control)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'MANAGER', child: Text('WORKSHOP MANAGER', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR (Reception & Estimates)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC (Technician & Parts Req)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER (Store & Requisitions)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'INVENTORY_MANAGER', child: Text('INVENTORY MANAGER (Stock & Audits)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER (Invoices & POS)', overflow: TextOverflow.ellipsis)),
+                            DropdownMenuItem(value: 'ACCOUNTS', child: Text('ACCOUNTANT (Financials)', overflow: TextOverflow.ellipsis)),
                           ],
                           onChanged: (v) => setDlgState(() => selectedRole = v ?? 'MECHANIC'),
                         ),
