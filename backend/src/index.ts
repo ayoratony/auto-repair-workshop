@@ -2,7 +2,7 @@ import path from 'path';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { PrismaClient, JobStatus, EstimateStatus, PaymentStatus, Role } from '@prisma/client';
+import { PrismaClient, JobStatus, EstimateStatus, PaymentStatus, Role, ClientCategory } from '@prisma/client';
 import {
   ASSETS_BUCKET,
   uploadWorkshopAsset,
@@ -68,6 +68,16 @@ async function generateJobNumber(): Promise<string> {
     }
   }
   return `JC0${maxNum + 1}`;
+}
+
+// Helper to sanitize & parse client/vehicle category
+function parseCategory(val: any): ClientCategory {
+  if (!val) return ClientCategory.PERSONAL;
+  const upper = String(val).trim().toUpperCase();
+  if (upper === 'GOVERNMENT') return ClientCategory.GOVERNMENT;
+  if (upper === 'SCHOOL') return ClientCategory.SCHOOL;
+  if (upper === 'ORGANIZATION') return ClientCategory.ORGANIZATION;
+  return ClientCategory.PERSONAL;
 }
 
 // Workshop inventory: requests, issuance, assets, consumables, audit ledger
@@ -464,6 +474,11 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       phone,
       email,
       address,
+      category,
+      taxPin,
+      contactPerson,
+      contactPhone,
+      paymentTerms,
       registrationNo,
       make,
       model,
@@ -472,6 +487,10 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       engineNumber,
       fuelType,
       vinNumber,
+      bodyType,
+      fleetUnitNumber,
+      assignedDriver,
+      driverPhone,
       service,
       technician,
       bayNumber,
@@ -489,6 +508,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       walkAroundData,
     } = req.body;
 
+    const clientCat = parseCategory(category);
     const cleanCustomerName = (customerName || 'Customer').trim();
     const cleanRegNo = (registrationNo || 'N/A').trim().toUpperCase();
     const cleanService = (service || 'General Service').trim();
@@ -544,26 +564,44 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
             phone: phone || '',
             email: email || '',
             address: address || '',
+            category: clientCat,
+            taxPin: taxPin || null,
+            contactPerson: contactPerson || null,
+            contactPhone: contactPhone || null,
+            paymentTerms: paymentTerms || null,
             tenantId: tenant.id,
           },
         });
-      } else if (phone || email || address) {
+      } else {
         customer = await prisma.customer.update({
           where: { id: customer.id },
           data: {
             ...(phone ? { phone } : {}),
             ...(email ? { email } : {}),
             ...(address ? { address } : {}),
+            ...(category ? { category: clientCat } : {}),
+            ...(taxPin ? { taxPin } : {}),
+            ...(contactPerson ? { contactPerson } : {}),
+            ...(contactPhone ? { contactPhone } : {}),
+            ...(paymentTerms ? { paymentTerms } : {}),
           },
         });
       }
 
+      // Check for vehicle by registration number across the entire tenant
       let vehicle = await prisma.vehicle.findFirst({
         where: {
-          customerId: customer.id,
+          customer: { tenantId: tenant.id },
           registrationNo: { equals: cleanRegNo, mode: 'insensitive' },
         },
       });
+
+      const parsedOdo = odometer ? Number(odometer) : null;
+      let calculatedDaily: number | undefined = undefined;
+      if (vehicle && vehicle.lastOdometer && vehicle.lastServiceDate && parsedOdo && parsedOdo > vehicle.lastOdometer) {
+        const daysDiff = Math.max(1, Math.round((Date.now() - vehicle.lastServiceDate.getTime()) / (1000 * 60 * 60 * 24)));
+        calculatedDaily = Math.round((parsedOdo - vehicle.lastOdometer) / daysDiff);
+      }
 
       if (!vehicle) {
         vehicle = await prisma.vehicle.create({
@@ -576,6 +614,13 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
             engineNumber: engineNumber || null,
             fuelType: fuelType || 'Petrol',
             vinNumber: vinNumber || '',
+            bodyType: bodyType || 'sedan',
+            category: clientCat,
+            fleetUnitNumber: fleetUnitNumber || null,
+            assignedDriver: assignedDriver || null,
+            driverPhone: driverPhone || null,
+            lastOdometer: parsedOdo || 0,
+            lastServiceDate: new Date(),
             nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null,
             nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null,
             customerId: customer.id,
@@ -585,6 +630,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
         vehicle = await prisma.vehicle.update({
           where: { id: vehicle.id },
           data: {
+            ...(customerId || customer.id !== vehicle.customerId ? { customerId: customer.id } : {}),
             ...(make ? { make } : {}),
             ...(model ? { model } : {}),
             ...(year ? { year: String(year) } : {}),
@@ -592,6 +638,14 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
             ...(engineNumber ? { engineNumber } : {}),
             ...(fuelType ? { fuelType } : {}),
             ...(vinNumber ? { vinNumber } : {}),
+            ...(bodyType ? { bodyType } : {}),
+            ...(category ? { category: clientCat } : {}),
+            ...(fleetUnitNumber ? { fleetUnitNumber } : {}),
+            ...(assignedDriver ? { assignedDriver } : {}),
+            ...(driverPhone ? { driverPhone } : {}),
+            ...(parsedOdo ? { lastOdometer: parsedOdo } : {}),
+            lastServiceDate: new Date(),
+            ...(calculatedDaily !== undefined ? { avgDailyMileage: calculatedDaily } : {}),
             ...(nextServiceMileage ? { nextServiceMileage: Number(nextServiceMileage) } : {}),
             ...(nextServiceDate ? { nextServiceDate: new Date(nextServiceDate) } : {}),
           },
@@ -1414,7 +1468,7 @@ app.get('/api/customers/:id/history', async (req: Request, res: Response) => {
 
 app.post('/api/customers', async (req: Request, res: Response) => {
   try {
-    const { name, phone, email, address } = req.body;
+    const { name, phone, email, address, category, taxPin, contactPerson, contactPhone, paymentTerms } = req.body;
     const tenant = await getActiveTenant();
     const customer = await prisma.customer.create({
       data: {
@@ -1422,6 +1476,11 @@ app.post('/api/customers', async (req: Request, res: Response) => {
         phone: phone || '',
         email: email || '',
         address: address || '',
+        category: parseCategory(category),
+        taxPin: taxPin || null,
+        contactPerson: contactPerson || null,
+        contactPhone: contactPhone || null,
+        paymentTerms: paymentTerms || null,
         tenantId: tenant.id,
       },
       include: { vehicles: true, jobCards: true },
@@ -1430,6 +1489,388 @@ app.post('/api/customers', async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+app.put('/api/customers/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { name, phone, email, address, category, taxPin, contactPerson, contactPhone, paymentTerms } = req.body;
+    const updated = await prisma.customer.update({
+      where: { id },
+      data: {
+        ...(name !== undefined ? { name } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(email !== undefined ? { email } : {}),
+        ...(address !== undefined ? { address } : {}),
+        ...(category !== undefined ? { category: parseCategory(category) } : {}),
+        ...(taxPin !== undefined ? { taxPin } : {}),
+        ...(contactPerson !== undefined ? { contactPerson } : {}),
+        ...(contactPhone !== undefined ? { contactPhone } : {}),
+        ...(paymentTerms !== undefined ? { paymentTerms } : {}),
+      },
+      include: { vehicles: true, jobCards: true },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update customer' });
+  }
+});
+
+// ==========================================
+// VEHICLES & FLEET MANAGEMENT API
+// ==========================================
+
+// Fast Plate Auto-Lookup for Mobile & Web Receiving (Instant Autofill)
+app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
+  try {
+    const rawPlate = String(req.query.q || '').trim();
+    if (!rawPlate) {
+      return res.status(400).json({ error: 'Search plate parameter "q" is required' });
+    }
+
+    const cleanPlate = rawPlate.toUpperCase();
+    const compactPlate = cleanPlate.replace(/[\s\-_]/g, '');
+    const tenant = await getActiveTenant();
+
+    // Search vehicles under active workshop tenant matching the plate
+    const vehicles = await prisma.vehicle.findMany({
+      where: {
+        customer: { tenantId: tenant.id },
+        registrationNo: {
+          contains: compactPlate.length >= 3 ? compactPlate : cleanPlate,
+          mode: 'insensitive',
+        },
+      },
+      include: {
+        customer: true,
+        jobCards: {
+          orderBy: { createdAt: 'desc' },
+          take: 3,
+          include: {
+            estimates: {
+              include: { invoice: true, lineItems: true },
+            },
+          },
+        },
+      },
+      take: 10,
+    });
+
+    // Try finding exact sanitized match first
+    let matchedVehicle = vehicles.find(
+      (v) => v.registrationNo.replace(/[\s\-_]/g, '').toUpperCase() === compactPlate
+    );
+
+    // Fallback to substring match or first found
+    if (!matchedVehicle && vehicles.length > 0) {
+      matchedVehicle = vehicles[0];
+    }
+
+    if (!matchedVehicle) {
+      return res.json({ found: false, matches: [] });
+    }
+
+    const latestJob = matchedVehicle.jobCards[0] || null;
+    const totalJobsCount = await prisma.jobCard.count({
+      where: { vehicleId: matchedVehicle.id },
+    });
+
+    return res.json({
+      found: true,
+      vehicle: matchedVehicle,
+      customer: matchedVehicle.customer,
+      latestJob,
+      totalJobsCount,
+      matches: vehicles.map((v) => ({
+        id: v.id,
+        registrationNo: v.registrationNo,
+        make: v.make,
+        model: v.model,
+        year: v.year,
+        color: v.color,
+        category: v.category,
+        bodyType: v.bodyType,
+        fuelType: v.fuelType,
+        vinNumber: v.vinNumber,
+        fleetUnitNumber: v.fleetUnitNumber,
+        assignedDriver: v.assignedDriver,
+        driverPhone: v.driverPhone,
+        customerName: v.customer.name,
+        customerPhone: v.customer.phone,
+        lastOdometer: v.lastOdometer,
+        lastServiceDate: v.lastServiceDate,
+      })),
+    });
+  } catch (error) {
+    console.error('Vehicle lookup error:', error);
+    res.status(500).json({ error: 'Failed to look up vehicle' });
+  }
+});
+
+// List Vehicles with Fleet Filters (PERSONAL, GOVERNMENT, SCHOOL, ORGANIZATION)
+app.get('/api/vehicles', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const { category, q, limit = '100', offset = '0' } = req.query;
+
+    const whereClause: any = {
+      customer: { tenantId: tenant.id },
+    };
+
+    if (category && String(category).toUpperCase() !== 'ALL') {
+      whereClause.category = parseCategory(category);
+    }
+
+    if (q && String(q).trim() !== '') {
+      const searchStr = String(q).trim();
+      whereClause.OR = [
+        { registrationNo: { contains: searchStr, mode: 'insensitive' } },
+        { make: { contains: searchStr, mode: 'insensitive' } },
+        { model: { contains: searchStr, mode: 'insensitive' } },
+        { fleetUnitNumber: { contains: searchStr, mode: 'insensitive' } },
+        { assignedDriver: { contains: searchStr, mode: 'insensitive' } },
+        { vinNumber: { contains: searchStr, mode: 'insensitive' } },
+        { customer: { name: { contains: searchStr, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [total, vehicles, personalCount, govCount, schoolCount, orgCount] = await Promise.all([
+      prisma.vehicle.count({ where: whereClause }),
+      prisma.vehicle.findMany({
+        where: whereClause,
+        include: {
+          customer: true,
+          _count: {
+            select: { jobCards: true },
+          },
+        },
+        orderBy: [{ lastServiceDate: 'desc' }, { updatedAt: 'desc' }],
+        take: Math.min(200, Math.max(1, parseInt(String(limit), 10) || 100)),
+        skip: Math.max(0, parseInt(String(offset), 10) || 0),
+      }),
+      prisma.vehicle.count({ where: { customer: { tenantId: tenant.id }, category: 'PERSONAL' } }),
+      prisma.vehicle.count({ where: { customer: { tenantId: tenant.id }, category: 'GOVERNMENT' } }),
+      prisma.vehicle.count({ where: { customer: { tenantId: tenant.id }, category: 'SCHOOL' } }),
+      prisma.vehicle.count({ where: { customer: { tenantId: tenant.id }, category: 'ORGANIZATION' } }),
+    ]);
+
+    res.json({
+      total,
+      counts: {
+        all: personalCount + govCount + schoolCount + orgCount,
+        personal: personalCount,
+        government: govCount,
+        school: schoolCount,
+        organization: orgCount,
+      },
+      vehicles: vehicles.map((v) => ({
+        ...v,
+        jobCardsCount: v._count.jobCards,
+      })),
+    });
+  } catch (error) {
+    console.error('List vehicles error:', error);
+    res.status(500).json({ error: 'Failed to fetch vehicles' });
+  }
+});
+
+// Single Vehicle Details
+app.get('/api/vehicles/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const vehicle = await prisma.vehicle.findUnique({
+      where: { id },
+      include: {
+        customer: true,
+        jobCards: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            estimates: {
+              include: { invoice: true, lineItems: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+
+    res.json(vehicle);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch vehicle' });
+  }
+});
+
+// Full Vehicle Service Lifecycle & History Passport
+app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const vehicle = await prisma.vehicle.findUnique({
+      where: { id },
+      include: {
+        customer: true,
+        jobCards: {
+          include: {
+            estimates: {
+              include: {
+                lineItems: true,
+                invoice: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+
+    // Calculate lifecycle analytics
+    let totalSpend = 0;
+    const partsReplaced: Array<{
+      partName: string;
+      quantity: number;
+      price: number;
+      date: Date;
+      jobNumber: string;
+    }> = [];
+
+    const diagnosticHistory: Array<{
+      date: Date;
+      jobNumber: string;
+      obdCodes?: string;
+      defects?: string[];
+      notes?: string;
+    }> = [];
+
+    const odometerTimeline: Array<{
+      date: Date;
+      odometer: number;
+      jobNumber: string;
+    }> = [];
+
+    for (const jc of vehicle.jobCards) {
+      if (jc.odometer) {
+        odometerTimeline.push({
+          date: jc.createdAt,
+          odometer: jc.odometer,
+          jobNumber: jc.jobNumber || 'N/A',
+        });
+      }
+
+      if (jc.walkAroundData && typeof jc.walkAroundData === 'object') {
+        const wad = jc.walkAroundData as any;
+        if (wad.obdCodes || wad.scannerNotes || wad.defects || wad.itemsChecked) {
+          diagnosticHistory.push({
+            date: jc.createdAt,
+            jobNumber: jc.jobNumber || 'N/A',
+            obdCodes: wad.obdCodes || wad.scannerNotes || '',
+            defects: Array.isArray(wad.defects) ? wad.defects : [],
+            notes: wad.mechanicNotes || wad.generalNotes || '',
+          });
+        }
+      }
+
+      for (const est of jc.estimates) {
+        if (est.invoice) {
+          totalSpend += est.invoice.amountPaid > 0 ? est.invoice.amountPaid : est.total;
+        } else if (est.status === 'APPROVED') {
+          totalSpend += est.total;
+        }
+
+        for (const item of est.lineItems || []) {
+          if ((item.itemType || 'PART').toUpperCase() !== 'LABOUR') {
+            partsReplaced.push({
+              partName: item.description,
+              quantity: item.quantity,
+              price: item.total,
+              date: jc.createdAt,
+              jobNumber: jc.jobNumber || 'N/A',
+            });
+          }
+        }
+      }
+    }
+
+    res.json({
+      vehicle,
+      customer: vehicle.customer,
+      jobCards: vehicle.jobCards,
+      summary: {
+        totalVisits: vehicle.jobCards.length,
+        totalSpend,
+        currentOdometer: vehicle.lastOdometer || (odometerTimeline[0]?.odometer ?? 0),
+        lastServiceDate: vehicle.lastServiceDate || vehicle.jobCards[0]?.createdAt || null,
+        nextServiceMileage: vehicle.nextServiceMileage,
+        nextServiceDate: vehicle.nextServiceDate,
+      },
+      odometerTimeline,
+      partsReplaced,
+      diagnosticHistory,
+    });
+  } catch (error) {
+    console.error('Vehicle history error:', error);
+    res.status(500).json({ error: 'Failed to fetch vehicle history' });
+  }
+});
+
+// Update Vehicle Metadata (Fleet Unit, Driver, Body Type, Category, etc.)
+app.put('/api/vehicles/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const {
+      registrationNo,
+      make,
+      model,
+      year,
+      color,
+      engineNumber,
+      fuelType,
+      vinNumber,
+      bodyType,
+      category,
+      fleetUnitNumber,
+      assignedDriver,
+      driverPhone,
+      lastOdometer,
+      nextServiceMileage,
+      nextServiceDate,
+    } = req.body;
+
+    const updated = await prisma.vehicle.update({
+      where: { id },
+      data: {
+        ...(registrationNo ? { registrationNo: registrationNo.trim().toUpperCase() } : {}),
+        ...(make !== undefined ? { make } : {}),
+        ...(model !== undefined ? { model } : {}),
+        ...(year !== undefined ? { year: String(year) } : {}),
+        ...(color !== undefined ? { color } : {}),
+        ...(engineNumber !== undefined ? { engineNumber } : {}),
+        ...(fuelType !== undefined ? { fuelType } : {}),
+        ...(vinNumber !== undefined ? { vinNumber } : {}),
+        ...(bodyType !== undefined ? { bodyType } : {}),
+        ...(category !== undefined ? { category: parseCategory(category) } : {}),
+        ...(fleetUnitNumber !== undefined ? { fleetUnitNumber } : {}),
+        ...(assignedDriver !== undefined ? { assignedDriver } : {}),
+        ...(driverPhone !== undefined ? { driverPhone } : {}),
+        ...(lastOdometer !== undefined ? { lastOdometer: Number(lastOdometer) } : {}),
+        ...(nextServiceMileage !== undefined ? { nextServiceMileage: Number(nextServiceMileage) } : {}),
+        ...(nextServiceDate !== undefined ? { nextServiceDate: new Date(nextServiceDate) } : {}),
+      },
+      include: { customer: true },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Update vehicle error:', error);
+    res.status(500).json({ error: 'Failed to update vehicle' });
   }
 });
 

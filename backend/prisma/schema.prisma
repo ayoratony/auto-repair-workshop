@@ -68,26 +68,41 @@ enum Role {
 // Customers & Vehicles
 // -------------------------------------
 
+enum ClientCategory {
+  PERSONAL
+  GOVERNMENT
+  SCHOOL
+  ORGANIZATION
+}
+
 model Customer {
-  id          String    @id @default(uuid())
-  name        String
-  phone       String?
-  email       String?
-  address     String?
-  companyName String?   // For Fleet / Corporate accounts
+  id            String         @id @default(uuid())
+  name          String
+  phone         String?
+  email         String?
+  address       String?
+  companyName   String?        // For Fleet / Corporate accounts
+  category      ClientCategory @default(PERSONAL) // PERSONAL, GOVERNMENT, SCHOOL, ORGANIZATION
+  taxPin        String?        // KRA PIN for ETR tax invoicing
+  contactPerson String?        // Fleet Manager / Transport Officer / Bursar name
+  contactPhone  String?        // Direct line for transport officer
+  paymentTerms  String?        // "Cash/Mpesa", "30 Days Credit", "LPO/LSO"
 
-  tenantId    String
-  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
 
-  vehicles    Vehicle[]
-  jobCards    JobCard[]
+  vehicles      Vehicle[]
+  jobCards      JobCard[]
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([tenantId, category])
+  @@index([name])
 }
 
 model Vehicle {
-  id                 String    @id @default(uuid())
+  id                 String         @id @default(uuid())
   registrationNo     String
   make               String?
   model              String?
@@ -95,17 +110,28 @@ model Vehicle {
   color              String?
   vinNumber          String?
   engineNumber       String?
-  fuelType           String?   @default("Petrol") // Petrol, Diesel, Hybrid, Electric
+  fuelType           String?        @default("Petrol") // Petrol, Diesel, Hybrid, Electric
+  bodyType           String?        @default("sedan")  // sedan, suv, pickup, van, lorry, bus
+  category           ClientCategory @default(PERSONAL)
+  fleetUnitNumber    String?        // e.g. "BUS-04", "CAR-12", "UNIT-09"
+  assignedDriver     String?        // Driver name
+  driverPhone        String?        // Driver phone
+  lastOdometer       Int?           @default(0)
+  lastServiceDate    DateTime?
+  avgDailyMileage    Int?           @default(30)
   nextServiceMileage Int?
   nextServiceDate    DateTime?
 
   customerId         String
-  customer           Customer  @relation(fields: [customerId], references: [id])
+  customer           Customer       @relation(fields: [customerId], references: [id])
 
   jobCards           JobCard[]
 
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([registrationNo])
+  @@index([category])
 }
 
 // -------------------------------------

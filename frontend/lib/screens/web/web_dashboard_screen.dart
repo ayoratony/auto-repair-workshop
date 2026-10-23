@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
 import 'estimate_form.dart';
 import 'invoice_pdf_service.dart';
 import 'pdf_saver_stub.dart' if (dart.library.html) 'pdf_saver_web.dart';
@@ -28,37 +29,37 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   static const Map<String, Set<String>> _rolePerms = {
     'OWNER': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
+      'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
       'user:manage',
     },
     'SUPER_ADMIN': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
+      'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
       'user:manage',
     },
     'ADMIN': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
+      'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
       'user:manage',
     },
     'MANAGER': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
-      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Inventory',
+      'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Employees', 'nav:Reports', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
     },
     'ADVISOR': {
-      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Estimates', 'nav:Invoices', 'nav:Customers',
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets',
       'job:create', 'job:edit', 'estimate:edit', 'appt:edit',
     },
     'MECHANIC': {
-      'nav:Dashboard', 'nav:Job Cards', 'nav:Parts Catalog',
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Parts Catalog', 'nav:Vehicles & Fleets',
       'job:edit',
     },
     'STOREKEEPER': {
@@ -70,11 +71,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       'part:edit', 'stock:adjust',
     },
     'ACCOUNTS': {
-      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Reports', 'nav:Inventory',
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Reports', 'nav:Inventory',
       'payment:record', 'expense:record',
     },
     'CASHIER': {
-      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Reports',
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Estimates', 'nav:Invoices', 'nav:Customers', 'nav:Vehicles & Fleets', 'nav:Reports',
       'payment:record', 'expense:record',
     },
   };
@@ -175,6 +176,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   List<dynamic> _estimates = [];
   List<dynamic> _invoices = [];
   List<dynamic> _customers = [];
+  List<dynamic> _vehicles = [];
+  Map<String, dynamic> _vehicleCounts = {'all': 0, 'personal': 0, 'government': 0, 'school': 0, 'organization': 0};
+  String _vehicleCategoryFilter = 'ALL';
+  String _vehicleSearchQuery = '';
   List<dynamic> _employees = [];
   List<dynamic> _appointments = [];
   List<dynamic> _expenses = [];
@@ -228,6 +233,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         http.get(Uri.parse('$_baseUrl/settings'), headers: authHeaders),
         http.get(Uri.parse('$_baseUrl/appointments'), headers: authHeaders),
         http.get(Uri.parse('$_baseUrl/expenses'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/vehicles'), headers: authHeaders),
       ]);
 
       if (!mounted) return;
@@ -242,6 +248,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         if (responses[7].statusCode == 200) _workshopSettings = json.decode(responses[7].body);
         if (responses[8].statusCode == 200) _appointments = json.decode(responses[8].body);
         if (responses[9].statusCode == 200) _expenses = json.decode(responses[9].body);
+        if (responses.length > 10 && responses[10].statusCode == 200) {
+          final vData = json.decode(responses[10].body);
+          if (vData is Map) {
+            _vehicles = vData['vehicles'] ?? [];
+            if (vData['counts'] is Map) {
+              _vehicleCounts = Map<String, dynamic>.from(vData['counts']);
+            }
+          } else if (vData is List) {
+            _vehicles = vData;
+          }
+        }
         _isLoading = false;
       });
 
@@ -428,6 +445,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final regCtrl = TextEditingController(text: existingJob?['vehicle']?['registrationNo'] ?? '');
     final makeCtrl = TextEditingController(text: existingJob?['vehicle']?['make'] ?? '');
     final modelCtrl = TextEditingController(text: existingJob?['vehicle']?['model'] ?? '');
+    final fleetUnitCtrl = TextEditingController(text: existingJob?['vehicle']?['fleetUnitNumber'] ?? '');
+    final assignedDriverCtrl = TextEditingController(text: existingJob?['vehicle']?['assignedDriver'] ?? '');
+    final driverPhoneCtrl = TextEditingController(text: existingJob?['vehicle']?['driverPhone'] ?? '');
+    String clientCategory = (existingJob?['vehicle']?['category'] ?? existingJob?['customer']?['category'] ?? 'PERSONAL').toString();
+    Timer? regLookupTimer;
+    bool isLookingUp = false;
+    Map<String, dynamic>? lookupMatch;
     final serviceCtrl = TextEditingController(text: existingJob?['workRequested'] ?? '');
     final techCtrl = TextEditingController(text: existingJob?['technician'] ?? '');
     final odometerCtrl = TextEditingController(text: existingJob?['odometer']?.toString() ?? '');
@@ -511,6 +535,69 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
+            void onRegPlateChanged(String text) {
+              regLookupTimer?.cancel();
+              final query = text.trim();
+              if (query.length < 3) {
+                if (lookupMatch != null) {
+                  setModalState(() => lookupMatch = null);
+                }
+                return;
+              }
+              regLookupTimer = Timer(const Duration(milliseconds: 350), () async {
+                setModalState(() => isLookingUp = true);
+                try {
+                  final res = await http.get(
+                    Uri.parse('$_baseUrl/vehicles/lookup?q=${Uri.encodeComponent(query)}'),
+                    headers: AuthService.instance.authHeaders,
+                  );
+                  if (res.statusCode == 200) {
+                    final data = json.decode(res.body);
+                    if (data['found'] == true) {
+                      final v = data['vehicle'];
+                      final c = data['customer'];
+                      setModalState(() {
+                        lookupMatch = data;
+                        isLookingUp = false;
+                        if (customerNameCtrl.text.trim().isEmpty) {
+                          customerNameCtrl.text = c['name'] ?? '';
+                        }
+                        if (phoneCtrl.text.trim().isEmpty) {
+                          phoneCtrl.text = c['phone'] ?? '';
+                        }
+                        if (makeCtrl.text.trim().isEmpty) {
+                          makeCtrl.text = v['make'] ?? '';
+                        }
+                        if (modelCtrl.text.trim().isEmpty) {
+                          modelCtrl.text = v['model'] ?? '';
+                        }
+                        if (memoDetails.vinNumber.isEmpty && (v['vinNumber'] ?? '').toString().isNotEmpty) {
+                          memoDetails.vinNumber = v['vinNumber'].toString();
+                        }
+                        if (fleetUnitCtrl.text.trim().isEmpty && (v['fleetUnitNumber'] ?? '').toString().isNotEmpty) {
+                          fleetUnitCtrl.text = v['fleetUnitNumber'].toString();
+                        }
+                        if (assignedDriverCtrl.text.trim().isEmpty && (v['assignedDriver'] ?? '').toString().isNotEmpty) {
+                          assignedDriverCtrl.text = v['assignedDriver'].toString();
+                        }
+                        if (driverPhoneCtrl.text.trim().isEmpty && (v['driverPhone'] ?? '').toString().isNotEmpty) {
+                          driverPhoneCtrl.text = v['driverPhone'].toString();
+                        }
+                        if (v['category'] != null) {
+                          clientCategory = v['category'].toString();
+                        }
+                      });
+                      return;
+                    }
+                  }
+                } catch (_) {}
+                setModalState(() {
+                  lookupMatch = null;
+                  isLookingUp = false;
+                });
+              });
+            }
+
             return AlertDialog(
               title: Text(isEdit
                   ? 'Edit Job Card (${existingJob['jobNumber'] ?? existingJob['id'].toString().substring(0, 8).toUpperCase()})'
@@ -522,33 +609,150 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Fast Plate Lookup & Category Row
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: regCtrl,
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: InputDecoration(
+                                labelText: 'Registration No. * (e.g. KDA 123A or GK A123B)',
+                                border: const OutlineInputBorder(),
+                                prefixIcon: const Icon(Icons.directions_car, color: Color(0xFF1E3A8A)),
+                                suffixIcon: isLookingUp
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                                      )
+                                    : null,
+                              ),
+                              onChanged: onRegPlateChanged,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 3,
+                            child: DropdownButtonFormField<String>(
+                              isExpanded: true,
+                              value: clientCategory,
+                              decoration: const InputDecoration(labelText: 'Fleet / Client Category *', border: OutlineInputBorder()),
+                              items: const [
+                                DropdownMenuItem(value: 'PERSONAL', child: Text('🚗 Personal (Private Owner)')),
+                                DropdownMenuItem(value: 'GOVERNMENT', child: Text('🏛️ Government Fleet (GK/CG)')),
+                                DropdownMenuItem(value: 'SCHOOL', child: Text('🏫 School Fleet (Buses/Vans)')),
+                                DropdownMenuItem(value: 'ORGANIZATION', child: Text('🏢 Corporate / NGO Fleet')),
+                              ],
+                              onChanged: (val) => setModalState(() => clientCategory = val ?? 'PERSONAL'),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // Recognition Banner if vehicle already exists in workshop registry
+                      if (lookupMatch != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 22),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'Registered Vehicle Match: ${lookupMatch!['vehicle']?['registrationNo']} (${lookupMatch!['vehicle']?['make']} ${lookupMatch!['vehicle']?['model']})',
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF14532D)),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _buildCategoryBadge(lookupMatch!['vehicle']?['category'] ?? 'PERSONAL'),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Owner: ${lookupMatch!['customer']?['name']} \u2022 Total Visits: ${lookupMatch!['totalJobsCount'] ?? 0} \u2022 Last Recorded: ${lookupMatch!['vehicle']?['lastOdometer'] ?? '-'} km (${_formatDateShort(lookupMatch!['vehicle']?['lastServiceDate'])})',
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF15803D)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextButton.icon(
+                                onPressed: () {
+                                  if (lookupMatch!['vehicle']?['id'] != null) {
+                                    _showVehicleHistoryDialog(lookupMatch!['vehicle']['id'].toString(), initialVehicle: lookupMatch!['vehicle']);
+                                  }
+                                },
+                                icon: const Icon(Icons.history_edu, size: 15, color: Color(0xFF15803D)),
+                                label: const Text('View Passport', style: TextStyle(fontSize: 12, color: Color(0xFF15803D), fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+
+                      // Fleet Unit & Assigned Driver Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: fleetUnitCtrl,
+                              decoration: const InputDecoration(labelText: 'Fleet Unit # (e.g. BUS-04, CAR-12)', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: assignedDriverCtrl,
+                              decoration: const InputDecoration(labelText: 'Assigned Driver / Pilot Name', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: driverPhoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(labelText: 'Driver Phone Number', border: OutlineInputBorder()),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Customer / Institutional Owner Row
                       Row(
                         children: [
                           Expanded(
                             child: TextField(
                               controller: customerNameCtrl,
-                              decoration: const InputDecoration(labelText: 'Customer Name *', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(labelText: 'Customer / Institution Name *', border: OutlineInputBorder()),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: TextField(
                               controller: phoneCtrl,
-                              decoration: const InputDecoration(labelText: 'Customer Phone (WhatsApp)', border: OutlineInputBorder()),
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(labelText: 'Billing / Contact Phone (WhatsApp)', border: OutlineInputBorder()),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
+
+                      // Vehicle Specs Row
                       Row(
                         children: [
-                          Expanded(
-                            child: TextField(
-                              controller: regCtrl,
-                              decoration: const InputDecoration(labelText: 'Registration No. * (e.g. KDA 123A)', border: OutlineInputBorder()),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
                           Expanded(
                             child: TextField(
                               controller: makeCtrl,
@@ -907,8 +1111,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               'customerName': customerNameCtrl.text.trim(),
                               'phone': phoneCtrl.text.trim(),
                               'registrationNo': regCtrl.text.trim(),
+                              'category': clientCategory,
+                              'fleetUnitNumber': fleetUnitCtrl.text.trim().isEmpty ? null : fleetUnitCtrl.text.trim(),
+                              'assignedDriver': assignedDriverCtrl.text.trim().isEmpty ? null : assignedDriverCtrl.text.trim(),
+                              'driverPhone': driverPhoneCtrl.text.trim().isEmpty ? null : driverPhoneCtrl.text.trim(),
                               'make': makeCtrl.text.trim(),
                               'model': modelCtrl.text.trim(),
+                              'bodyType': bodyType.name,
                               'vinNumber': memoDetails.vinNumber,
                               'service': serviceCtrl.text.trim().isEmpty
                                   ? memoDetails.selectedCategories.join(', ')
@@ -2329,6 +2538,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   _sidebarItem(Icons.receipt, 'Estimates', tabTarget: 'Estimates'),
                   _sidebarItem(Icons.request_quote, 'Invoices', tabTarget: 'Invoices'),
                   _sidebarItem(Icons.people, 'Customers'),
+                  _sidebarItem(Icons.directions_car_filled, 'Vehicles & Fleets'),
                   _sidebarItem(Icons.badge, 'Employees'),
                   _sidebarItem(Icons.bar_chart, 'Reports'),
                   _sidebarItem(Icons.warehouse, 'Inventory'),
@@ -2674,6 +2884,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   Widget _buildMainWorkspaceSection() {
     if (_activeSidebar == 'Appointments') return _buildAppointmentsSection();
     if (_activeSidebar == 'Customers') return _buildCustomersSection();
+    if (_activeSidebar == 'Vehicles & Fleets') return _buildVehiclesSection();
     if (_activeSidebar == 'Employees') return _buildEmployeesSection();
     if (_activeSidebar == 'Reports') return _buildReportsSection();
     if (_activeSidebar == 'Settings') return _buildSettingsSection();
@@ -3792,6 +4003,406 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  // ==========================================
+  // VEHICLES & FLEET MANAGEMENT SECTION
+  // ==========================================
+  Widget _buildVehiclesSection() {
+    final filteredVehicles = _vehicles.where((v) {
+      if (_vehicleCategoryFilter != 'ALL' && (v['category'] ?? 'PERSONAL') != _vehicleCategoryFilter) {
+        return false;
+      }
+      if (_vehicleSearchQuery.isNotEmpty) {
+        final q = _vehicleSearchQuery.toLowerCase();
+        final reg = (v['registrationNo'] ?? '').toString().toLowerCase();
+        final make = (v['make'] ?? '').toString().toLowerCase();
+        final model = (v['model'] ?? '').toString().toLowerCase();
+        final unit = (v['fleetUnitNumber'] ?? '').toString().toLowerCase();
+        final driver = (v['assignedDriver'] ?? '').toString().toLowerCase();
+        final cust = (v['customer']?['name'] ?? '').toString().toLowerCase();
+        if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q)) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Vehicles & Fleets Management', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  const SizedBox(height: 4),
+                  Text('Complete vehicle lifecycle tracking for Personal cars, Government fleets, Schools, and Corporate organizations.',
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                ],
+              ),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _refreshAllData,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Refresh Fleets'),
+                    style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF1E293B)),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    onPressed: () => _showJobCardDialog(),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('New Vehicle & Job Card'),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // 5 KPI Category Summary Cards
+          Wrap(
+            spacing: 14,
+            runSpacing: 14,
+            children: [
+              _buildFleetKpiCard('Total Tracked Fleets', '${_vehicleCounts['all'] ?? _vehicles.length}', Icons.directions_car, const Color(0xFF1E3A8A), 'Active in workshop registry', 'ALL'),
+              _buildFleetKpiCard('Personal Vehicles', '${_vehicleCounts['personal'] ?? 0}', Icons.person, const Color(0xFF059669), 'Private car owners', 'PERSONAL'),
+              _buildFleetKpiCard('Government Fleets', '${_vehicleCounts['government'] ?? 0}', Icons.account_balance, const Color(0xFF1D4ED8), 'GK / CG / Ministries / Police', 'GOVERNMENT'),
+              _buildFleetKpiCard('School Fleets', '${_vehicleCounts['school'] ?? 0}', Icons.school, const Color(0xFFD97706), 'Buses, vans & shuttles', 'SCHOOL'),
+              _buildFleetKpiCard('Corporate & NGOs', '${_vehicleCounts['organization'] ?? 0}', Icons.business, const Color(0xFF7C3AED), 'Company & NGO logistics', 'ORGANIZATION'),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // Category Filter Pills & Search Bar
+          Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildFleetFilterChip('All Fleets (${_vehicleCounts['all'] ?? _vehicles.length})', 'ALL'),
+                      const SizedBox(width: 8),
+                      _buildFleetFilterChip('🚗 Personal (${_vehicleCounts['personal'] ?? 0})', 'PERSONAL'),
+                      const SizedBox(width: 8),
+                      _buildFleetFilterChip('🏛️ Government (${_vehicleCounts['government'] ?? 0})', 'GOVERNMENT'),
+                      const SizedBox(width: 8),
+                      _buildFleetFilterChip('🏫 Schools (${_vehicleCounts['school'] ?? 0})', 'SCHOOL'),
+                      const SizedBox(width: 8),
+                      _buildFleetFilterChip('🏢 Organizations (${_vehicleCounts['organization'] ?? 0})', 'ORGANIZATION'),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              SizedBox(
+                width: 280,
+                child: TextField(
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    hintText: 'Search plate, model, driver...',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onChanged: (val) => setState(() => _vehicleSearchQuery = val),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Data Table
+          if (filteredVehicles.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(40),
+              alignment: Alignment.center,
+              child: Column(
+                children: [
+                  Icon(Icons.directions_car_outlined, size: 48, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  Text('No vehicles found for the selected category.', style: TextStyle(fontSize: 15, color: Colors.grey.shade600)),
+                  const SizedBox(height: 6),
+                  const Text('Vehicles are automatically registered when creating a receiving memo or job card.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+                dataRowMaxHeight: 64,
+                columns: const [
+                  DataColumn(label: Text('Registration Plate', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Fleet Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Vehicle Specs', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Driver / Unit #', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Client / Organization', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Mileage & Usage', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Last Service & Visits', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Actions & Digital Passport', style: TextStyle(fontWeight: FontWeight.bold))),
+                ],
+                rows: filteredVehicles.map((v) {
+                  final cat = (v['category'] ?? 'PERSONAL').toString();
+                  final cust = v['customer'] ?? {};
+                  final visits = v['jobCardsCount'] ?? 0;
+                  final regNo = v['registrationNo'] ?? '-';
+                  final lastOdo = v['lastOdometer'] ?? 0;
+                  final daily = v['avgDailyMileage'];
+
+                  return DataRow(
+                    cells: [
+                      DataCell(
+                        _buildPlatePill(regNo),
+                      ),
+                      DataCell(
+                        _buildCategoryBadge(cat),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                            Text('${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if ((v['fleetUnitNumber'] ?? '').toString().isNotEmpty)
+                              Text('Unit: ${v['fleetUnitNumber']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E3A8A))),
+                            Text(v['assignedDriver'] != null && v['assignedDriver'].toString().isNotEmpty
+                                ? v['assignedDriver']
+                                : 'No driver assigned',
+                                style: const TextStyle(fontSize: 12)),
+                            if ((v['driverPhone'] ?? '').toString().isNotEmpty)
+                              Text('${v['driverPhone']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(cust['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                            Text(cust['phone'] ?? '-', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('$lastOdo km', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                            if (daily != null && daily > 0)
+                              Text('~$daily km/day', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600))
+                            else
+                              Text('Standard', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(_formatDateShort(v['lastServiceDate']), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
+                              child: Text('$visits visits', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade800)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () => _showVehicleHistoryDialog(v['id'].toString(), initialVehicle: Map<String, dynamic>.from(v)),
+                              icon: const Icon(Icons.history_edu, size: 15),
+                              label: const Text('Digital Passport', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1E3A8A),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            if ((v['driverPhone'] ?? cust['phone'] ?? '').toString().isNotEmpty)
+                              IconButton(
+                                tooltip: 'WhatsApp Fleet Service Update',
+                                icon: const Icon(Icons.chat, size: 17, color: Color(0xFF16A34A)),
+                                onPressed: () {
+                                  final targetPhone = (v['driverPhone'] ?? cust['phone']).toString();
+                                  final msg = 'Hello, this is a courtesy update from ${_workshopSettings['name'] ?? 'AutoKe'} regarding vehicle ${v['registrationNo']} (${v['make']} ${v['model']}). Current recorded odometer is $lastOdo km. Please feel free to reach out for bookings or questions.';
+                                  _launchWhatsAppMessage(targetPhone, msg);
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFleetKpiCard(String title, String count, IconData icon, Color color, String subtext, String categoryKey) {
+    final isSelected = _vehicleCategoryFilter == categoryKey;
+    return InkWell(
+      onTap: () => setState(() => _vehicleCategoryFilter = categoryKey),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: 220,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: isSelected ? color : Colors.grey.shade200, width: isSelected ? 2 : 1),
+          boxShadow: isSelected ? [BoxShadow(color: color.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 2))] : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
+                Icon(icon, color: color, size: 18),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(count, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
+            const SizedBox(height: 4),
+            Text(subtext, style: TextStyle(fontSize: 11, color: Colors.grey.shade500), maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFleetFilterChip(String label, String key) {
+    final isSelected = _vehicleCategoryFilter == key;
+    return ChoiceChip(
+      label: Text(label, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.white : Colors.black87)),
+      selected: isSelected,
+      selectedColor: const Color(0xFF1E3A8A),
+      backgroundColor: Colors.grey.shade100,
+      onSelected: (_) => setState(() => _vehicleCategoryFilter = key),
+    );
+  }
+
+  Widget _buildPlatePill(String plate) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF0F172A), width: 1.2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 3,
+            height: 14,
+            decoration: BoxDecoration(color: const Color(0xFF2563EB), borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            plate.toUpperCase(),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.6, color: Color(0xFF0F172A)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryBadge(String cat) {
+    Color bg;
+    Color fg;
+    IconData icon;
+    String label;
+
+    switch (cat.toUpperCase()) {
+      case 'GOVERNMENT':
+        bg = const Color(0xFFEFF6FF);
+        fg = const Color(0xFF1D4ED8);
+        icon = Icons.account_balance;
+        label = 'GOVERNMENT';
+        break;
+      case 'SCHOOL':
+        bg = const Color(0xFFFEF3C7);
+        fg = const Color(0xFFB45309);
+        icon = Icons.school;
+        label = 'SCHOOL FLEET';
+        break;
+      case 'ORGANIZATION':
+        bg = const Color(0xFFF3E8FF);
+        fg = const Color(0xFF6D28D9);
+        icon = Icons.business;
+        label = 'ORGANIZATION';
+        break;
+      case 'PERSONAL':
+      default:
+        bg = const Color(0xFFECFDF5);
+        fg = const Color(0xFF047857);
+        icon = Icons.person;
+        label = 'PERSONAL';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: fg),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.bold, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showVehicleHistoryDialog(String vehicleId, {Map<String, dynamic>? initialVehicle}) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return _VehiclePassportDialog(
+          vehicleId: vehicleId,
+          initialVehicle: initialVehicle,
+          baseUrl: _baseUrl,
+          workshopSettings: _workshopSettings,
+          onLaunchWhatsApp: _launchWhatsAppMessage,
+        );
+      },
     );
   }
 
@@ -5924,5 +6535,434 @@ class _WeeklyJobsChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ==========================================
+// DIGITAL VEHICLE SERVICE PASSPORT DIALOG
+// ==========================================
+class _VehiclePassportDialog extends StatefulWidget {
+  final String vehicleId;
+  final Map<String, dynamic>? initialVehicle;
+  final String baseUrl;
+  final Map<String, dynamic> workshopSettings;
+  final void Function(String phone, String text) onLaunchWhatsApp;
+
+  const _VehiclePassportDialog({
+    Key? key,
+    required this.vehicleId,
+    this.initialVehicle,
+    required this.baseUrl,
+    required this.workshopSettings,
+    required this.onLaunchWhatsApp,
+  }) : super(key: key);
+
+  @override
+  State<_VehiclePassportDialog> createState() => _VehiclePassportDialogState();
+}
+
+class _VehiclePassportDialogState extends State<_VehiclePassportDialog> {
+  bool _isLoading = true;
+  Map<String, dynamic>? _historyData;
+  String? _error;
+  int _activeTab = 0; // 0: Timeline, 1: Parts, 2: Diagnostics, 3: Mileage
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchHistory();
+  }
+
+  Future<void> _fetchHistory() async {
+    try {
+      final res = await http.get(
+        Uri.parse('${widget.baseUrl}/vehicles/${widget.vehicleId}/history'),
+        headers: AuthService.instance.authHeaders,
+      );
+      if (res.statusCode == 200 && mounted) {
+        setState(() {
+          _historyData = json.decode(res.body);
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _error = 'Failed to load vehicle history (${res.statusCode})';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Error loading history: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  String _formatDateShort(dynamic isoString) {
+    if (isoString == null) return '-';
+    try {
+      final dt = DateTime.parse(isoString.toString()).toLocal();
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+    } catch (_) {
+      return isoString.toString();
+    }
+  }
+
+  String _formatKes(dynamic amount) {
+    if (amount == null) return 'KSH 0';
+    final num val = amount is num ? amount : (num.tryParse(amount.toString()) ?? 0);
+    return 'KSH ${val.toStringAsFixed(0)}';
+  }
+
+  void _sendWhatsAppPassport() {
+    final v = _historyData?['vehicle'] ?? widget.initialVehicle ?? {};
+    final c = _historyData?['customer'] ?? v['customer'] ?? {};
+    final s = _historyData?['summary'] ?? {};
+    final targetPhone = (v['driverPhone'] ?? c['phone'] ?? '').toString();
+
+    final msg = '''*DIGITAL VEHICLE SERVICE PASSPORT*
+Registration: ${v['registrationNo'] ?? '-'}
+Vehicle: ${v['make'] ?? ''} ${v['model'] ?? ''} (${(v['bodyType'] ?? 'sedan').toString().toUpperCase()})
+Category: ${v['category'] ?? 'PERSONAL'}
+Owner / Client: ${c['name'] ?? '-'}
+${v['assignedDriver'] != null && v['assignedDriver'].toString().isNotEmpty ? 'Assigned Driver: ${v['assignedDriver']}\n' : ''}Recorded Odometer: ${s['currentOdometer'] ?? v['lastOdometer'] ?? '-'} km
+Total Workshop Visits: ${s['totalVisits'] ?? 0}
+Total Lifetime Spend: ${_formatKes(s['totalSpend'] ?? 0)}
+Last Service Date: ${_formatDateShort(s['lastServiceDate'] ?? v['lastServiceDate'])}
+Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']} km' : 'TBA'}
+
+-- Verified by ${widget.workshopSettings['name'] ?? 'AutoKe Auto Workshop'}''';
+
+    widget.onLaunchWhatsApp(targetPhone, msg);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = _historyData?['vehicle'] ?? widget.initialVehicle ?? {};
+    final c = _historyData?['customer'] ?? v['customer'] ?? {};
+    final s = _historyData?['summary'] ?? {};
+    final jobCards = (_historyData?['jobCards'] as List<dynamic>?) ?? [];
+    final parts = (_historyData?['partsReplaced'] as List<dynamic>?) ?? [];
+    final diagnostics = (_historyData?['diagnosticHistory'] as List<dynamic>?) ?? [];
+    final mileageTimeline = (_historyData?['odometerTimeline'] as List<dynamic>?) ?? [];
+
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFF0F172A), width: 1.5),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(width: 4, height: 16, decoration: BoxDecoration(color: const Color(0xFF2563EB), borderRadius: BorderRadius.circular(2))),
+                        const SizedBox(width: 8),
+                        Text(
+                          (v['registrationNo'] ?? 'VEHICLE').toString().toUpperCase(),
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 0.8, color: Color(0xFF0F172A)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.blueGrey.shade50, borderRadius: BorderRadius.circular(4)),
+                    child: Text('${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.blueGrey.shade800)),
+                  ),
+                ],
+              ),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text('Client: ${c['name'] ?? '-'}', style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+              if ((v['fleetUnitNumber'] ?? '').toString().isNotEmpty) ...[
+                const Text(' \u2022 '),
+                Text('Unit: ${v['fleetUnitNumber']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A))),
+              ],
+              if ((v['assignedDriver'] ?? '').toString().isNotEmpty) ...[
+                const Text(' \u2022 '),
+                Text('Driver: ${v['assignedDriver']} (${v['driverPhone'] ?? '-'})', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+              ],
+            ],
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 800,
+        height: 540,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // KPI Strip
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _buildStatItem('Total Visits', '${s['totalVisits'] ?? jobCards.length}', Icons.build_circle, const Color(0xFF2563EB)),
+                            _buildStatItem('Total Spend', _formatKes(s['totalSpend'] ?? 0), Icons.receipt_long, const Color(0xFF16A34A)),
+                            _buildStatItem('Recorded Odo', '${s['currentOdometer'] ?? v['lastOdometer'] ?? 0} km', Icons.speed, const Color(0xFFD97706)),
+                            _buildStatItem('Replaced Parts', '${parts.length}', Icons.settings, const Color(0xFF7C3AED)),
+                            _buildStatItem('Next Due', s['nextServiceMileage'] != null ? '${s['nextServiceMileage']} km' : 'TBA', Icons.event_available, const Color(0xFF475569)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Tabs Selector
+                      Row(
+                        children: [
+                          _buildTabBtn('📋 Service History (${jobCards.length})', 0),
+                          const SizedBox(width: 8),
+                          _buildTabBtn('⚙️ Replaced Parts (${parts.length})', 1),
+                          const SizedBox(width: 8),
+                          _buildTabBtn('🔍 Diagnostics & OBD (${diagnostics.length})', 2),
+                          const SizedBox(width: 8),
+                          _buildTabBtn('📈 Mileage Log (${mileageTimeline.length})', 3),
+                        ],
+                      ),
+                      const Divider(height: 16),
+
+                      // Tab Content
+                      Expanded(
+                        child: _activeTab == 0
+                            ? _buildJobCardsTimeline(jobCards)
+                            : _activeTab == 1
+                                ? _buildPartsLedger(parts)
+                                : _activeTab == 2
+                                    ? _buildDiagnosticsLog(diagnostics)
+                                    : _buildMileageProgression(mileageTimeline),
+                      ),
+                    ],
+                  ),
+      ),
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _sendWhatsAppPassport,
+          icon: const Icon(Icons.chat, size: 16, color: Color(0xFF16A34A)),
+          label: const Text('WhatsApp Fleet Report', style: TextStyle(color: Color(0xFF16A34A), fontWeight: FontWeight.bold)),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E293B), foregroundColor: Colors.white),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon, Color color) {
+    return Column(
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  Widget _buildTabBtn(String title, int index) {
+    final isSelected = _activeTab == index;
+    return InkWell(
+      onTap: () => setState(() => _activeTab = index),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF1E3A8A) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.white : Colors.black87),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildJobCardsTimeline(List<dynamic> jobs) {
+    if (jobs.isEmpty) {
+      return const Center(child: Text('No service visits recorded for this vehicle yet.', style: TextStyle(color: Colors.grey)));
+    }
+    return ListView.builder(
+      itemCount: jobs.length,
+      itemBuilder: (context, i) {
+        final j = jobs[i];
+        final ests = (j['estimates'] as List<dynamic>?) ?? [];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade200)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: const Color(0xFFDBEAFE),
+                  child: Text('${jobs.length - i}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E40AF), fontSize: 13)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('${j['jobNumber'] ?? 'JC-'} \u2022 ${j['workRequested'] ?? 'General Service'}',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
+                            child: Text(j['status'] ?? 'IN_PROGRESS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Tech: ${j['technician'] ?? 'Unassigned'}  \u2022  Bay: ${j['bayNumber'] ?? 'Bay 1'}  \u2022  Odometer: ${j['odometer'] ?? '-'} km',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                      Text('Service Date: ${_formatDateShort(j['createdAt'])}  \u2022  Invoices / Estimates: ${ests.length}',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPartsLedger(List<dynamic> parts) {
+    if (parts.isEmpty) {
+      return const Center(child: Text('No replaced parts recorded for this vehicle yet.', style: TextStyle(color: Colors.grey)));
+    }
+    return SingleChildScrollView(
+      child: DataTable(
+        headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+        dataRowMaxHeight: 48,
+        columns: const [
+          DataColumn(label: Text('Part Description', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(label: Text('Qty', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(label: Text('Price', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(label: Text('Installed On', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(label: Text('Job #', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+        ],
+        rows: parts.map((p) {
+          return DataRow(
+            cells: [
+              DataCell(Text(p['partName'] ?? '-', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12))),
+              DataCell(Text('${p['quantity'] ?? 1}', style: const TextStyle(fontSize: 12))),
+              DataCell(Text(_formatKes(p['price'] ?? 0), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+              DataCell(Text(_formatDateShort(p['date']), style: const TextStyle(fontSize: 11))),
+              DataCell(Text(p['jobNumber'] ?? '-', style: const TextStyle(fontSize: 11, color: Color(0xFF2563EB)))),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildDiagnosticsLog(List<dynamic> diagnostics) {
+    if (diagnostics.isEmpty) {
+      return const Center(child: Text('No OBD-II scanner codes or diagnostic defect records for this vehicle.', style: TextStyle(color: Colors.grey)));
+    }
+    return ListView.builder(
+      itemCount: diagnostics.length,
+      itemBuilder: (context, i) {
+        final d = diagnostics[i];
+        final defects = (d['defects'] as List<dynamic>?) ?? [];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Job Card: ${d['jobNumber'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E3A8A))),
+                    Text(_formatDateShort(d['date']), style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                  ],
+                ),
+                if ((d['obdCodes'] ?? '').toString().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.amber.shade300)),
+                    child: Text('OBD Scanner Codes: ${d['obdCodes']}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                  ),
+                ],
+                if (defects.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Issues / Defects: ${defects.join(', ')}', style: const TextStyle(fontSize: 12, color: Colors.redAccent)),
+                ],
+                if ((d['notes'] ?? '').toString().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text('Mechanic Notes: ${d['notes']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade700, fontStyle: FontStyle.italic)),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMileageProgression(List<dynamic> logs) {
+    if (logs.isEmpty) {
+      return const Center(child: Text('No odometer progression records found for this vehicle.', style: TextStyle(color: Colors.grey)));
+    }
+    return ListView.builder(
+      itemCount: logs.length,
+      itemBuilder: (context, i) {
+        final entry = logs[i];
+        return ListTile(
+          dense: true,
+          leading: const Icon(Icons.speed, color: Color(0xFF2563EB)),
+          title: Text('${entry['odometer']} km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          subtitle: Text('Recorded on ${_formatDateShort(entry['date'])}  \u2022  Job Card: ${entry['jobNumber']}'),
+        );
+      },
+    );
+  }
 }
 
