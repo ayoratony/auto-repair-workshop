@@ -12,6 +12,14 @@ import {
   deleteWorkshopAsset,
 } from './storage';
 import { createInventoryRouter } from './inventory';
+import {
+  hashPassword,
+  comparePassword,
+  generateToken,
+  seedInitialOwner,
+  createAuthMiddleware,
+  requireRoles,
+} from './auth';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env.local') });
 dotenv.config();
@@ -22,6 +30,7 @@ const PORT = Number(process.env.PORT) || 5001;
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
+app.use(createAuthMiddleware(prisma));
 
 // Helper to get or create the active workshop tenant
 async function getActiveTenant() {
@@ -1574,9 +1583,329 @@ app.delete('/api/expenses/:id', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/employees', async (_req: Request, res: Response) => {
+// ==========================================
+// AUTHENTICATION & SESSION APIS
+// ==========================================
+
+// Login with User ID / Email / Username / Phone + Password
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
+    const { identifier, password } = req.body;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Please enter your User ID or Email, and your password.' });
+    }
+
+    const trimmed = String(identifier).trim();
+    const tenant = await getActiveTenant();
+
+    // Check if user exists by email, username, phone, or UUID id
+    const user = await prisma.user.findFirst({
+      where: {
+        tenantId: tenant.id,
+        OR: [
+          { email: { equals: trimmed, mode: 'insensitive' } },
+          { username: { equals: trimmed, mode: 'insensitive' } },
+          { phone: { equals: trimmed } },
+          { id: { equals: trimmed } },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid User ID / Email or password.' });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ error: 'This user account has been deactivated. Please contact the Workshop Owner.' });
+    }
+
+    // Verify password hash
+    let passwordMatches = false;
+    if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+      passwordMatches = await comparePassword(password, user.password);
+    } else {
+      // Automatic upgrade for legacy plain text passwords if any
+      passwordMatches = user.password === password;
+      if (passwordMatches) {
+        const newHash = await hashPassword(password);
+        await prisma.user.update({ where: { id: user.id }, data: { password: newHash } });
+      }
+    }
+
+    if (!passwordMatches) {
+      return res.status(401).json({ error: 'Invalid User ID / Email or password.' });
+    }
+
+    const token = generateToken(user);
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        specialization: user.specialization,
+        commissionRate: user.commissionRate,
+        tenantId: user.tenantId,
+      },
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed due to a server error.' });
+  }
+});
+
+// Get current logged-in user profile
+app.get('/api/auth/me', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || req.user.id === 'system-actor') {
+      return res.status(401).json({ error: 'Not authenticated.' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        phone: true,
+        role: true,
+        specialization: true,
+        commissionRate: true,
+        isActive: true,
+        tenantId: true,
+        createdAt: true,
+      },
+    });
+    if (!user || !user.isActive) {
+      return res.status(401).json({ error: 'User account not found or deactivated.' });
+    }
+    res.json({ user });
+  } catch (error) {
+    console.error('Auth me error:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile.' });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (_req: Request, res: Response) => {
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+// Change own password
+app.post('/api/auth/change-password', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || req.user.id === 'system-actor') {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const ok = await comparePassword(oldPassword, user.password);
+    if (!ok) return res.status(400).json({ error: 'Incorrect current password.' });
+
+    const newHash = await hashPassword(newPassword);
+    await prisma.user.update({ where: { id: user.id }, data: { password: newHash } });
+    res.json({ success: true, message: 'Password updated successfully.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to change password.' });
+  }
+});
+
+// ==========================================
+// WORKSHOP OWNER: USER & TEAM MANAGEMENT APIS
+// ==========================================
+
+// Get all workshop users/staff
+app.get('/api/users', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
     const users = await prisma.user.findMany({
+      where: { tenantId: tenant.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        phone: true,
+        role: true,
+        specialization: true,
+        commissionRate: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(users);
+  } catch (error) {
+    console.error('Fetch users error:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Workshop owner creates new user
+app.post('/api/users', async (req: Request, res: Response) => {
+  try {
+    const { name, email, username, phone, password, role, specialization, commissionRate } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and initial password are required.' });
+    }
+
+    const tenant = await getActiveTenant();
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanUsername = username ? String(username).trim().toLowerCase() : null;
+
+    const existing = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanEmail },
+          ...(cleanUsername ? [{ username: cleanUsername }] : []),
+        ],
+      },
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'A user with that email or username already exists.' });
+    }
+
+    const hashedPassword = await hashPassword(password);
+    const validRole = Object.values(Role).includes(role as Role) ? (role as Role) : 'MECHANIC';
+
+    const newUser = await prisma.user.create({
+      data: {
+        name: String(name).trim(),
+        email: cleanEmail,
+        username: cleanUsername,
+        phone: phone ? String(phone).trim() : null,
+        password: hashedPassword,
+        role: validRole,
+        specialization: specialization ? String(specialization).trim() : null,
+        commissionRate: typeof commissionRate === 'number' ? commissionRate : (Number(commissionRate) || 0),
+        isActive: true,
+        tenantId: tenant.id,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        phone: true,
+        role: true,
+        specialization: true,
+        commissionRate: true,
+        isActive: true,
+        createdAt: true,
+      },
+    });
+
+    res.status(201).json(newUser);
+  } catch (error) {
+    console.error('Create user error:', error);
+    res.status(500).json({ error: 'Failed to create user.' });
+  }
+});
+
+// Update user details
+app.put('/api/users/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, email, username, phone, role, specialization, commissionRate, isActive } = req.body;
+
+    const data: any = {};
+    if (name !== undefined) data.name = String(name).trim();
+    if (email !== undefined) data.email = String(email).trim().toLowerCase();
+    if (username !== undefined) data.username = username ? String(username).trim().toLowerCase() : null;
+    if (phone !== undefined) data.phone = phone ? String(phone).trim() : null;
+    if (role !== undefined && Object.values(Role).includes(role as Role)) data.role = role as Role;
+    if (specialization !== undefined) data.specialization = specialization ? String(specialization).trim() : null;
+    if (commissionRate !== undefined) data.commissionRate = Number(commissionRate) || 0;
+    if (isActive !== undefined) data.isActive = Boolean(isActive);
+
+    const updated = await prisma.user.update({
+      where: { id: String(id) },
+      data,
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        phone: true,
+        role: true,
+        specialization: true,
+        commissionRate: true,
+        isActive: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ error: 'Failed to update user.' });
+  }
+});
+
+// Owner resets user password
+app.post('/api/users/:id/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+    const hash = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id: String(id) },
+      data: { password: hash },
+    });
+    res.json({ success: true, message: 'Password reset successfully.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password.' });
+  }
+});
+
+// Deactivate / delete user
+app.delete('/api/users/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    // Don't let owner delete own account if they are the only owner
+    await prisma.user.update({
+      where: { id: String(id) },
+      data: { isActive: false },
+    });
+    res.json({ success: true, message: 'User deactivated successfully.' });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ error: 'Failed to deactivate user.' });
+  }
+});
+
+// Backward-compatible endpoints for /api/employees
+app.get('/api/employees', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const users = await prisma.user.findMany({
+      where: { tenantId: tenant.id, isActive: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        phone: true,
+        role: true,
+        specialization: true,
+        commissionRate: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json(users);
@@ -1588,14 +1917,21 @@ app.get('/api/employees', async (_req: Request, res: Response) => {
 
 app.post('/api/employees', async (req: Request, res: Response) => {
   try {
-    const { name, email, role } = req.body;
+    const { name, email, role, password, username, phone } = req.body;
     const tenant = await getActiveTenant();
+    const cleanEmail = email || `${name.toLowerCase().replace(/\s+/g, '.')}.${Date.now()}@workshop.com`;
+    const cleanPassword = password || 'password123';
+    const hashedPassword = await hashPassword(cleanPassword);
+    const validRole = Object.values(Role).includes(role as Role) ? (role as Role) : 'MECHANIC';
+
     const user = await prisma.user.create({
       data: {
         name,
-        email: email || `${name.toLowerCase().replace(/\s+/g, '.')}.${Date.now()}@workshop.com`,
-        password: 'hashed_password',
-        role: (role as Role) || 'MECHANIC',
+        email: cleanEmail,
+        username: username || null,
+        phone: phone || null,
+        password: hashedPassword,
+        role: validRole,
         tenantId: tenant.id,
       },
     });
@@ -1608,7 +1944,7 @@ app.post('/api/employees', async (req: Request, res: Response) => {
 
 app.delete('/api/employees/:id', async (req: Request, res: Response) => {
   try {
-    await prisma.user.delete({ where: { id: String(req.params.id) } });
+    await prisma.user.update({ where: { id: String(req.params.id) }, data: { isActive: false } });
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -1777,6 +2113,12 @@ app.get(/^(?!\/api).*/, (_req: Request, res: Response) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  try {
+    const tenant = await getActiveTenant();
+    await seedInitialOwner(prisma, tenant.id);
+  } catch (err) {
+    console.error('Startup owner seed check error:', err);
+  }
   console.log(`Server is running on http://localhost:${PORT} (Neon branch: ${process.env.NEON_BRANCH || 'linked'})`);
 });

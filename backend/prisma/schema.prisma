@@ -34,12 +34,14 @@ model Tenant {
 model User {
   id             String   @id @default(uuid())
   email          String   @unique
+  username       String?  @unique
   password       String   // Hashed
   name           String
   phone          String?
   specialization String?  // e.g., "Engine & Transmission", "Auto Electrical", "Body & Paint"
   commissionRate Float    @default(0) // e.g., 10 for 10% labour commission
   role           Role     @default(MECHANIC)
+  isActive       Boolean  @default(true)
 
   tenantId       String
   tenant         Tenant   @relation(fields: [tenantId], references: [id])

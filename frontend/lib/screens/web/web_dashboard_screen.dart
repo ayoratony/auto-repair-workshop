@@ -7,6 +7,7 @@ import 'pdf_saver_stub.dart' if (dart.library.html) 'pdf_saver_web.dart';
 import '../mobile/vehicle_damage_map.dart';
 import '../mobile/walk_around_checklist.dart';
 import 'inventory_workspace_view.dart';
+import '../../services/auth_service.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -21,15 +22,30 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // Navigation state
   String _activeSidebar = 'Dashboard';
   String _activeTab = 'Current Job Cards';
-  String _activeUserRole = 'ADMIN';
+  String _activeUserRole = 'OWNER';
 
   // Role-Based Access Control: what each role may open (nav:*) or do (other keys).
   static const Map<String, Set<String>> _rolePerms = {
+    'OWNER': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
+      'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
+      'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
+      'user:manage',
+    },
+    'SUPER_ADMIN': {
+      'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
+      'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
+      'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
+      'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
+      'user:manage',
+    },
     'ADMIN': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
       'nav:Invoices', 'nav:Customers', 'nav:Employees', 'nav:Reports', 'nav:Settings', 'nav:Inventory',
       'job:create', 'job:edit', 'job:delete', 'part:edit', 'part:delete', 'stock:adjust',
       'estimate:edit', 'estimate:delete', 'payment:record', 'expense:record', 'appt:edit',
+      'user:manage',
     },
     'MANAGER': {
       'nav:Dashboard', 'nav:Job Cards', 'nav:Appointments', 'nav:Parts Catalog', 'nav:Estimates',
@@ -70,7 +86,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     'Invoices': 'Invoices',
   };
 
-  bool _can(String perm) => _rolePerms[_activeUserRole]?.contains(perm) ?? false;
+  bool _can(String perm) {
+    if (_activeUserRole == 'OWNER' || _activeUserRole == 'SUPER_ADMIN') return true;
+    return _rolePerms[_activeUserRole]?.contains(perm) ?? false;
+  }
 
   /// Returns true (and warns) when the active role is NOT allowed to do [perm].
   bool _deny(String perm, String action) {
@@ -89,6 +108,36 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       if (_can('nav:${_tabToNav[t]}')) return t;
     }
     return 'Current Job Cards';
+  }
+
+  void _confirmSignOut() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.logout, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Sign Out'),
+          ],
+        ),
+        content: const Text('Are you sure you want to sign out of AutoKe?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AuthService.instance.logout();
+            },
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _changeRole(String role) {
@@ -154,23 +203,31 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _activeUserRole = AuthService.instance.role;
+    if (_activeUserRole == 'STOREKEEPER' || _activeUserRole == 'INVENTORY_MANAGER') {
+      _activeSidebar = 'Inventory';
+    } else if (!_can('nav:Dashboard')) {
+      _activeSidebar = _can('nav:Job Cards') ? 'Job Cards' : 'Dashboard';
+    }
+    _activeTab = _firstAllowedTab();
     _refreshAllData();
   }
 
   Future<void> _refreshAllData() async {
     setState(() => _isLoading = true);
     try {
+      final authHeaders = AuthService.instance.authHeaders;
       final responses = await Future.wait([
-        http.get(Uri.parse('$_baseUrl/dashboard')),
-        http.get(Uri.parse('$_baseUrl/jobs')),
-        http.get(Uri.parse('$_baseUrl/parts')),
-        http.get(Uri.parse('$_baseUrl/estimates')),
-        http.get(Uri.parse('$_baseUrl/invoices')),
-        http.get(Uri.parse('$_baseUrl/customers')),
-        http.get(Uri.parse('$_baseUrl/employees')),
-        http.get(Uri.parse('$_baseUrl/settings')),
-        http.get(Uri.parse('$_baseUrl/appointments')),
-        http.get(Uri.parse('$_baseUrl/expenses')),
+        http.get(Uri.parse('$_baseUrl/dashboard'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/jobs'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/parts'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/estimates'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/invoices'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/customers'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/users'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/settings'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/appointments'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/expenses'), headers: authHeaders),
       ]);
 
       if (!mounted) return;
@@ -2353,45 +2410,73 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ),
             const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.indigo.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.indigo.shade200),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade300),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4, offset: const Offset(0, 1))
+                ],
               ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _activeUserRole,
-                  isDense: true,
-                  icon: Icon(Icons.admin_panel_settings, size: 16, color: Colors.indigo.shade800),
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.indigo.shade900),
-                  items: const [
-                    DropdownMenuItem(value: 'ADMIN', child: Text('Role: Owner / Admin')),
-                    DropdownMenuItem(value: 'ADVISOR', child: Text('Role: Service Advisor')),
-                    DropdownMenuItem(value: 'MANAGER', child: Text('Role: Workshop Manager')),
-                    DropdownMenuItem(value: 'MECHANIC', child: Text('Role: Mechanic')),
-                    DropdownMenuItem(value: 'STOREKEEPER', child: Text('Role: Storekeeper')),
-                    DropdownMenuItem(value: 'INVENTORY_MANAGER', child: Text('Role: Inventory Manager')),
-                    DropdownMenuItem(value: 'ACCOUNTS', child: Text('Role: Accountant')),
-                    DropdownMenuItem(value: 'CASHIER', child: Text('Role: Cashier')),
-                  ],
-                  onChanged: (val) => _changeRole(val ?? 'ADMIN'),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 15,
+                    backgroundColor: const Color(0xFF1E3A8A),
+                    child: Text(
+                      AuthService.instance.userName.isNotEmpty
+                          ? AuthService.instance.userName[0].toUpperCase()
+                          : 'U',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AuthService.instance.userName.isNotEmpty
+                            ? AuthService.instance.userName
+                            : 'Workshop User',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              _activeUserRole,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade800,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.circle, size: 7, color: Colors.green),
+                          const SizedBox(width: 2),
+                          const Text('Online', style: TextStyle(fontSize: 10, color: Colors.green)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Sign Out',
+                    icon: const Icon(Icons.logout, size: 18, color: Colors.redAccent),
+                    onPressed: _confirmSignOut,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 10),
-            const CircleAvatar(
-              backgroundColor: Color(0xFF1E3A8A),
-              child: Text('AK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_activeUserRole, style: const TextStyle(fontWeight: FontWeight.bold)),
-                const Text('Live Connected', style: TextStyle(fontSize: 12, color: Colors.green)),
-              ],
-            )
           ],
         )
       ],
@@ -3700,11 +3785,384 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     );
   }
 
-  Widget _buildEmployeesSection() {
+  void _showAddUserDialog() {
     final nameCtrl = TextEditingController();
+    final usernameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final passCtrl = TextEditingController(text: 'password123');
+    final commCtrl = TextEditingController(text: '15');
     String selectedRole = 'MECHANIC';
+    bool isSaving = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: const Color(0xFF1E3A8A).withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.person_add, color: Color(0xFF1E3A8A)),
+              ),
+              const SizedBox(width: 12),
+              const Text('Create New Workshop User / Staff', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Create an account so staff can log in using their User ID/Username or Email and Password.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                  const SizedBox(height: 16),
+                  if (errorMsg != null)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.shade200)),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(errorMsg!, style: TextStyle(color: Colors.red.shade900, fontSize: 13))),
+                        ],
+                      ),
+                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Full Name *',
+                            hintText: 'e.g. Alex Kimani',
+                            prefixIcon: Icon(Icons.badge),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: usernameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'User ID / Username',
+                            hintText: 'e.g. alex_tech',
+                            prefixIcon: Icon(Icons.alternate_email),
+                            border: OutlineInputBorder(),
+                            helperText: 'Used to log into the app',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            labelText: 'Email Address *',
+                            hintText: 'e.g. alex@autocare.com',
+                            prefixIcon: Icon(Icons.email),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            labelText: 'Phone Number',
+                            hintText: 'e.g. 0712345678',
+                            prefixIcon: Icon(Icons.phone),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: selectedRole,
+                          decoration: const InputDecoration(
+                            labelText: 'Assigned Role *',
+                            prefixIcon: Icon(Icons.security),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'OWNER', child: Text('OWNER (Full Admin Control)')),
+                            DropdownMenuItem(value: 'MANAGER', child: Text('WORKSHOP MANAGER')),
+                            DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR (Reception & Estimates)')),
+                            DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC (Technician & Parts Req)')),
+                            DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER (Store & Requisitions)')),
+                            DropdownMenuItem(value: 'INVENTORY_MANAGER', child: Text('INVENTORY MANAGER (Stock & Audits)')),
+                            DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER (Invoices & POS)')),
+                            DropdownMenuItem(value: 'ACCOUNTS', child: Text('ACCOUNTANT (Financials)')),
+                          ],
+                          onChanged: (v) => setDlgState(() => selectedRole = v ?? 'MECHANIC'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          controller: passCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Initial Password * (min 6 chars)',
+                            prefixIcon: Icon(Icons.lock),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: commCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Commission %',
+                            suffixText: '%',
+                            border: const OutlineInputBorder(),
+                            enabled: selectedRole == 'MECHANIC',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              icon: isSaving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
+              label: const Text('Create User Account'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              ),
+              onPressed: isSaving ? null : () async {
+                final name = nameCtrl.text.trim();
+                final email = emailCtrl.text.trim();
+                final username = usernameCtrl.text.trim();
+                final phone = phoneCtrl.text.trim();
+                final password = passCtrl.text.trim();
+                final comm = double.tryParse(commCtrl.text.trim()) ?? 15.0;
+
+                if (name.isEmpty) {
+                  setDlgState(() => errorMsg = 'Please enter user full name.');
+                  return;
+                }
+                if (email.isEmpty) {
+                  setDlgState(() => errorMsg = 'Please enter user email address.');
+                  return;
+                }
+                if (password.length < 6) {
+                  setDlgState(() => errorMsg = 'Password must be at least 6 characters.');
+                  return;
+                }
+
+                setDlgState(() {
+                  isSaving = true;
+                  errorMsg = null;
+                });
+
+                try {
+                  final resp = await http.post(
+                    Uri.parse('$_baseUrl/users'),
+                    headers: AuthService.instance.authHeaders,
+                    body: json.encode({
+                      'name': name,
+                      'email': email,
+                      if (username.isNotEmpty) 'username': username,
+                      if (phone.isNotEmpty) 'phone': phone,
+                      'role': selectedRole,
+                      'password': password,
+                      'commissionRate': comm,
+                    }),
+                  );
+                  if (resp.statusCode == 201 || resp.statusCode == 200) {
+                    if (context.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: Colors.green,
+                          content: Text('User account created for $name ($selectedRole)! They can now log in.'),
+                        ),
+                      );
+                      _refreshAllData();
+                    }
+                  } else {
+                    final err = json.decode(resp.body);
+                    setDlgState(() {
+                      isSaving = false;
+                      errorMsg = err['error'] ?? 'Failed to create user.';
+                    });
+                  }
+                } catch (e) {
+                  setDlgState(() {
+                    isSaving = false;
+                    errorMsg = 'Error creating user: $e';
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showResetPasswordDialog(Map<String, dynamic> user) {
+    final passCtrl = TextEditingController();
+    bool isSaving = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.lock_reset, color: Colors.orange),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Reset Password: ${user['name']}', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('User: ${user['name']} (${user['username'] ?? user['email']})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text('Enter a new password for this user (minimum 6 characters).', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                const SizedBox(height: 16),
+                if (errorMsg != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                  ),
+                TextField(
+                  controller: passCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'New Password *',
+                    prefixIcon: Icon(Icons.vpn_key),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade800, foregroundColor: Colors.white),
+              onPressed: isSaving ? null : () async {
+                final newPass = passCtrl.text.trim();
+                if (newPass.length < 6) {
+                  setDlgState(() => errorMsg = 'Password must be at least 6 characters.');
+                  return;
+                }
+                setDlgState(() {
+                  isSaving = true;
+                  errorMsg = null;
+                });
+                try {
+                  final resp = await http.post(
+                    Uri.parse('$_baseUrl/users/${user['id']}/reset-password'),
+                    headers: AuthService.instance.authHeaders,
+                    body: json.encode({'newPassword': newPass}),
+                  );
+                  if (resp.statusCode == 200) {
+                    if (context.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: Colors.green,
+                          content: Text('Password updated for ${user['name']}.'),
+                        ),
+                      );
+                    }
+                  } else {
+                    final err = json.decode(resp.body);
+                    setDlgState(() {
+                      isSaving = false;
+                      errorMsg = err['error'] ?? 'Failed to reset password.';
+                    });
+                  }
+                } catch (e) {
+                  setDlgState(() {
+                    isSaving = false;
+                    errorMsg = 'Error resetting password: $e';
+                  });
+                }
+              },
+              child: const Text('Set New Password'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleUserActive(Map<String, dynamic> user) async {
+    final bool currentActive = user['isActive'] ?? true;
+    final bool newActive = !currentActive;
+    try {
+      final resp = await http.put(
+        Uri.parse('$_baseUrl/users/${user['id']}'),
+        headers: AuthService.instance.authHeaders,
+        body: json.encode({'isActive': newActive}),
+      );
+      if (resp.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: newActive ? Colors.green : Colors.orange,
+            content: Text('${user['name']} has been ${newActive ? 'activated' : 'deactivated'}.'),
+          ),
+        );
+        _refreshAllData();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: Colors.red, content: Text('Error updating user: $e')),
+      );
+    }
+  }
+
+  Widget _buildEmployeesSection() {
     final mechProd = (_dashboard['mechanicProductivity'] as List<dynamic>?) ?? [];
+    final canManageUsers = _can('user:manage') || _activeUserRole == 'OWNER' || _activeUserRole == 'SUPER_ADMIN' || _activeUserRole == 'ADMIN';
 
     return StatefulBuilder(
       builder: (context, setEmpState) {
@@ -3720,112 +4178,174 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Workshop Staff, Mechanics & Role Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      Chip(
-                        avatar: const Icon(Icons.verified_user, size: 16, color: Color(0xFF1D4ED8)),
-                        label: Text('Active Session Role: $_activeUserRole', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                        backgroundColor: Colors.blue.shade50,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Workshop Staff & User Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Create staff accounts with User IDs and passwords so each team member can log in with their specific role.',
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: nameCtrl,
-                          decoration: const InputDecoration(labelText: 'Staff / Technician Name', border: OutlineInputBorder()),
+                      if (canManageUsers)
+                        ElevatedButton.icon(
+                          onPressed: _showAddUserDialog,
+                          icon: const Icon(Icons.person_add),
+                          label: const Text('Add New User / Staff'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2563EB),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: emailCtrl,
-                          decoration: const InputDecoration(labelText: 'Email Address', border: OutlineInputBorder()),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 1,
-                        child: DropdownButtonFormField<String>(
-                          value: selectedRole,
-                          decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
-                          items: const [
-                            DropdownMenuItem(value: 'ADMIN', child: Text('OWNER / ADMIN')),
-                            DropdownMenuItem(value: 'ADVISOR', child: Text('SERVICE ADVISOR')),
-                            DropdownMenuItem(value: 'MANAGER', child: Text('WORKSHOP MANAGER')),
-                            DropdownMenuItem(value: 'MECHANIC', child: Text('MECHANIC')),
-                            DropdownMenuItem(value: 'STOREKEEPER', child: Text('STOREKEEPER')),
-                            DropdownMenuItem(value: 'CASHIER', child: Text('CASHIER')),
-                          ],
-                          onChanged: (v) => setEmpState(() => selectedRole = v ?? 'MECHANIC'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          if (nameCtrl.text.trim().isEmpty) return;
-                          await http.post(
-                            Uri.parse('$_baseUrl/employees'),
-                            headers: {'Content-Type': 'application/json'},
-                            body: json.encode({
-                              'name': nameCtrl.text.trim(),
-                              'email': emailCtrl.text.trim(),
-                              'role': selectedRole,
-                            }),
-                          );
-                          _refreshAllData();
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Staff'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                        ),
-                      ),
                     ],
                   ),
                   const Divider(height: 32),
                   if (_employees.isEmpty)
-                    const Padding(padding: EdgeInsets.all(24), child: Text('No employees added yet. Add technicians above so they appear in Job Card assignments.'))
+                    const Padding(padding: EdgeInsets.all(24), child: Text('No users found in database.'))
                   else
-                    DataTable(
-                      columns: const [
-                        DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Assigned Role', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Commission Rate', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
-                      ],
-                      rows: _employees.map((e) {
-                        final role = (e['role'] ?? 'MECHANIC').toString();
-                        return DataRow(
-                          cells: [
-                            DataCell(Text(e['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
-                            DataCell(Text(e['email'] ?? '')),
-                            DataCell(Chip(label: Text(role, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)))),
-                            DataCell(Text(role == 'MECHANIC' ? '15% of Labour' : 'Fixed Salary')),
-                            DataCell(
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                onPressed: () async {
-                                  if (_activeUserRole != 'ADMIN' && _activeUserRole != 'MANAGER') {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(backgroundColor: Colors.orange, content: Text('Role Guard: Only Owner/Admin or Manager can remove staff.')),
-                                    );
-                                    return;
-                                  }
-                                  await http.delete(Uri.parse('$_baseUrl/employees/${e['id']}'));
-                                  _refreshAllData();
-                                },
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text('Staff Member', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('User ID / Username', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Email & Phone', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Assigned Role', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Commission / Pay', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                        ],
+                        rows: _employees.map((e) {
+                          final role = (e['role'] ?? 'MECHANIC').toString();
+                          final isActive = e['isActive'] ?? true;
+                          final username = (e['username'] ?? '').toString();
+                          final email = (e['email'] ?? '').toString();
+                          final phone = (e['phone'] ?? '').toString();
+                          final name = (e['name'] ?? 'Staff').toString();
+                          final comm = (e['commissionRate'] as num?)?.toDouble() ?? 15.0;
+
+                          Color roleColor;
+                          switch (role) {
+                            case 'OWNER':
+                            case 'SUPER_ADMIN':
+                              roleColor = Colors.purple;
+                              break;
+                            case 'MANAGER':
+                              roleColor = Colors.indigo;
+                              break;
+                            case 'STOREKEEPER':
+                              roleColor = Colors.teal;
+                              break;
+                            case 'INVENTORY_MANAGER':
+                              roleColor = Colors.cyan.shade800;
+                              break;
+                            case 'ADVISOR':
+                              roleColor = Colors.blue.shade700;
+                              break;
+                            case 'CASHIER':
+                              roleColor = Colors.green.shade700;
+                              break;
+                            default:
+                              roleColor = Colors.orange.shade800;
+                          }
+
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Row(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: roleColor.withOpacity(0.15),
+                                      child: Text(
+                                        name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                                        style: TextStyle(color: roleColor, fontWeight: FontWeight.bold, fontSize: 11),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
+                              DataCell(
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: Colors.grey.shade300),
+                                  ),
+                                  child: Text(
+                                    username.isNotEmpty ? username : '-',
+                                    style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12),
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(email, style: const TextStyle(fontSize: 12)),
+                                    if (phone.isNotEmpty) Text(phone, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                  ],
+                                ),
+                              ),
+                              DataCell(
+                                Chip(
+                                  backgroundColor: roleColor.withOpacity(0.1),
+                                  label: Text(role, style: TextStyle(color: roleColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                              DataCell(Text(role == 'MECHANIC' ? '$comm% Labour' : 'Standard')),
+                              DataCell(
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: isActive ? Colors.green.shade50 : Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    isActive ? 'Active' : 'Inactive',
+                                    style: TextStyle(
+                                      color: isActive ? Colors.green.shade800 : Colors.red.shade800,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (canManageUsers) ...[
+                                      IconButton(
+                                        tooltip: 'Reset Password',
+                                        icon: const Icon(Icons.lock_reset, color: Colors.orange, size: 20),
+                                        onPressed: () => _showResetPasswordDialog(Map<String, dynamic>.from(e)),
+                                      ),
+                                      IconButton(
+                                        tooltip: isActive ? 'Deactivate User' : 'Activate User',
+                                        icon: Icon(
+                                          isActive ? Icons.block : Icons.check_circle_outline,
+                                          color: isActive ? Colors.red.shade400 : Colors.green,
+                                          size: 20,
+                                        ),
+                                        onPressed: () => _toggleUserActive(Map<String, dynamic>.from(e)),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
                     ),
                 ],
               ),

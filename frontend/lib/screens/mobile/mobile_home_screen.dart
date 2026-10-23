@@ -5,6 +5,7 @@ import 'dart:convert';
 import '../web/invoice_pdf_service.dart';
 import 'vehicle_damage_map.dart';
 import 'walk_around_checklist.dart';
+import '../../services/auth_service.dart';
 
 class MobileHomeScreen extends StatefulWidget {
   const MobileHomeScreen({Key? key}) : super(key: key);
@@ -63,21 +64,29 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   @override
   void initState() {
     super.initState();
+    final authRole = AuthService.instance.role;
+    if (authRole == 'MECHANIC') {
+      _role = 'MECHANIC';
+      _techName = AuthService.instance.userName;
+    } else {
+      _role = 'ADVISOR';
+      _techName = 'All';
+    }
     _fetchJobs();
   }
 
   Future<void> _fetchJobs() async {
     setState(() => _isLoadingJobs = true);
     try {
-      final effectiveTech = _techName == 'All' ? 'Kamau Tech' : _techName;
+      final authHeaders = AuthService.instance.authHeaders;
       final results = await Future.wait([
-        http.get(Uri.parse('$_baseUrl/jobs')),
-        http.get(Uri.parse('$_baseUrl/appointments')),
-        http.get(Uri.parse('$_baseUrl/estimates')),
-        http.get(Uri.parse('$_baseUrl/employees')),
+        http.get(Uri.parse('$_baseUrl/jobs'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/appointments'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/estimates'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/employees'), headers: authHeaders),
         http.get(
           Uri.parse('$_baseUrl/inventory/requests'),
-          headers: {'x-user-role': 'MECHANIC', 'x-user-name': effectiveTech},
+          headers: authHeaders,
         ),
       ]);
       if (mounted) {
@@ -309,6 +318,36 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     });
   }
 
+  void _confirmMobileSignOut() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.logout, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Sign Out'),
+          ],
+        ),
+        content: const Text('Are you sure you want to sign out of AutoKe?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AuthService.instance.logout();
+            },
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final advisorTitles = ['Overview', 'Job Cards', 'Vehicle Intake', 'Quotations', 'Bay Schedule'];
@@ -336,10 +375,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                'â€¢ $title',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white70),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '${AuthService.instance.userName} (${AuthService.instance.role})',
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
             ),
           ],
@@ -355,26 +405,33 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               onPressed: _showMobileAppointmentDialog,
             ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchJobs),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              padding: const EdgeInsets.all(3),
-              child: Row(
-                children: [
-                  _roleTab('ADVISOR', 'Service Advisor', Icons.support_agent),
-                  _roleTab('MECHANIC', 'Technician', Icons.build_circle_outlined),
-                ],
-              ),
-            ),
+          IconButton(
+            tooltip: 'Sign Out',
+            icon: const Icon(Icons.logout),
+            onPressed: _confirmMobileSignOut,
           ),
-        ),
+        ],
+        bottom: (AuthService.instance.isOwner || AuthService.instance.isManager)
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(52),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.all(3),
+                    child: Row(
+                      children: [
+                        _roleTab('ADVISOR', 'Service Advisor', Icons.support_agent),
+                        _roleTab('MECHANIC', 'Technician', Icons.build_circle_outlined),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            : null,
       ),
       body: _isAdvisor ? _buildAdvisorBody() : _buildTechnicianBody(),
       bottomNavigationBar: NavigationBar(
@@ -874,11 +931,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       return _buildTechnicianRequestsBody();
     }
     final showCompleted = _selectedIndex == 2;
+    final auth = AuthService.instance;
+    final isPrivileged = auth.isOwner || auth.isManager;
+
     final mine = _jobs.where((j) {
       final done = j['status'] == 'COMPLETED';
       if (done != showCompleted) return false;
-      if (!showCompleted && (j['status'] == 'BOOKED' || j['status'] == 'READY') && _techName != 'All') {
-        // still visible if assigned to this technician
+      if (!isPrivileged) {
+        final assigned = (j['technician'] ?? '').toString().trim().toLowerCase();
+        final me = auth.userName.trim().toLowerCase();
+        return assigned.isNotEmpty && (assigned == me || assigned.contains(me) || me.contains(assigned));
       }
       if (_techName == 'All') return true;
       return (j['technician'] ?? '').toString() == _techName;
@@ -886,24 +948,77 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: DropdownButtonFormField<String>(
-            value: (_techName == 'All' || _technicians.contains(_techName)) ? _techName : 'All',
-            decoration: InputDecoration(
-              labelText: 'I am',
-              prefixIcon: const Icon(Icons.badge_outlined),
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+        if (!isPrivileged)
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.blue.shade100),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4, offset: const Offset(0, 1)),
+              ],
             ),
-            items: ['All', ..._technicians].map((t) => DropdownMenuItem(value: t, child: Text(t == 'All' ? 'All technicians (bay view)' : t))).toList(),
-            onChanged: (v) {
-              setState(() => _techName = v ?? 'All');
-              _fetchJobs();
-            },
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: const Color(0xFF0F4C81),
+                  child: Text(
+                    auth.userName.isNotEmpty ? auth.userName[0].toUpperCase() : 'T',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        auth.userName.isNotEmpty ? auth.userName : 'Technician',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      Text(
+                        'Workshop Bay â€¢ Assigned Jobs (${mine.length})',
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    auth.role,
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81)),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: DropdownButtonFormField<String>(
+              value: (_techName == 'All' || _technicians.contains(_techName)) ? _techName : 'All',
+              decoration: InputDecoration(
+                labelText: 'Technician Bay Filter (Admin View)',
+                prefixIcon: const Icon(Icons.badge_outlined),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              ),
+              items: ['All', ..._technicians].map((t) => DropdownMenuItem(value: t, child: Text(t == 'All' ? 'All technicians (bay view)' : t))).toList(),
+              onChanged: (v) {
+                setState(() => _techName = v ?? 'All');
+                _fetchJobs();
+              },
+            ),
           ),
-        ),
         Expanded(
           child: _isLoadingJobs && _jobs.isEmpty
               ? const Center(child: CircularProgressIndicator())
@@ -1293,7 +1408,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   }
 
   void _showItemRequestDialog({String? preselectedJobId, String? preselectedVehiclePlate}) {
-    String searchQuery = '';
     List<dynamic> catalogResults = [];
     Map<String, dynamic>? selectedItem;
     bool isCustomItem = false;
@@ -1412,13 +1526,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     onChanged: (q) async {
-                      searchQuery = q;
                       if (q.length < 2) { setSheet(() => catalogResults = []); return; }
                       try {
                         final catParam = category == 'ALL' ? '' : '&category=$category';
                         final res = await http.get(
                           Uri.parse('$_baseUrl/inventory/catalog?search=$q$catParam'),
-                          headers: {'x-user-role': 'MECHANIC'},
+                          headers: AuthService.instance.authHeaders,
                         );
                         if (res.statusCode == 200) {
                           setSheet(() => catalogResults = json.decode(res.body));
