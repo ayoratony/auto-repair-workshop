@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'session_storage.dart';
 
 class AuthService extends ChangeNotifier {
   static final AuthService instance = AuthService._();
@@ -30,6 +30,7 @@ class AuthService extends ChangeNotifier {
   bool get isManager => role == 'MANAGER' || isOwner;
   bool get isStorekeeper => role == 'STOREKEEPER' || role == 'INVENTORY_MANAGER';
   bool get isMechanic => role == 'MECHANIC';
+  bool get isAdvisor => role == 'ADVISOR';
 
   Map<String, String> get authHeaders => {
         'Content-Type': 'application/json',
@@ -40,13 +41,11 @@ class AuthService extends ChangeNotifier {
 
   Future<void> init() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _token = prefs.getString(_tokenKey);
-      final userRaw = prefs.getString(_userKey);
-      if (userRaw != null) {
+      _token = await SessionStorage.getString(_tokenKey);
+      final userRaw = await SessionStorage.getString(_userKey);
+      if (userRaw != null && userRaw.isNotEmpty) {
         _currentUser = json.decode(userRaw);
       }
-      // If token exists, verify in background
       if (_token != null) {
         _verifySession();
       }
@@ -68,12 +67,12 @@ class AuthService extends ChangeNotifier {
         final data = json.decode(res.body);
         if (data['user'] != null) {
           _currentUser = Map<String, dynamic>.from(data['user']);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(_userKey, json.encode(_currentUser));
+          try {
+            await SessionStorage.setString(_userKey, json.encode(_currentUser));
+          } catch (_) {}
           notifyListeners();
         }
       } else if (res.statusCode == 401 || res.statusCode == 403) {
-        // Token expired or invalid
         await logout();
       }
     } catch (_) {}
@@ -95,9 +94,13 @@ class AuthService extends ChangeNotifier {
         _token = data['token'];
         _currentUser = Map<String, dynamic>.from(data['user']);
 
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_tokenKey, _token!);
-        await prefs.setString(_userKey, json.encode(_currentUser));
+        // Persist session safely (never allow a storage error to abort login)
+        try {
+          await SessionStorage.setString(_tokenKey, _token!);
+          await SessionStorage.setString(_userKey, json.encode(_currentUser));
+        } catch (storageErr) {
+          debugPrint('Session storage write error (ignoring): $storageErr');
+        }
 
         notifyListeners();
         return {'success': true};
@@ -119,9 +122,10 @@ class AuthService extends ChangeNotifier {
           );
         } catch (_) {}
       }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_tokenKey);
-      await prefs.remove(_userKey);
+      try {
+        await SessionStorage.remove(_tokenKey);
+        await SessionStorage.remove(_userKey);
+      } catch (_) {}
     } catch (e) {
       debugPrint('Logout error: $e');
     } finally {
