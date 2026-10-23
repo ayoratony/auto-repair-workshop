@@ -6,6 +6,7 @@ import '../web/invoice_pdf_service.dart';
 import 'vehicle_damage_map.dart';
 import 'walk_around_checklist.dart';
 import '../../services/auth_service.dart';
+import '../../services/platform_launcher.dart';
 
 class MobileHomeScreen extends StatefulWidget {
   const MobileHomeScreen({Key? key}) : super(key: key);
@@ -26,6 +27,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   List<dynamic> _estimates = [];
   Map<String, dynamic> _workshopSettings = {};
   String _jobSearch = '';
+  String _jobStatusFilter = 'ALL';
+  String _jobBayFilter = 'ALL';
+  String _jobSortBy = 'NEWEST';
+  String _selectedKpiFilter = 'ALL';
+  final TextEditingController _jobSearchCtrl = TextEditingController();
   String _quoteSearch = '';
   String _quoteStatusFilter = 'ALL';
 
@@ -76,6 +82,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       _techName = 'All';
     }
     _fetchJobs();
+  }
+
+  @override
+  void dispose() {
+    _jobSearchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchJobs() async {
@@ -305,15 +317,376 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
   Future<bool> _putJob(String id, Map<String, dynamic> body) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        ...AuthService.instance.authHeaders,
+      };
       final r = await http.put(
         Uri.parse('$_baseUrl/jobs/$id'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: json.encode(body),
       );
       return r.statusCode == 200;
     } catch (_) {
       return false;
     }
+  }
+
+  int _stageIndex(String s) {
+    switch (s) {
+      case 'BOOKED':
+        return 1;
+      case 'INSPECTION':
+        return 2;
+      case 'AWAITING_APPROVAL':
+        return 3;
+      case 'IN_PROGRESS':
+        return 4;
+      case 'WAITING':
+        return 5;
+      case 'QUALITY_CHECK':
+        return 6;
+      case 'READY':
+        return 7;
+      case 'COMPLETED':
+        return 7;
+      default:
+        return 1;
+    }
+  }
+
+  String _stageTitle(String s) {
+    switch (s) {
+      case 'BOOKED':
+        return '1. Checked-In';
+      case 'INSPECTION':
+        return '2. Inspection & OBD-II';
+      case 'AWAITING_APPROVAL':
+        return '3. Awaiting Approval';
+      case 'IN_PROGRESS':
+        return '4. In Repair';
+      case 'WAITING':
+        return '5. Waiting Parts';
+      case 'QUALITY_CHECK':
+        return '6. Quality Check (QC)';
+      case 'READY':
+        return '7. Ready for Pickup';
+      case 'COMPLETED':
+        return 'Delivered / Closed';
+      default:
+        return s.replaceAll('_', ' ');
+    }
+  }
+
+  IconData _statusIcon(String s) {
+    switch (s) {
+      case 'BOOKED':
+        return Icons.receipt_long;
+      case 'INSPECTION':
+        return Icons.search;
+      case 'AWAITING_APPROVAL':
+        return Icons.pending_actions;
+      case 'IN_PROGRESS':
+        return Icons.build;
+      case 'WAITING':
+        return Icons.hourglass_empty;
+      case 'QUALITY_CHECK':
+        return Icons.verified;
+      case 'READY':
+        return Icons.key;
+      case 'COMPLETED':
+        return Icons.task_alt;
+      default:
+        return Icons.info_outline;
+    }
+  }
+
+  int _priorityWeight(String? p) {
+    final lower = (p ?? '').toLowerCase();
+    if (lower == 'high' || lower == 'urgent') return 3;
+    if (lower == 'medium') return 2;
+    return 1;
+  }
+
+  void _openWhatsApp(String customer, String phone, String reg, String status) {
+    if (phone.isEmpty) {
+      _toast('No customer phone number recorded', color: Colors.orange);
+      return;
+    }
+    final clean = phone.replaceAll(RegExp(r'\D'), '');
+    final international = clean.startsWith('0') ? '254${clean.substring(1)}' : (clean.startsWith('254') ? clean : '254$clean');
+    final ready = status == 'READY';
+    final stage = _stageTitle(status);
+    final msg = ready
+        ? 'Hello $customer, your vehicle $reg is ready for collection at AutoKe Workshop. Kindly let us know your estimated pickup time.'
+        : 'Hello $customer, this is AutoKe Workshop regarding your vehicle $reg. We are currently working on it ($stage).';
+    final url = 'https://wa.me/$international?text=${Uri.encodeComponent(msg)}';
+    PlatformLauncher.openUrl(url);
+    Clipboard.setData(ClipboardData(text: '$phone\n$msg'));
+    _toast('Opening WhatsApp / Message copied to clipboard!');
+  }
+
+  void _makePhoneCall(String phone) {
+    if (phone.isEmpty) {
+      _toast('No customer phone number recorded', color: Colors.orange);
+      return;
+    }
+    final clean = phone.replaceAll(RegExp(r'\s+'), '');
+    PlatformLauncher.openUrl('tel:$clean');
+    Clipboard.setData(ClipboardData(text: clean));
+    _toast('Dialing $clean / Copied to clipboard');
+  }
+
+  void _showQuickStatusPicker(Map<String, dynamic> job) {
+    final curStatus = (job['status'] ?? 'BOOKED').toString();
+    final jobNo = (job['jobNumber'] ?? job['id'].toString().substring(0, 8).toUpperCase()).toString();
+    final reg = (job['vehicle']?['registrationNo'] ?? '').toString();
+
+    final stages = <Map<String, dynamic>>[
+      {'key': 'BOOKED', 'label': '1. Checked-In', 'desc': 'Vehicle received & memo logged', 'icon': Icons.receipt_long, 'color': const Color(0xFF64748B)},
+      {'key': 'INSPECTION', 'label': '2. Inspection & OBD-II', 'desc': 'Diagnostics & teardown on bay', 'icon': Icons.search, 'color': const Color(0xFF7C3AED)},
+      {'key': 'AWAITING_APPROVAL', 'label': '3. Awaiting Approval', 'desc': 'Quotation sent to client', 'icon': Icons.pending_actions, 'color': const Color(0xFFD97706)},
+      {'key': 'IN_PROGRESS', 'label': '4. In Repair', 'desc': 'Mechanic active on assigned bay', 'icon': Icons.build, 'color': const Color(0xFF2563EB)},
+      {'key': 'WAITING', 'label': '5. Waiting Parts', 'desc': 'Parts requisition in store/supplier', 'icon': Icons.hourglass_empty, 'color': const Color(0xFFEA580C)},
+      {'key': 'QUALITY_CHECK', 'label': '6. Quality Check (QC)', 'desc': 'Manager road test & checklist OK', 'icon': Icons.verified, 'color': const Color(0xFF0891B2)},
+      {'key': 'READY', 'label': '7. Ready for Pickup', 'desc': 'Cleaning done, keys ready for handover', 'icon': Icons.key, 'color': const Color(0xFF16A34A)},
+      {'key': 'COMPLETED', 'label': 'Delivered / Closed', 'desc': 'Vehicle handed over & settled', 'icon': Icons.task_alt, 'color': const Color(0xFF15803D)},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Row(
+                children: [
+                  const Icon(Icons.published_with_changes, color: Color(0xFF0F4C81), size: 22),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Update Workflow Stage', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                        Text('$jobNo \u2022 ${reg.isNotEmpty ? reg : "Vehicle"}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                      ],
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+              const Divider(height: 16),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: stages.map((st) {
+                      final isSelected = st['key'] == curStatus;
+                      final Color color = st['color'] as Color;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        decoration: BoxDecoration(
+                          color: isSelected ? color.withOpacity(0.08) : Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? color : Colors.grey.shade200,
+                            width: isSelected ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          leading: CircleAvatar(
+                            radius: 16,
+                            backgroundColor: color.withOpacity(0.15),
+                            child: Icon(st['icon'] as IconData, size: 16, color: color),
+                          ),
+                          title: Text(
+                            st['label'] as String,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                              color: isSelected ? color : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          subtitle: Text(st['desc'] as String, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                          trailing: isSelected
+                              ? Icon(Icons.check_circle, color: color, size: 20)
+                              : const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            if (st['key'] == curStatus) return;
+                            final ok = await _putJob(job['id'].toString(), {'status': st['key']});
+                            if (ok) {
+                              _toast('Moved to ${st['label']}');
+                              _fetchJobs();
+                            } else {
+                              _toast('Failed to update stage', color: Colors.red);
+                            }
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showJobsFilterSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setFilterState) => Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.tune, color: Color(0xFF0F4C81), size: 20),
+                        SizedBox(width: 8),
+                        Text('Filter & Sort Job Cards', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _jobBayFilter = 'ALL';
+                          _jobSortBy = 'NEWEST';
+                          _selectedKpiFilter = 'ALL';
+                        });
+                        setFilterState(() {});
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('Reset All', style: TextStyle(color: Colors.red, fontSize: 12)),
+                    ),
+                  ],
+                ),
+                const Divider(),
+                const Text('SORT JOBS BY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    _filterChoiceChip('Newest Added', _jobSortBy == 'NEWEST', () {
+                      setState(() => _jobSortBy = 'NEWEST');
+                      setFilterState(() {});
+                    }),
+                    _filterChoiceChip('🔥 High Priority First', _jobSortBy == 'PRIORITY', () {
+                      setState(() => _jobSortBy = 'PRIORITY');
+                      setFilterState(() {});
+                    }),
+                    _filterChoiceChip('Reg Plate (A-Z)', _jobSortBy == 'PLATE', () {
+                      setState(() => _jobSortBy = 'PLATE');
+                      setFilterState(() {});
+                    }),
+                    _filterChoiceChip('Customer Name', _jobSortBy == 'CUSTOMER', () {
+                      setState(() => _jobSortBy = 'CUSTOMER');
+                      setFilterState(() {});
+                    }),
+                    _filterChoiceChip('Due Date', _jobSortBy == 'DUE_DATE', () {
+                      setState(() => _jobSortBy = 'DUE_DATE');
+                      setFilterState(() {});
+                    }),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                const Text('FILTER BY WORKSHOP BAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    'ALL',
+                    'Diagnostic Bay',
+                    'Bay 1',
+                    'Bay 2',
+                    'Bay 3',
+                    'Lift 1',
+                    'Lift 2',
+                  ].map((bay) {
+                    final isSel = _jobBayFilter == bay;
+                    return _filterChoiceChip(bay == 'ALL' ? 'All Bays' : bay, isSel, () {
+                      setState(() => _jobBayFilter = bay);
+                      setFilterState(() {});
+                    });
+                  }).toList(),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F4C81),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Apply Filters', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChoiceChip(String label, bool selected, VoidCallback onSelected) {
+    return ChoiceChip(
+      label: Text(label, style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.bold : FontWeight.w500, color: selected ? const Color(0xFF1E3A8A) : Colors.black87)),
+      selected: selected,
+      selectedColor: const Color(0xFFDBEAFE),
+      backgroundColor: const Color(0xFFF1F5F9),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: selected ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1)),
+      ),
+      onSelected: (_) => onSelected(),
+    );
   }
 
   void _switchRole(String role) {
@@ -528,7 +901,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       ['Appointments', 'Bookings & bays', Icons.event_available, () => setState(() => _selectedIndex = 4)],
       ['Quotations', 'Estimates & approvals', Icons.request_quote, () => setState(() => _selectedIndex = 3)],
       ['Communications', 'Customer updates', Icons.chat_bubble, _showCommunicationsSheet],
-      ['New Intake', '360Â° vehicle check-in', Icons.directions_car, () => setState(() => _selectedIndex = 2)],
+      ['New Intake', '360\u00B0 vehicle check-in', Icons.directions_car, () => setState(() => _selectedIndex = 2)],
     ];
 
     return RefreshIndicator(
@@ -598,7 +971,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           if (awaiting + ready == 0)
             const Padding(
               padding: EdgeInsets.all(12),
-              child: Text('Nothing pending â€” all caught up.', style: TextStyle(color: Colors.black54)),
+              child: Text('Nothing pending \u2014 all caught up.', style: TextStyle(color: Colors.black54)),
             ),
         ],
       ),
@@ -663,12 +1036,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                             ),
                           ),
                           title: Text(c['name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: Text('${c['phone'] ?? 'No phone'} â€¢ ${jobs.length} visit(s)'),
+                          subtitle: Text('${c['phone'] ?? 'No phone'} \u2022 ${jobs.length} visit(s)'),
                           children: jobs
                               .map<Widget>((j) => ListTile(
                                     dense: true,
-                                    title: Text('${j['vehicle']?['registrationNo'] ?? ''} â€¢ ${j['workRequested'] ?? 'Service'}'),
-                                    subtitle: Text('${j['jobNumber'] ?? ''} â€¢ ${_prettyStatus(j['status'] ?? '')}'),
+                                    title: Text('${j['vehicle']?['registrationNo'] ?? ''} \u2022 ${j['workRequested'] ?? 'Service'}'),
+                                    subtitle: Text('${j['jobNumber'] ?? ''} \u2022 ${_prettyStatus(j['status'] ?? '')}'),
                                   ))
                               .toList(),
                         );
@@ -713,7 +1086,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         return ListTile(
                           leading: Icon(ready ? Icons.check_circle : Icons.hourglass_top,
                               color: ready ? Colors.green : Colors.orange),
-                          title: Text('${j['customer']?['name'] ?? ''} â€¢ $reg'),
+                          title: Text('${j['customer']?['name'] ?? ''} \u2022 $reg'),
                           subtitle: Text(msg, maxLines: 3, overflow: TextOverflow.ellipsis),
                           trailing: IconButton(
                             icon: const Icon(Icons.copy),
@@ -1646,22 +2019,40 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // SHARED JOB CARD LIST / CARD
+  // SHARED JOB CARD LIST / CARD (HIGH SCALE + AUTOMOTIVE IDENTITY)
   // ---------------------------------------------------------------------------
   Widget _jobCard(dynamic job, {bool techMode = false}) {
     final jobNo = (job['jobNumber'] ?? job['id'].toString().substring(0, 8).toUpperCase()).toString();
-    final customer = job['customer']?['name'] ?? 'Customer';
+    final customer = (job['customer']?['name'] ?? 'Customer').toString();
+    final phone = (job['customer']?['phone'] ?? '').toString();
     final vehicle = '${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''}'.trim();
-    final reg = job['vehicle']?['registrationNo'] ?? '';
+    final reg = (job['vehicle']?['registrationNo'] ?? '').toString().trim();
     final status = (job['status'] ?? 'IN_PROGRESS').toString();
     final color = _statusColor(status);
+    final stageIdx = _stageIndex(status);
+    final priority = (job['priority'] ?? 'Medium').toString();
+    final isHighPriority = priority.toLowerCase() == 'high' || priority.toLowerCase() == 'urgent';
+    final bay = (job['bayNumber'] ?? '').toString();
+    final tech = (job['technician'] ?? '').toString().trim();
+    final hasTech = tech.isNotEmpty && tech.toLowerCase() != 'unassigned';
+    final odo = job['odometer'];
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        border: Border.all(
+          color: isHighPriority ? const Color(0xFFFCA5A5) : const Color(0xFFE2E8F0),
+          width: isHighPriority ? 1.5 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -1671,39 +2062,357 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ROW 1: KENYAN LICENSE PLATE BADGE, JOB NUMBER, PRIORITY & WORKFLOW STATUS
               Row(
                 children: [
-                  Text(jobNo, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-                  const Spacer(),
+                  // KENYAN LICENSE PLATE BADGE
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
-                    child: Text(_prettyStatus(status),
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color)),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF08A),
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(color: Colors.black87, width: 1.4),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 2, offset: const Offset(0, 1)),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                          decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(2)),
+                          child: const Text('KE', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900)),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          reg.isNotEmpty ? reg.toUpperCase() : 'NO PLATE',
+                          style: const TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // JOB NO
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFCBD5E1)),
+                    ),
+                    child: Text(
+                      jobNo,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF334155)),
+                    ),
+                  ),
+                  if (isHighPriority) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.local_fire_department, size: 12, color: Color(0xFFDC2626)),
+                          SizedBox(width: 2),
+                          Text('HIGH', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Color(0xFFDC2626))),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                  // CLICKABLE STATUS BADGE
+                  InkWell(
+                    onTap: () => _showQuickStatusPicker(Map<String, dynamic>.from(job)),
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: color.withOpacity(0.35)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(_statusIcon(status), size: 12, color: color),
+                          const SizedBox(width: 4),
+                          Text(
+                            _prettyStatus(status),
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(Icons.arrow_drop_down, size: 14, color: color),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Text('$reg â€¢ $vehicle', style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(job['workRequested']?.toString() ?? 'Service',
-                  maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54, fontSize: 13)),
+
+              const SizedBox(height: 10),
+
+              // ROW 2: VEHICLE MODEL & WORK REQUESTED
+              Text(
+                vehicle.isNotEmpty ? vehicle : 'Vehicle Specification Pending',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF0F172A)),
+              ),
+              const SizedBox(height: 3),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.build_circle_outlined, size: 14, color: Color(0xFF64748B)),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      job['workRequested']?.toString().isNotEmpty == true
+                          ? job['workRequested'].toString()
+                          : 'General Workshop Service & Inspection',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xFF475569), fontSize: 12.5, height: 1.3),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // ROW 3: 7-STAGE WORKFLOW PROGRESS STEPPER
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Workflow: Stage $stageIdx of 7 (${_stageTitle(status)})',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
+                      ),
+                      Text(
+                        '${((stageIdx / 7.0) * 100).toInt()}%',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: stageIdx / 7.0,
+                      minHeight: 5,
+                      backgroundColor: const Color(0xFFE2E8F0),
+                      valueColor: AlwaysStoppedAnimation<Color>(color),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // ROW 4: CUSTOMER DETAILS STRIP WITH 1-TAP WHATSAPP & PHONE CALL
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 13,
+                      backgroundColor: const Color(0xFFDBEAFE),
+                      child: Text(
+                        customer.isNotEmpty ? customer[0].toUpperCase() : 'C',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            customer,
+                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (phone.isNotEmpty)
+                            Text(
+                              phone,
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (phone.isNotEmpty) ...[
+                      // 1-Tap WhatsApp
+                      InkWell(
+                        onTap: () => _openWhatsApp(customer, phone, reg, status),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.chat, size: 16, color: Color(0xFF15803D)),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // 1-Tap Direct Call
+                      InkWell(
+                        onTap: () => _makePhoneCall(phone),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDBEAFE),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.phone, size: 16, color: Color(0xFF1D4ED8)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
               const SizedBox(height: 8),
+
+              // ROW 5: WORKSHOP LOGISTICS BADGES (Bay, Tech, Mileage)
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  // Technician badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: hasTech ? const Color(0xFFEEF2FF) : const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: hasTech ? const Color(0xFFC7D2FE) : const Color(0xFFFCD34D)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(hasTech ? Icons.engineering : Icons.warning_amber_rounded, size: 13, color: hasTech ? const Color(0xFF4338CA) : const Color(0xFFB45309)),
+                        const SizedBox(width: 4),
+                        Text(
+                          hasTech ? tech : 'Unassigned Tech',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: hasTech ? const Color(0xFF3730A3) : const Color(0xFFB45309),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Bay badge
+                  if (bay.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFCBD5E1)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.garage_outlined, size: 13, color: Color(0xFF475569)),
+                          const SizedBox(width: 4),
+                          Text(bay, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF334155))),
+                        ],
+                      ),
+                    ),
+                  // Odometer
+                  if (odo != null && odo > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.speed, size: 13, color: Color(0xFF64748B)),
+                          const SizedBox(width: 4),
+                          Text('$odo km', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+
+              const Divider(height: 18),
+
+              // ROW 6: ACTION FOOTER
               Row(
                 children: [
-                  const Icon(Icons.person_outline, size: 15, color: Colors.black45),
-                  const SizedBox(width: 4),
-                  Expanded(child: Text(customer, style: const TextStyle(fontSize: 12))),
-                  const Icon(Icons.build_outlined, size: 15, color: Colors.black45),
-                  const SizedBox(width: 4),
-                  Text(job['technician']?.toString().isNotEmpty == true ? job['technician'].toString() : 'Unassigned',
-                      style: const TextStyle(fontSize: 12)),
-                  if (job['bayNumber'] != null) ...[
-                    const SizedBox(width: 10),
-                    const Icon(Icons.garage_outlined, size: 15, color: Colors.black45),
-                    const SizedBox(width: 4),
-                    Text(job['bayNumber'].toString(), style: const TextStyle(fontSize: 12)),
-                  ],
+                  // Quick Status
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onPressed: () => _showQuickStatusPicker(Map<String, dynamic>.from(job)),
+                    icon: const Icon(Icons.published_with_changes, size: 14, color: Color(0xFF0F4C81)),
+                    label: const Text('Status', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81))),
+                  ),
+                  const SizedBox(width: 8),
+                  // Quotes shortcut
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _selectedIndex = 3;
+                        _quoteSearch = reg.isNotEmpty ? reg : jobNo;
+                      });
+                    },
+                    icon: const Icon(Icons.request_quote_outlined, size: 14, color: Color(0xFF2563EB)),
+                    label: const Text('Quotes', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
+                  ),
+                  const Spacer(),
+                  // View Job Sheet (Primary)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F4C81),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onPressed: () => _openJobSheet(Map<String, dynamic>.from(job), techMode: techMode),
+                    icon: const Icon(Icons.description_outlined, size: 14),
+                    label: const Text('Job Sheet', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
                 ],
               ),
             ],
@@ -1713,62 +2422,386 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     );
   }
 
+  List<dynamic> _getFilteredJobs() {
+    final q = _jobSearch.trim().toLowerCase();
+
+    final filtered = _jobs.where((j) {
+      final status = (j['status'] ?? 'BOOKED').toString();
+      final bay = (j['bayNumber'] ?? '').toString();
+
+      // KPI quick filter
+      if (_selectedKpiFilter == 'ACTIVE' && status == 'COMPLETED') return false;
+      if (_selectedKpiFilter == 'IN_REPAIR' && status != 'IN_PROGRESS') return false;
+      if (_selectedKpiFilter == 'BLOCKED' && status != 'AWAITING_APPROVAL' && status != 'WAITING') return false;
+      if (_selectedKpiFilter == 'READY' && status != 'READY') return false;
+
+      // Status chip filter
+      if (_jobStatusFilter != 'ALL' && status != _jobStatusFilter) return false;
+
+      // Bay filter
+      if (_jobBayFilter != 'ALL' && bay != _jobBayFilter) return false;
+
+      // Search query across all fields
+      if (q.isNotEmpty) {
+        final jobNo = (j['jobNumber'] ?? '').toString().toLowerCase();
+        final cust = (j['customer']?['name'] ?? '').toString().toLowerCase();
+        final phone = (j['customer']?['phone'] ?? '').toString().toLowerCase();
+        final plate = (j['vehicle']?['registrationNo'] ?? '').toString().toLowerCase();
+        final make = (j['vehicle']?['make'] ?? '').toString().toLowerCase();
+        final model = (j['vehicle']?['model'] ?? '').toString().toLowerCase();
+        final tech = (j['technician'] ?? '').toString().toLowerCase();
+        final work = (j['workRequested'] ?? '').toString().toLowerCase();
+
+        final match = jobNo.contains(q) ||
+            cust.contains(q) ||
+            phone.contains(q) ||
+            plate.contains(q) ||
+            make.contains(q) ||
+            model.contains(q) ||
+            tech.contains(q) ||
+            bay.toLowerCase().contains(q) ||
+            work.contains(q);
+        if (!match) return false;
+      }
+
+      return true;
+    }).toList();
+
+    filtered.sort((a, b) {
+      if (_jobSortBy == 'PRIORITY') {
+        final pA = _priorityWeight(a['priority']?.toString());
+        final pB = _priorityWeight(b['priority']?.toString());
+        return pB.compareTo(pA);
+      } else if (_jobSortBy == 'PLATE') {
+        final rA = (a['vehicle']?['registrationNo'] ?? '').toString();
+        final rB = (b['vehicle']?['registrationNo'] ?? '').toString();
+        return rA.compareTo(rB);
+      } else if (_jobSortBy == 'CUSTOMER') {
+        final cA = (a['customer']?['name'] ?? '').toString();
+        final cB = (b['customer']?['name'] ?? '').toString();
+        return cA.compareTo(cB);
+      } else if (_jobSortBy == 'DUE_DATE') {
+        final dA = a['dueDate'] != null ? DateTime.tryParse(a['dueDate'].toString()) : null;
+        final dB = b['dueDate'] != null ? DateTime.tryParse(b['dueDate'].toString()) : null;
+        if (dA == null) return 1;
+        if (dB == null) return -1;
+        return dA.compareTo(dB);
+      } else {
+        // NEWEST
+        final tA = a['createdAt'] != null ? DateTime.tryParse(a['createdAt'].toString()) : null;
+        final tB = b['createdAt'] != null ? DateTime.tryParse(b['createdAt'].toString()) : null;
+        if (tA != null && tB != null) return tB.compareTo(tA);
+        return (b['id'] ?? '').toString().compareTo((a['id'] ?? '').toString());
+      }
+    });
+
+    return filtered;
+  }
+
   Widget _buildJobsList() {
     if (_isLoadingJobs && _jobs.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    final q = _jobSearch.toLowerCase();
-    final shown = _jobs.where((j) {
-      if (q.isEmpty) return true;
-      return '${j['jobNumber']} ${j['customer']?['name']} ${j['vehicle']?['registrationNo']} ${j['vehicle']?['make']} ${j['vehicle']?['model']}'
-          .toLowerCase()
-          .contains(q);
-    }).toList();
+
+    final total = _jobs.length;
+    final activeCount = _jobs.where((j) => j['status'] != 'COMPLETED').length;
+    final inRepairCount = _jobs.where((j) => j['status'] == 'IN_PROGRESS').length;
+    final blockedCount = _jobs.where((j) => j['status'] == 'AWAITING_APPROVAL' || j['status'] == 'WAITING').length;
+    final readyCount = _jobs.where((j) => j['status'] == 'READY').length;
+
+    final shown = _getFilteredJobs();
+    final hasActiveFilter = _jobBayFilter != 'ALL' || _jobSortBy != 'NEWEST' || _selectedKpiFilter != 'ALL';
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: TextField(
-            onChanged: (v) => setState(() => _jobSearch = v),
-            decoration: InputDecoration(
-              hintText: 'Search job, plate, customerâ€¦',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 0),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-            ),
+        // 1. TOP CAPACITY KPI METRICS (Handles High Volume Scalability)
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(
+            children: [
+              _kpiMetricCard('All Active', '$activeCount', const Color(0xFF2563EB), _selectedKpiFilter == 'ACTIVE', () {
+                setState(() {
+                  _selectedKpiFilter = _selectedKpiFilter == 'ACTIVE' ? 'ALL' : 'ACTIVE';
+                  _jobStatusFilter = 'ALL';
+                });
+              }),
+              const SizedBox(width: 6),
+              _kpiMetricCard('In Repair', '$inRepairCount', const Color(0xFF0F766E), _selectedKpiFilter == 'IN_REPAIR', () {
+                setState(() {
+                  _selectedKpiFilter = _selectedKpiFilter == 'IN_REPAIR' ? 'ALL' : 'IN_REPAIR';
+                  _jobStatusFilter = 'ALL';
+                });
+              }),
+              const SizedBox(width: 6),
+              _kpiMetricCard('Waiting', '$blockedCount', const Color(0xFFD97706), _selectedKpiFilter == 'BLOCKED', () {
+                setState(() {
+                  _selectedKpiFilter = _selectedKpiFilter == 'BLOCKED' ? 'ALL' : 'BLOCKED';
+                  _jobStatusFilter = 'ALL';
+                });
+              }),
+              const SizedBox(width: 6),
+              _kpiMetricCard('Ready', '$readyCount', const Color(0xFF16A34A), _selectedKpiFilter == 'READY', () {
+                setState(() {
+                  _selectedKpiFilter = _selectedKpiFilter == 'READY' ? 'ALL' : 'READY';
+                  _jobStatusFilter = 'ALL';
+                });
+              }),
+            ],
           ),
         ),
+
+        // 2. SEARCH & SORT BAR
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFCBD5E1)),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4, offset: const Offset(0, 1)),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: _jobSearchCtrl,
+                    onChanged: (v) => setState(() => _jobSearch = v),
+                    decoration: InputDecoration(
+                      hintText: 'Search plate, customer, phone, job #...',
+                      hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                      prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF0F4C81)),
+                      suffixIcon: _jobSearch.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _jobSearchCtrl.clear();
+                                setState(() => _jobSearch = '');
+                              },
+                            )
+                          : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Sort & Filter Sheet Button
+              InkWell(
+                onTap: _showJobsFilterSheet,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  height: 44,
+                  width: 44,
+                  decoration: BoxDecoration(
+                    color: hasActiveFilter ? const Color(0xFF0F4C81) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: hasActiveFilter ? const Color(0xFF0F4C81) : const Color(0xFFCBD5E1)),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4, offset: const Offset(0, 1)),
+                    ],
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(
+                        Icons.tune,
+                        size: 20,
+                        color: hasActiveFilter ? Colors.white : const Color(0xFF0F4C81),
+                      ),
+                      if (hasActiveFilter)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF38BDF8),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 3. HORIZONTAL STAGE FILTER CHIPS (7-Stage Navigation)
+        Container(
+          height: 38,
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            children: [
+              _jobStageChip('ALL', 'All ($total)'),
+              _jobStageChip('BOOKED', 'Checked-In (${_countStatus("BOOKED")})'),
+              _jobStageChip('INSPECTION', 'Inspection (${_countStatus("INSPECTION")})'),
+              _jobStageChip('AWAITING_APPROVAL', 'Awaiting OK (${_countStatus("AWAITING_APPROVAL")})'),
+              _jobStageChip('IN_PROGRESS', 'In Repair (${_countStatus("IN_PROGRESS")})'),
+              _jobStageChip('WAITING', 'Waiting Parts (${_countStatus("WAITING")})'),
+              _jobStageChip('QUALITY_CHECK', 'QC (${_countStatus("QUALITY_CHECK")})'),
+              _jobStageChip('READY', 'Ready (${_countStatus("READY")})'),
+              _jobStageChip('COMPLETED', 'Delivered (${_countStatus("COMPLETED")})'),
+            ],
+          ),
+        ),
+
+        // 4. ACTIVE FILTERS PILL BANNER
+        if (hasActiveFilter)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 2, 14, 4),
+            child: Row(
+              children: [
+                const Icon(Icons.filter_alt, size: 14, color: Color(0xFF2563EB)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Active Filter: ${_selectedKpiFilter != "ALL" ? "KPI: $_selectedKpiFilter \u2022 " : ""}${_jobBayFilter != "ALL" ? "Bay: $_jobBayFilter \u2022 " : ""}Sort: $_jobSortBy',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                InkWell(
+                  onTap: () => setState(() {
+                    _jobBayFilter = 'ALL';
+                    _jobSortBy = 'NEWEST';
+                    _selectedKpiFilter = 'ALL';
+                  }),
+                  child: const Text('Reset', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red)),
+                ),
+              ],
+            ),
+          ),
+
+        // 5. JOB CARDS LIST
         Expanded(
           child: shown.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.directions_car_outlined, size: 64, color: Colors.grey),
-                      const SizedBox(height: 12),
-                      const Text('No job cards found.', style: TextStyle(fontSize: 16, color: Colors.grey)),
-                      const SizedBox(height: 12),
-                      ElevatedButton.icon(
-                        onPressed: () => setState(() => _selectedIndex = 2),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Create Intake Job Card'),
+                      const Icon(Icons.directions_car_outlined, size: 54, color: Colors.grey),
+                      const SizedBox(height: 10),
+                      Text(
+                        _jobSearch.isNotEmpty || _jobStatusFilter != 'ALL' || hasActiveFilter
+                            ? 'No job cards match your filter criteria.'
+                            : 'No job cards found in the system.',
+                        style: const TextStyle(fontSize: 15, color: Colors.black54, fontWeight: FontWeight.w500),
                       ),
+                      const SizedBox(height: 12),
+                      if (_jobSearch.isNotEmpty || _jobStatusFilter != 'ALL' || hasActiveFilter)
+                        TextButton.icon(
+                          onPressed: () {
+                            _jobSearchCtrl.clear();
+                            setState(() {
+                              _jobSearch = '';
+                              _jobStatusFilter = 'ALL';
+                              _jobBayFilter = 'ALL';
+                              _jobSortBy = 'NEWEST';
+                              _selectedKpiFilter = 'ALL';
+                            });
+                          },
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: const Text('Reset All Filters'),
+                        )
+                      else
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
+                          onPressed: () => setState(() => _selectedIndex = 2),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Create Intake Job Card'),
+                        ),
                     ],
                   ),
                 )
               : RefreshIndicator(
                   onRefresh: _fetchJobs,
                   child: ListView.builder(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 24),
                     itemCount: shown.length,
                     itemBuilder: (_, i) => _jobCard(shown[i]),
                   ),
                 ),
         ),
       ],
+    );
+  }
+
+  int _countStatus(String s) => _jobs.where((j) => j['status'] == s).length;
+
+  Widget _kpiMetricCard(String title, String count, Color color, bool selected, VoidCallback onTap) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+          decoration: BoxDecoration(
+            color: selected ? color : color.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: selected ? color : color.withOpacity(0.2)),
+          ),
+          child: Column(
+            children: [
+              Text(
+                count,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: selected ? Colors.white : color,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : const Color(0xFF475569),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _jobStageChip(String key, String label) {
+    final selected = _jobStatusFilter == key;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: FilterChip(
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+            color: selected ? const Color(0xFF0F4C81) : const Color(0xFF475569),
+          ),
+        ),
+        selected: selected,
+        backgroundColor: Colors.white,
+        selectedColor: const Color(0xFFDBEAFE),
+        side: BorderSide(color: selected ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+        onSelected: (_) => setState(() {
+          _jobStatusFilter = key;
+          _selectedKpiFilter = 'ALL';
+        }),
+      ),
     );
   }
 
@@ -1831,7 +2864,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       Text(
-                        'Workshop Bay â€¢ Assigned Jobs (${mine.length})',
+                        'Workshop Bay \u2022 Assigned Jobs (${mine.length})',
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
                       ),
                     ],
@@ -2614,9 +3647,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               controller: scroll,
               padding: const EdgeInsets.all(16),
               children: [
-                Text('${job['jobNumber'] ?? 'Job Card'} â€¢ ${job['vehicle']?['registrationNo'] ?? ''}',
+                Text('${job['jobNumber'] ?? 'Job Card'} \u2022 ${job['vehicle']?['registrationNo'] ?? ''}',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                Text('${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} â€¢ ${job['customer']?['name'] ?? ''}',
+                Text('${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} \u2022 ${job['customer']?['name'] ?? ''}',
                     style: const TextStyle(color: Colors.black54)),
                 const SizedBox(height: 4),
                 Text('Work requested: ${job['workRequested'] ?? '-'}'),
@@ -3269,11 +4302,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                           child: Icon(Icons.event_available, color: Colors.white, size: 18),
                         ),
                         title: Text(
-                          '${appt['registrationNo'] ?? 'Vehicle'} â€¢ ${appt['customerName'] ?? ''}',
+                          '${appt['registrationNo'] ?? 'Vehicle'} \u2022 ${appt['customerName'] ?? ''}',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         subtitle: Text(
-                          'Service: ${appt['serviceType'] ?? '-'}\nBay: ${appt['bayNumber'] ?? 'Bay 1'} â€¢ Status: $status',
+                          'Service: ${appt['serviceType'] ?? '-'}\nBay: ${appt['bayNumber'] ?? 'Bay 1'} \u2022 Status: $status',
                         ),
                         isThreeLine: true,
                         trailing: TextButton(

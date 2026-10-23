@@ -823,7 +823,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       const Divider(),
                       const SizedBox(height: 8),
                       const Text(
-                        '360Â° Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
+                        '360\u00B0 Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
                       ),
                       const SizedBox(height: 8),
@@ -1042,7 +1042,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               title: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(child: Text('Job Card $jobNo â€” ${customer['name'] ?? ''}')),
+                  Expanded(child: Text('Job Card $jobNo \u2014 ${customer['name'] ?? ''}')),
                   if (job['isWarranty'] == true)
                     Padding(
                       padding: const EdgeInsets.only(right: 8.0),
@@ -1087,8 +1087,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   const Text('WORKSHOP ASSIGNMENT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   const SizedBox(height: 6),
                                   Text('Service: ${job['workRequested'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  â€¢  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
-                                  Text('Priority: ${job['priority'] ?? 'Medium'} â€¢ Due: ${_formatDateShort(job['dueDate'])}'),
+                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  \u2022  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
+                                  Text('Priority: ${job['priority'] ?? 'Medium'} \u2022 Due: ${_formatDateShort(job['dueDate'])}'),
                                 ],
                               ),
                             ),
@@ -1100,8 +1100,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   const SizedBox(height: 6),
                                   Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
                                   Text('Make/Model: ${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'),
-                                  Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  â€¢  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
-                                  Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  â€¢  QC Passed: ${qcPassed ? 'YES âœ“' : 'Pending'}'),
+                                  Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  \u2022  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
+                                  Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  \u2022  QC Passed: ${qcPassed ? 'YES \u2713' : 'Pending'}'),
                                   if (obdCodes.isNotEmpty)
                                     Text('OBD-II Codes: $obdCodes', style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600)),
                                 ],
@@ -1199,7 +1199,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           return Card(
                             child: ListTile(
                               title: Text('Total: KSH ${(est['total'] as num).toStringAsFixed(2)} (Incl. 16% VAT & ${est['discountRate']}% Discount)'),
-                              subtitle: Text('Status: ${est['status']} â€¢ Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
+                              subtitle: Text('Status: ${est['status']} \u2022 Subtotal: KSH ${(est['subtotal'] as num).toStringAsFixed(2)}'),
                             ),
                           );
                         }).toList(),
@@ -1765,7 +1765,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             return AlertDialog(
-              title: Text('Stock Ledger: ${part['partNumber']} â€” ${part['description']}'),
+              title: Text('Stock Ledger: ${part['partNumber']} \u2014 ${part['description']}'),
               content: SizedBox(
                 width: 520,
                 child: SingleChildScrollView(
@@ -1833,9 +1833,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ...movements.take(5).map((m) => ListTile(
                               dense: true,
                               contentPadding: EdgeInsets.zero,
-                              title: Text('${m['type']}: ${m['quantity']} units  â€¢  Ref: ${m['reference'] ?? '-'}',
+                              title: Text('${m['type']}: ${m['quantity']} units  \u2022  Ref: ${m['reference'] ?? '-'}',
                                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                              subtitle: Text('Supplier: ${m['supplierName'] ?? '-'}  â€¢  ${_formatDateShort(m['createdAt'])}',
+                              subtitle: Text('Supplier: ${m['supplierName'] ?? '-'}  \u2022  ${_formatDateShort(m['createdAt'])}',
                                   style: const TextStyle(fontSize: 11)),
                             )),
                       ],
@@ -1892,7 +1892,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             return AlertDialog(
-              title: Text('Record Payment / Deposit â€” INV-${inv['id'].toString().substring(0, 6).toUpperCase()}'),
+              title: Text('Record Payment / Deposit \u2014 INV-${inv['id'].toString().substring(0, 6).toUpperCase()}'),
               content: SizedBox(
                 width: 440,
                 child: Column(
@@ -1900,7 +1900,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Invoice Total: KSH ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Already Paid: KSH ${alreadyPaid.toStringAsFixed(2)}  â€¢  Balance Due: KSH ${remaining.toStringAsFixed(2)}',
+                    Text('Already Paid: KSH ${alreadyPaid.toStringAsFixed(2)}  \u2022  Balance Due: KSH ${remaining.toStringAsFixed(2)}',
                         style: const TextStyle(color: Colors.blueGrey, fontSize: 13)),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
@@ -1921,7 +1921,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       controller: amountCtrl,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'Amount Received Now (KSH) â€” Enter Deposit or Full Balance',
+                        labelText: 'Amount Received Now (KSH) \u2014 Enter Deposit or Full Balance',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -1977,7 +1977,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Vehicle & Service History â€” ${customer['name'] ?? ''}'),
+              Text('Vehicle & Service History \u2014 ${customer['name'] ?? ''}'),
               OutlinedButton.icon(
                 onPressed: () {
                   final firstReg = vehicles.isNotEmpty ? vehicles.first['registrationNo'] : 'your vehicle';
@@ -1995,7 +1995,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Phone: ${customer['phone'] ?? '-'}  â€¢  Registered Vehicles: ${vehicles.length}  â€¢  Total Visits: ${jobs.length}',
+                  Text('Phone: ${customer['phone'] ?? '-'}  \u2022  Registered Vehicles: ${vehicles.length}  \u2022  Total Visits: ${jobs.length}',
                       style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.w600)),
                   const Divider(height: 24),
                   if (jobs.isEmpty)
@@ -2008,14 +2008,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
                           title: Text(
-                            '${j['jobNumber'] ?? 'Job'} â€” ${v['registrationNo'] ?? ''} (${v['make'] ?? ''} ${v['model'] ?? ''})',
+                            '${j['jobNumber'] ?? 'Job'} \u2014 ${v['registrationNo'] ?? ''} (${v['make'] ?? ''} ${v['model'] ?? ''})',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Work: ${j['workRequested'] ?? '-'}  â€¢  Technician: ${j['technician'] ?? '-'}'),
-                              Text('Odometer: ${j['odometer'] ?? '-'} km  â€¢  Date: ${_formatDateShort(j['createdAt'])}  â€¢  Estimates: ${ests.length}'),
+                              Text('Work: ${j['workRequested'] ?? '-'}  \u2022  Technician: ${j['technician'] ?? '-'}'),
+                              Text('Odometer: ${j['odometer'] ?? '-'} km  \u2022  Date: ${_formatDateShort(j['createdAt'])}  \u2022  Estimates: ${ests.length}'),
                             ],
                           ),
                           trailing: Chip(
@@ -2562,7 +2562,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         _statCard(
           'Total Revenue',
           'KSH ${rev.toStringAsFixed(2)}',
-          'â†‘ Paid & Approved',
+          '\u2191 Paid & Approved',
           Colors.green,
           Icons.show_chart,
           Colors.blue,
@@ -2575,7 +2575,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         _statCard(
           'Active Jobs',
           '$activeJobs',
-          'â†‘ Total Jobs: ${_dashboard['totalJobsCount'] ?? 0}',
+          '\u2191 Total Jobs: ${_dashboard['totalJobsCount'] ?? 0}',
           Colors.green,
           Icons.bar_chart,
           Colors.blue,
@@ -3235,8 +3235,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 items: const [
                                   DropdownMenuItem(value: 'DRAFT', child: Text('DRAFT')),
                                   DropdownMenuItem(value: 'SENT', child: Text('SENT TO CUSTOMER')),
-                                  DropdownMenuItem(value: 'APPROVED', child: Text('APPROVED âœ“')),
-                                  DropdownMenuItem(value: 'REJECTED', child: Text('REJECTED âœ—')),
+                                  DropdownMenuItem(value: 'APPROVED', child: Text('APPROVED \u2713')),
+                                  DropdownMenuItem(value: 'REJECTED', child: Text('REJECTED \u2717')),
                                 ],
                                 onChanged: (newSt) async {
                                   if (newSt == null) return;
@@ -3270,7 +3270,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
                                   )
                                 else
-                                  const Text('Invoiced âœ“', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                                  const Text('Invoiced \u2713', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                                 const SizedBox(width: 8),
                                 OutlinedButton.icon(
                                   onPressed: () => InvoicePdfService.showPreviewModal(
@@ -3422,7 +3422,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               child: const Text('Full M-Pesa', style: TextStyle(fontSize: 12)),
                             ),
                           ] else
-                            const Text('Paid in Full âœ“', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                            const Text('Paid in Full \u2713', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -3581,7 +3581,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 ),
                                 items: const [
                                   DropdownMenuItem(value: 'SCHEDULED', child: Text('SCHEDULED')),
-                                  DropdownMenuItem(value: 'ARRIVED', child: Text('ARRIVED âœ“')),
+                                  DropdownMenuItem(value: 'ARRIVED', child: Text('ARRIVED \u2713')),
                                   DropdownMenuItem(value: 'COMPLETED', child: Text('COMPLETED')),
                                   DropdownMenuItem(value: 'MISSED', child: Text('MISSED / NO-SHOW')),
                                 ],
@@ -4416,12 +4416,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 children: [
                   Text('Workshop Role-Based Access Control (RBAC) Matrix', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   Divider(height: 20),
-                  Text('â€¢ Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('â€¢ Service Advisor: Create Job Cards, 360Â° Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('â€¢ Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('â€¢ Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('â€¢ Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('â€¢ Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Service Advisor: Create Job Cards, 360\u00B0 Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  Text('\u2022 Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
                 ],
               ),
             ),
@@ -4587,14 +4587,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   _pnlCard(
                     'Total Stock Items',
                     '${balances.length} items',
-                    '$partsCount Parts â€¢ $consumablesCount Supplies â€¢ $toolsCount Tools',
+                    '$partsCount Parts \u2022 $consumablesCount Supplies \u2022 $toolsCount Tools',
                     Colors.blue.shade800,
                     Colors.blue.shade50,
                   ),
                   _pnlCard(
                     'Issued / Dispatched Items',
                     '$totalIssuedUnits units',
-                    '${partsByJob.length} repair jobs â€¢ ${consumablesByDept.length} departments',
+                    '${partsByJob.length} repair jobs \u2022 ${consumablesByDept.length} departments',
                     Colors.teal.shade800,
                     Colors.teal.shade50,
                   ),
@@ -5308,7 +5308,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               _summaryRow('Inventory Stock Valuation (At Buying Cost)', 'KSH ${stockValCost.toStringAsFixed(2)}'),
               _summaryRow('Inventory Stock Valuation (At Retail Selling Price)', 'KSH ${stockValRetail.toStringAsFixed(2)}'),
               _summaryRow('Projected Inventory Gross Margin', 'KSH ${(stockValRetail - stockValCost).toStringAsFixed(2)}'),
-              _summaryRow('Today / This Week / This Month Jobs', '${_dashboard['todayJobsCount'] ?? 0} Today â€¢ ${_dashboard['weekJobsCount'] ?? 0} Week â€¢ ${_dashboard['monthJobsCount'] ?? 0} Month'),
+              _summaryRow('Today / This Week / This Month Jobs', '${_dashboard['todayJobsCount'] ?? 0} Today \u2022 ${_dashboard['weekJobsCount'] ?? 0} Week \u2022 ${_dashboard['monthJobsCount'] ?? 0} Month'),
             ],
           ),
         ),
@@ -5407,8 +5407,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             dense: true,
                             contentPadding: EdgeInsets.zero,
                             leading: const CircleAvatar(backgroundColor: Color(0xFFEFF6FF), child: Icon(Icons.directions_car, size: 16, color: Color(0xFF1D4ED8))),
-                            title: Text('${v['registrationNo']} â€” ${v['makeModel']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text('Owner: ${v['customerName']} â€¢ Last: ${v['lastService']}'),
+                            title: Text('${v['registrationNo']} \u2014 ${v['makeModel']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('Owner: ${v['customerName']} \u2022 Last: ${v['lastService']}'),
                             trailing: Chip(label: Text('${v['jobsCount']} Visits', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
                           )),
                   ],
@@ -5647,10 +5647,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                       title: Text(
-                        '${part['partNumber'] ?? 'Part'} â€¢ ${part['description'] ?? ''} (${isOut ? '-' : '+'}${m['quantity'] ?? 0})',
+                        '${part['partNumber'] ?? 'Part'} \u2022 ${part['description'] ?? ''} (${isOut ? '-' : '+'}${m['quantity'] ?? 0})',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      subtitle: Text('Reason: ${m['reason'] ?? '-'} â€¢ Date: ${_formatDate(m['createdAt'])}'),
+                      subtitle: Text('Reason: ${m['reason'] ?? '-'} \u2022 Date: ${_formatDate(m['createdAt'])}'),
                       trailing: Chip(
                         label: Text(type, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         backgroundColor: isOut ? Colors.orange.shade50 : Colors.green.shade50,
