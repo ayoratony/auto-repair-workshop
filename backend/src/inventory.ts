@@ -362,35 +362,60 @@ export function createInventoryRouter(
     });
   }));
 
-  // Direct departmental dispatch of workshop consumables (walk-up issue)
+  // Direct dispatch of workshop consumables (walk-up issue to an individual person or department)
   router.post('/consume', route(async (a, req) => {
     require_(a, 'stock:issue', 'issue operational consumables');
-    const { itemId, quantity, department, issuedTo, purpose, notes } = req.body;
+    const { itemId, quantity, department, issuedTo, purpose, notes, destinationType, unpackFromBox, piecesPerBox } = req.body;
     if (!text(itemId)) throw new HttpError(400, 'itemId is required');
     const qty = posInt(quantity, 'quantity');
-    const dept = text(department) || 'Workshop';
-    const recipient = text(issuedTo) || a.name;
-    const reason = text(purpose) || `Operational supplies for ${dept}`;
+    const isIndividual = destinationType === 'INDIVIDUAL' || !text(department) || department === 'Individual Issue';
+    const dept = isIndividual ? 'Individual Issue' : (text(department) || 'Workshop');
+    const recipient = text(issuedTo) || (isIndividual ? 'Technician' : dept);
+    const reason = text(purpose) || (isIndividual ? `Personal issue to ${recipient}` : `Operational supplies for ${dept}`);
 
     return txn(async (tx) => {
-      const info = await itemInfo(tx, a.tenantId, 'CONSUMABLE', String(itemId));
-      await moveStock(tx, a.tenantId, 'CONSUMABLE', String(itemId), -qty);
+      const existing = await tx.inventoryItem.findFirst({ where: { id: String(itemId), tenantId: a.tenantId } });
+      if (!existing) throw new HttpError(404, 'Consumable item not found');
+
+      let unitCost = existing.unitCost;
+      let finalItem = existing;
+
+      // If item was stored in boxes/packs and storekeeper is issuing loose pieces:
+      if (Boolean(unpackFromBox) && piecesPerBox && Number(piecesPerBox) > 1 && ['box', 'pack', 'packet', 'drum'].includes(existing.unit.toLowerCase())) {
+        const factor = posInt(piecesPerBox, 'piecesPerBox');
+        const totalPieces = existing.quantityOnHand * factor;
+        if (qty > totalPieces) throw new HttpError(409, `Only ${totalPieces} pieces available in stock`);
+        unitCost = Number((existing.unitCost / factor).toFixed(2));
+        finalItem = await tx.inventoryItem.update({
+          where: { id: existing.id },
+          data: {
+            unit: 'pcs',
+            quantityOnHand: totalPieces - qty,
+            unitCost,
+          },
+        });
+      } else {
+        if (qty > existing.quantityOnHand) throw new HttpError(409, `Only ${existing.quantityOnHand} ${existing.unit} available in stock`);
+        await moveStock(tx, a.tenantId, 'CONSUMABLE', String(itemId), -qty);
+        finalItem = (await tx.inventoryItem.findUnique({ where: { id: String(itemId) } }))!;
+      }
+
       const entry = await ledger(tx, a, {
         type: 'ISSUE',
         category: 'CONSUMABLE',
         inventoryItemId: String(itemId),
-        itemName: info.name,
+        itemName: finalItem.name,
         quantity: -qty,
         quantityDetail: qty,
-        unitCost: info.cost,
+        unitCost,
         department: dept,
         recipientName: recipient,
         reason,
-        notes: text(notes),
-        location: info.location,
+        notes: text(notes) || (isIndividual ? `Direct personal issue to ${recipient}` : undefined),
+        location: finalItem.location,
       });
-      const updated = await tx.inventoryItem.findUnique({ where: { id: String(itemId) } });
-      return { item: updated, transaction: entry };
+
+      return { item: finalItem, transaction: entry };
     });
   }));
 
@@ -910,8 +935,10 @@ export function createInventoryRouter(
 
     const deptMap = new Map<string, any>();
     for (const t of tx.filter((x) => x.category === 'CONSUMABLE' && x.type === 'ISSUE')) {
-      const key = `${t.department || 'Workshop'}|${t.inventoryItemId}`;
-      const row = deptMap.get(key) || { department: t.department || 'Workshop', item: t.itemName, quantity: 0, cost: 0 };
+      const isIndiv = t.department === 'Individual Issue' || t.department === 'Individual' || !t.department;
+      const targetLabel = isIndiv ? `Individual: ${t.recipientName || 'Technician'}` : (t.department || 'Workshop');
+      const key = `${targetLabel}|${t.inventoryItemId}`;
+      const row = deptMap.get(key) || { department: targetLabel, recipientName: t.recipientName || 'Technician', item: t.itemName, quantity: 0, cost: 0 };
       row.quantity += t.quantityDetail; row.cost += t.quantityDetail * t.unitCost;
       deptMap.set(key, row);
     }

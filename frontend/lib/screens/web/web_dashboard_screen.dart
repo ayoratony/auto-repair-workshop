@@ -4039,7 +4039,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     onSelected: (_) => setState(() => _issuedSubFilter = 'PARTS_JOB'),
                   ),
                   ChoiceChip(
-                    label: Text('Consumables by Dept (${consumablesByDept.length})'),
+                    label: Text('Consumables & Personal Issues (${consumablesByDept.length})'),
                     selected: _issuedSubFilter == 'CONSUMABLES_DEPT',
                     onSelected: (_) => setState(() => _issuedSubFilter = 'CONSUMABLES_DEPT'),
                   ),
@@ -4100,23 +4100,42 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 scrollDirection: Axis.horizontal,
                 child: DataTable(
                   columns: [
-                    const DataColumn(label: Text('Receiving Department', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Recipient (Dept / Person)', style: TextStyle(fontWeight: FontWeight.bold))),
                     const DataColumn(label: Text('Consumable Item', style: TextStyle(fontWeight: FontWeight.bold))),
-                    const DataColumn(label: Text('Quantity Consumed', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Quantity Issued', style: TextStyle(fontWeight: FontWeight.bold))),
                     if (_activeUserRole == 'INVENTORY_MANAGER')
                       const DataColumn(label: Text('Cost Allocated', style: TextStyle(fontWeight: FontWeight.bold))),
-                    const DataColumn(label: Text('Classification', style: TextStyle(fontWeight: FontWeight.bold))),
+                    const DataColumn(label: Text('Issuance Type', style: TextStyle(fontWeight: FontWeight.bold))),
                   ],
                   rows: consumablesByDept.map((c) {
                     final q = (c['quantity'] as num?)?.toInt() ?? 0;
+                    final target = (c['department'] ?? 'Workshop').toString();
+                    final isIndividual = target.toLowerCase().startsWith('individual');
                     return DataRow(
                       cells: [
-                        DataCell(Text(c['department'] ?? 'Workshop', style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(isIndividual ? Icons.person : Icons.business, size: 16, color: isIndividual ? Colors.purple : Colors.teal),
+                            const SizedBox(width: 6),
+                            Text(target, style: TextStyle(fontWeight: FontWeight.bold, color: isIndividual ? Colors.purple.shade800 : Colors.black87)),
+                          ],
+                        )),
                         DataCell(Text(c['item'] ?? 'Consumable', style: const TextStyle(fontWeight: FontWeight.w600))),
-                        DataCell(Text('$q units', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal))),
+                        DataCell(Text('$q units', style: TextStyle(fontWeight: FontWeight.bold, color: isIndividual ? Colors.purple : Colors.teal))),
                         if (_activeUserRole == 'INVENTORY_MANAGER')
                           DataCell(Text('KSH ${((c['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}')),
-                        const DataCell(Chip(label: Text('INTERNAL USAGE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))),
+                        DataCell(Chip(
+                          backgroundColor: isIndividual ? Colors.purple.shade50 : Colors.teal.shade50,
+                          label: Text(
+                            isIndividual ? 'PERSONAL ISSUE' : 'DEPARTMENT USAGE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: isIndividual ? Colors.purple.shade900 : Colors.teal.shade900,
+                            ),
+                          ),
+                        )),
                       ],
                     );
                   }).toList(),

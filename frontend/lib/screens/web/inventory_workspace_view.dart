@@ -1177,13 +1177,339 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
     final employeeCtrl = TextEditingController(text: 'Kamau Tech');
     final purposeCtrl = TextEditingController(text: 'Daily workshop operations');
     final notesCtrl = TextEditingController();
+    final piecesPerBoxCtrl = TextEditingController(text: '100');
+    String destinationType = 'INDIVIDUAL'; // 'INDIVIDUAL' or 'DEPARTMENT'
     String department = 'Mechanical Workshop';
+
+    final currentUnit = (item['unit'] ?? 'pcs').toString().toLowerCase();
+    final isBoxOrPack = ['box', 'pack', 'packet', 'drum', 'carton', 'tin'].contains(currentUnit);
+    bool unpackFromBox = isBoxOrPack;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          final int pPerBox = int.tryParse(piecesPerBoxCtrl.text.trim()) ?? 1;
+          final int onHand = (item['quantityOnHand'] as num?)?.toInt() ?? 0;
+          final int maxPieces = unpackFromBox ? onHand * pPerBox : onHand;
+
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.outbox, color: Color(0xFF0F4C81)),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Issue Supply: ${item['name']}', overflow: TextOverflow.ellipsis)),
+              ],
+            ),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('SKU: ${item['sku']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text('Stock: $onHand ${item['unit'] ?? 'units'}',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                            ],
+                          ),
+                          if (unpackFromBox && isBoxOrPack) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Total Pieces Available:', style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
+                                Text('$maxPieces pcs', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.indigo)),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    const Text('Destination Target:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setDlg(() => destinationType = 'INDIVIDUAL'),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: destinationType == 'INDIVIDUAL' ? Colors.purple.shade50 : Colors.grey.shade100,
+                                border: Border.all(
+                                  color: destinationType == 'INDIVIDUAL' ? Colors.purple : Colors.grey.shade300,
+                                  width: destinationType == 'INDIVIDUAL' ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.person, size: 18, color: destinationType == 'INDIVIDUAL' ? Colors.purple : Colors.grey),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Individual Person',
+                                    style: TextStyle(
+                                      fontWeight: destinationType == 'INDIVIDUAL' ? FontWeight.bold : FontWeight.normal,
+                                      color: destinationType == 'INDIVIDUAL' ? Colors.purple.shade900 : Colors.black87,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setDlg(() => destinationType = 'DEPARTMENT'),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: destinationType == 'DEPARTMENT' ? Colors.teal.shade50 : Colors.grey.shade100,
+                                border: Border.all(
+                                  color: destinationType == 'DEPARTMENT' ? Colors.teal : Colors.grey.shade300,
+                                  width: destinationType == 'DEPARTMENT' ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.business, size: 18, color: destinationType == 'DEPARTMENT' ? Colors.teal : Colors.grey),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Department / Bay',
+                                    style: TextStyle(
+                                      fontWeight: destinationType == 'DEPARTMENT' ? FontWeight.bold : FontWeight.normal,
+                                      color: destinationType == 'DEPARTMENT' ? Colors.teal.shade900 : Colors.black87,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    if (destinationType == 'INDIVIDUAL') ...[
+                      TextField(
+                        controller: employeeCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Receiving Employee / Technician * (e.g. Kamau Tech)',
+                          prefixIcon: Icon(Icons.person_pin, size: 20),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Direct personal issue. Debited to this technician\'s personal custody & reports.',
+                        style: TextStyle(fontSize: 11, color: Colors.purple.shade700, fontStyle: FontStyle.italic),
+                      ),
+                    ] else ...[
+                      DropdownButtonFormField<String>(
+                        value: department,
+                        decoration: const InputDecoration(labelText: 'Receiving Department *', border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem(value: 'Mechanical Workshop', child: Text('Mechanical Workshop')),
+                          DropdownMenuItem(value: 'Bodyshop & Paint', child: Text('Bodyshop & Paint')),
+                          DropdownMenuItem(value: 'Auto Electrical Bay', child: Text('Auto Electrical Bay')),
+                          DropdownMenuItem(value: 'Car Wash & Detailing', child: Text('Car Wash & Detailing')),
+                          DropdownMenuItem(value: 'Administrative Office', child: Text('Administrative Office')),
+                        ],
+                        onChanged: (v) => setDlg(() => department = v ?? 'Mechanical Workshop'),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: employeeCtrl,
+                        decoration: const InputDecoration(labelText: 'Issued to Lead / Supervisor (Optional)', border: OutlineInputBorder()),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+
+                    if (isBoxOrPack) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.content_cut, size: 18, color: Colors.brown),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text('Give in Individual Pieces (pcs)?', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                ),
+                                Switch(
+                                  value: unpackFromBox,
+                                  onChanged: (val) => setDlg(() => unpackFromBox = val),
+                                ),
+                              ],
+                            ),
+                            if (unpackFromBox) ...[
+                              const Divider(height: 12),
+                              Text(
+                                'The supply will be opened and converted into loose pieces for individual distribution.',
+                                style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: piecesPerBoxCtrl,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setDlg(() {}),
+                                decoration: InputDecoration(
+                                  labelText: 'Pieces per ${item['unit']} (e.g. 100 per box) *',
+                                  isDense: true,
+                                  border: const OutlineInputBorder(),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+
+                    TextField(
+                      controller: qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: unpackFromBox && isBoxOrPack
+                            ? 'Quantity to Issue in Loose Pieces (pcs) *'
+                            : 'Quantity to Issue (${item['unit'] ?? 'units'}) *',
+                        prefixIcon: const Icon(Icons.confirmation_number_outlined, size: 20),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    TextField(
+                      controller: purposeCtrl,
+                      decoration: const InputDecoration(labelText: 'Purpose / Work Reference *', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+
+                    TextField(
+                      controller: notesCtrl,
+                      decoration: const InputDecoration(labelText: 'Additional Notes (Optional)', border: OutlineInputBorder()),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F4C81),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                ),
+                onPressed: () async {
+                  final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                  if (qty <= 0) {
+                    _toast('Enter a valid quantity', color: Colors.orange);
+                    return;
+                  }
+                  if (destinationType == 'INDIVIDUAL' && employeeCtrl.text.trim().isEmpty) {
+                    _toast('Please enter the name of the recipient technician', color: Colors.orange);
+                    return;
+                  }
+
+                  final int factor = int.tryParse(piecesPerBoxCtrl.text.trim()) ?? 1;
+                  if (unpackFromBox && isBoxOrPack && factor <= 0) {
+                    _toast('Enter valid pieces per ${item['unit']}', color: Colors.orange);
+                    return;
+                  }
+
+                  final int avail = unpackFromBox && isBoxOrPack ? onHand * factor : onHand;
+                  if (qty > avail) {
+                    _toast('Cannot issue more than available stock ($avail ${unpackFromBox ? "pcs" : item['unit']})', color: Colors.red);
+                    return;
+                  }
+
+                  try {
+                    final res = await http.post(
+                      Uri.parse('$_baseUrl/inventory/consume'),
+                      headers: _headers,
+                      body: json.encode({
+                        'itemId': item['id'],
+                        'quantity': qty,
+                        'destinationType': destinationType,
+                        'department': destinationType == 'INDIVIDUAL' ? 'Individual Issue' : department,
+                        'issuedTo': employeeCtrl.text.trim(),
+                        'purpose': purposeCtrl.text.trim(),
+                        'notes': notesCtrl.text.trim(),
+                        'unpackFromBox': unpackFromBox && isBoxOrPack,
+                        'piecesPerBox': factor,
+                      }),
+                    );
+                    if (res.statusCode == 200) {
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      final recipientDisplay = destinationType == 'INDIVIDUAL' ? employeeCtrl.text.trim() : department;
+                      final unitDisplay = unpackFromBox && isBoxOrPack ? 'pcs' : (item['unit'] ?? 'units');
+                      _toast('Issued $qty $unitDisplay directly to $recipientDisplay! Logged in reports.', color: Colors.green);
+                      _fetchAllInventoryData();
+                      widget.onDataChanged();
+                    } else {
+                      final err = json.decode(res.body)['error'] ?? 'Dispatch failed';
+                      _toast(err, color: Colors.red);
+                    }
+                  } catch (e) {
+                    _toast('Error: $e', color: Colors.red);
+                  }
+                },
+                child: const Text('Confirm Issuance'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showAddConsumableDialog() {
+    final skuCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+    String selectedUnit = 'pcs';
+    final customUnitCtrl = TextEditingController();
+    final costCtrl = TextEditingController(text: '0');
+    final qtyCtrl = TextEditingController(text: '10');
+    final locCtrl = TextEditingController(text: 'Supply Locker');
+
+    final commonUnits = ['pcs', 'pair', 'bottle', 'L', 'box', 'pack', 'roll', 'set', 'Other'];
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          title: Text('Issue Consumable: ${item['name']}'),
+          title: const Text('Add Internal Workshop Supply / Consumable'),
           content: SizedBox(
             width: 440,
             child: SingleChildScrollView(
@@ -1191,57 +1517,54 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('SKU: ${item['sku']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text('Available: ${item['quantityOnHand']} ${item['unit'] ?? 'units'}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: qtyCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: 'Quantity to Issue (${item['unit'] ?? 'units'}) *',
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
+                  TextField(controller: skuCtrl, decoration: const InputDecoration(labelText: 'SKU * (e.g. GLOVE-01)', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Supply Name * (e.g. Nitrile Gloves)', border: OutlineInputBorder())),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: department,
-                    decoration: const InputDecoration(labelText: 'Receiving Department *', border: OutlineInputBorder()),
-                    items: const [
-                      DropdownMenuItem(value: 'Mechanical Workshop', child: Text('Mechanical Workshop')),
-                      DropdownMenuItem(value: 'Bodyshop & Paint', child: Text('Bodyshop & Paint')),
-                      DropdownMenuItem(value: 'Auto Electrical Bay', child: Text('Auto Electrical Bay')),
-                      DropdownMenuItem(value: 'Car Wash & Detailing', child: Text('Car Wash & Detailing')),
-                      DropdownMenuItem(value: 'Administrative Office', child: Text('Administrative Office')),
+                    value: selectedUnit,
+                    decoration: const InputDecoration(labelText: 'Counting Unit *', border: OutlineInputBorder()),
+                    items: commonUnits.map((u) {
+                      String label = u;
+                      if (u == 'pcs') label = 'Pieces (pcs) - Individual Units';
+                      if (u == 'pair') label = 'Pairs (pair) - e.g. Gloves, Shoes';
+                      if (u == 'bottle') label = 'Bottles / Cans (bottle)';
+                      if (u == 'L') label = 'Litres (L)';
+                      if (u == 'box') label = 'Box (box) - Bulk container';
+                      if (u == 'pack') label = 'Pack (pack) - Multi-pack';
+                      if (u == 'roll') label = 'Rolls (roll) - Tape, Wire';
+                      if (u == 'set') label = 'Sets (set)';
+                      if (u == 'Other') label = 'Other (Custom Unit)';
+                      return DropdownMenuItem(value: u, child: Text(label));
+                    }).toList(),
+                    onChanged: (v) => setDlg(() => selectedUnit = v ?? 'pcs'),
+                  ),
+                  if (selectedUnit == 'Other') ...[
+                    const SizedBox(height: 10),
+                    TextField(controller: customUnitCtrl, decoration: const InputDecoration(labelText: 'Custom Unit Name * (e.g. kg, metre)', border: OutlineInputBorder())),
+                  ],
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: costCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Unit Cost (KES)', border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: qtyCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Initial Quantity', border: OutlineInputBorder()),
+                        ),
+                      ),
                     ],
-                    onChanged: (v) => setDlg(() => department = v ?? 'Mechanical Workshop'),
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: employeeCtrl,
-                    decoration: const InputDecoration(labelText: 'Receiving Employee *', border: OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: purposeCtrl,
-                    decoration: const InputDecoration(labelText: 'Purpose / Work Reference *', border: OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: notesCtrl,
-                    decoration: const InputDecoration(labelText: 'Additional Notes', border: OutlineInputBorder()),
-                  ),
+                  TextField(controller: locCtrl, decoration: const InputDecoration(labelText: 'Storage Location', border: OutlineInputBorder())),
                 ],
               ),
             ),
@@ -1251,108 +1574,37 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
               onPressed: () async {
-                final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
-                if (qty <= 0) {
-                  _toast('Enter a valid quantity', color: Colors.orange);
+                if (skuCtrl.text.trim().isEmpty || nameCtrl.text.trim().isEmpty) {
+                  _toast('SKU and Name are required', color: Colors.orange);
                   return;
                 }
-                if (qty > (item['quantityOnHand'] ?? 0)) {
-                  _toast('Cannot issue more than available on-hand stock', color: Colors.red);
-                  return;
-                }
+                final finalUnit = selectedUnit == 'Other' ? (customUnitCtrl.text.trim().isNotEmpty ? customUnitCtrl.text.trim() : 'pcs') : selectedUnit;
                 final res = await http.post(
-                  Uri.parse('$_baseUrl/inventory/consume'),
+                  Uri.parse('$_baseUrl/inventory/items'),
                   headers: _headers,
                   body: json.encode({
-                    'itemId': item['id'],
-                    'quantity': qty,
-                    'department': department,
-                    'issuedTo': employeeCtrl.text.trim(),
-                    'purpose': purposeCtrl.text.trim(),
-                    'notes': notesCtrl.text.trim(),
+                    'sku': skuCtrl.text.trim(),
+                    'name': nameCtrl.text.trim(),
+                    'unit': finalUnit,
+                    'unitCost': double.tryParse(costCtrl.text.trim()) ?? 0,
+                    'quantity': int.tryParse(qtyCtrl.text.trim()) ?? 0,
+                    'location': locCtrl.text.trim(),
                   }),
                 );
-                if (res.statusCode == 200) {
+                if (res.statusCode == 200 || res.statusCode == 201) {
                   if (ctx.mounted) Navigator.pop(ctx);
-                  _toast('Consumable issued to $department! Logged in audit trail.', color: Colors.green);
+                  _toast('Consumable supply registered as "$finalUnit"!', color: Colors.green);
                   _fetchAllInventoryData();
                   widget.onDataChanged();
                 } else {
-                  final err = json.decode(res.body)['error'] ?? 'Dispatch failed';
+                  final err = json.decode(res.body)['error'] ?? 'Registration failed';
                   _toast(err, color: Colors.red);
                 }
               },
-              child: const Text('Confirm Dispatch'),
+              child: const Text('Save Supply'),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showAddConsumableDialog() {
-    final skuCtrl = TextEditingController();
-    final nameCtrl = TextEditingController();
-    final unitCtrl = TextEditingController(text: 'box');
-    final costCtrl = TextEditingController(text: '0');
-    final qtyCtrl = TextEditingController(text: '10');
-    final locCtrl = TextEditingController(text: 'Supply Locker');
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Internal Workshop Consumable'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: skuCtrl, decoration: const InputDecoration(labelText: 'SKU * (e.g. GLOVE-01)')),
-              const SizedBox(height: 8),
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Supply Name * (e.g. Nitrile Gloves)')),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: TextField(controller: unitCtrl, decoration: const InputDecoration(labelText: 'Unit (box, litre, pcs)'))),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextField(controller: costCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit Cost (KES)'))),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: TextField(controller: qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Initial Quantity'))),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextField(controller: locCtrl, decoration: const InputDecoration(labelText: 'Location'))),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (skuCtrl.text.trim().isEmpty || nameCtrl.text.trim().isEmpty) return;
-              await http.post(
-                Uri.parse('$_baseUrl/inventory/items'),
-                headers: _headers,
-                body: json.encode({
-                  'sku': skuCtrl.text.trim(),
-                  'name': nameCtrl.text.trim(),
-                  'unit': unitCtrl.text.trim(),
-                  'unitCost': double.tryParse(costCtrl.text.trim()) ?? 0,
-                  'quantity': int.tryParse(qtyCtrl.text.trim()) ?? 0,
-                  'location': locCtrl.text.trim(),
-                }),
-              );
-              if (ctx.mounted) Navigator.pop(ctx);
-              _toast('Consumable supply registered!');
-              _fetchAllInventoryData();
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }
