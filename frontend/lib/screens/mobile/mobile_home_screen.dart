@@ -24,7 +24,10 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   String _techName = 'All';
   List<String> _technicians = [];
   List<dynamic> _estimates = [];
+  Map<String, dynamic> _workshopSettings = {};
   String _jobSearch = '';
+  String _quoteSearch = '';
+  String _quoteStatusFilter = 'ALL';
 
   int _selectedIndex = 0;
   List<dynamic> _jobs = [];
@@ -88,6 +91,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           Uri.parse('$_baseUrl/inventory/requests'),
           headers: authHeaders,
         ),
+        http.get(Uri.parse('$_baseUrl/settings'), headers: authHeaders),
       ]);
       if (mounted) {
         setState(() {
@@ -101,6 +105,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 .toList();
           }
           if (results[4].statusCode == 200) _itemRequests = json.decode(results[4].body);
+          if (results[5].statusCode == 200) _workshopSettings = json.decode(results[5].body);
         });
       }
     } catch (_) {
@@ -727,69 +732,915 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     );
   }
 
-  Widget _buildQuotesView() {
-    if (_isLoadingJobs) return const Center(child: CircularProgressIndicator());
-    if (_estimates.isEmpty) {
-      return const Center(child: Text('No quotations yet.', style: TextStyle(color: Colors.grey)));
+  Future<void> _updateQuoteStatus(String estimateId, String newStatus) async {
+    try {
+      final res = await http.put(
+        Uri.parse('$_baseUrl/estimates/$estimateId/status'),
+        headers: AuthService.instance.authHeaders,
+        body: json.encode({'status': newStatus}),
+      );
+      if (res.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: newStatus == 'APPROVED' ? Colors.green : (newStatus == 'REJECTED' ? Colors.red : Colors.blue),
+              content: Text('Quotation status updated to $newStatus'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+        _fetchJobs();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text('Error updating status: $e')),
+        );
+      }
     }
+  }
+
+  void _showQuotePreviewModal(Map<String, dynamic> e) {
+    final jc = e['jobCard'];
+    final cust = jc?['customer'];
+    final veh = jc?['vehicle'];
+    final status = (e['status'] ?? 'DRAFT').toString().toUpperCase();
+    final total = (e['total'] is num) ? (e['total'] as num).toDouble() : (double.tryParse('${e['total']}') ?? 0.0);
+    final subtotal = (e['subtotal'] is num) ? (e['subtotal'] as num).toDouble() : (double.tryParse('${e['subtotal']}') ?? total);
+    final discountRate = (e['discountRate'] is num) ? (e['discountRate'] as num).toDouble() : 0.0;
+    final taxRate = (e['taxRate'] is num) ? (e['taxRate'] as num).toDouble() : 16.0;
+    final lineItems = (e['lineItems'] as List<dynamic>?) ?? [];
+
+    final parts = lineItems.where((item) => (item['itemType'] ?? '').toString().toUpperCase() != 'LABOUR').toList();
+    final labour = lineItems.where((item) => (item['itemType'] ?? '').toString().toUpperCase() == 'LABOUR').toList();
+
+    Color statusColor;
+    IconData statusIcon;
+    switch (status) {
+      case 'APPROVED':
+        statusColor = const Color(0xFF16A34A);
+        statusIcon = Icons.check_circle_rounded;
+        break;
+      case 'SENT':
+        statusColor = const Color(0xFF2563EB);
+        statusIcon = Icons.send_rounded;
+        break;
+      case 'REJECTED':
+        statusColor = const Color(0xFFDC2626);
+        statusIcon = Icons.cancel_rounded;
+        break;
+      default:
+        statusColor = const Color(0xFFD97706);
+        statusIcon = Icons.edit_note_rounded;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.92),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // Modal Handle & Top Header
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: Column(
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(4)),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F4C81).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.request_quote_rounded, color: Color(0xFF0F4C81), size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Quotation #${jc?['jobNumber'] ?? 'EST'}',
+                                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: Color(0xFF0F172A)),
+                              ),
+                              Text(
+                                'Job Card: ${jc?['jobNumber'] ?? 'N/A'} • ${_formatDate(e['createdAt'])}',
+                                style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(statusIcon, size: 14, color: statusColor),
+                              const SizedBox(width: 4),
+                              Text(
+                                status,
+                                style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.grey),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // Scrollable Quote Details Body
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Vehicle & Customer Info Card
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                // Kenyan style registration badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFEF08A),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: Colors.black87, width: 1.2),
+                                  ),
+                                  child: Text(
+                                    (veh?['registrationNo'] ?? 'K-- ---').toString().toUpperCase(),
+                                    style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.black, fontSize: 13, letterSpacing: 0.8),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${veh?['make'] ?? ''} ${veh?['model'] ?? ''}'.trim().isEmpty ? 'Vehicle' : '${veh?['make'] ?? ''} ${veh?['model'] ?? ''}'.toUpperCase(),
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                      ),
+                                      Text(
+                                        'Odometer: ${jc?['odometer'] ?? '-'} KM • Bay: ${jc?['bayNumber'] ?? 'General'}',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 20),
+                            Row(
+                              children: [
+                                const Icon(Icons.person_outline, size: 16, color: Color(0xFF0F4C81)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '${cust?['name'] ?? 'Walk-in Customer'}',
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                  ),
+                                ),
+                                if ((cust?['phone'] ?? '').toString().isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(6)),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.phone, size: 12, color: Color(0xFF2563EB)),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '${cust?['phone']}',
+                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            if ((jc?['workRequested'] ?? '').toString().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.build_circle_outlined, size: 16, color: Colors.orange),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Requested: ${jc?['workRequested']}',
+                                      style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Line Items Breakdown
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('Quoted Items & Services', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                Text('Amount (KES)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF64748B))),
+                              ],
+                            ),
+                            const Divider(height: 18),
+
+                            // Labour Items
+                            if (labour.isNotEmpty) ...[
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
+                                      child: const Text('LABOUR & SERVICES', style: TextStyle(color: Color(0xFF1D4ED8), fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ...labour.map((item) {
+                                final qty = (item['quantity'] as num?)?.toDouble() ?? 1.0;
+                                final up = (item['unitPrice'] as num?)?.toDouble() ?? 0.0;
+                                final itmTot = (item['total'] as num?)?.toDouble() ?? (qty * up);
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(Icons.engineering_outlined, size: 16, color: Color(0xFF2563EB)),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(item['description'] ?? 'Labour service', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                            Text('${qty.toStringAsFixed(qty.truncateToDouble() == qty ? 0 : 1)} hr(s) @ KES ${up.toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                          ],
+                                        ),
+                                      ),
+                                      Text('KES ${itmTot.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                              const SizedBox(height: 8),
+                            ],
+
+                            // Spare Parts & Supplies
+                            if (parts.isNotEmpty) ...[
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(4)),
+                                      child: const Text('PARTS & SUPPLIES', style: TextStyle(color: Color(0xFF0F766E), fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ...parts.map((item) {
+                                final qty = (item['quantity'] as num?)?.toDouble() ?? 1.0;
+                                final up = (item['unitPrice'] as num?)?.toDouble() ?? 0.0;
+                                final itmTot = (item['total'] as num?)?.toDouble() ?? (qty * up);
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(Icons.inventory_2_outlined, size: 16, color: Color(0xFF0F766E)),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(item['description'] ?? 'Replacement part', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                            Text('${qty.toStringAsFixed(qty.truncateToDouble() == qty ? 0 : 1)} pc(s) @ KES ${up.toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                          ],
+                                        ),
+                                      ),
+                                      Text('KES ${itmTot.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ],
+
+                            if (lineItems.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(child: Text('No itemized parts or labour attached.', style: TextStyle(color: Colors.grey))),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Financial Summary Card
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Subtotal:', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+                                Text('KES ${subtotal.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                            if (discountRate > 0) ...[
+                              const SizedBox(height: 6),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Discount (${discountRate.toStringAsFixed(0)}%):', style: const TextStyle(color: Color(0xFF34D399), fontSize: 13)),
+                                  Text('- KES ${(subtotal * (discountRate / 100)).toStringAsFixed(0)}', style: const TextStyle(color: Color(0xFF34D399), fontSize: 13, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('VAT (${taxRate.toStringAsFixed(0)}%):', style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+                                Text('KES ${((subtotal * (1 - discountRate / 100)) * (taxRate / 100)).toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                            const Divider(color: Colors.white24, height: 20),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('GRAND TOTAL:', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900)),
+                                Text(
+                                  'KES ${total.toStringAsFixed(0)}',
+                                  style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 20, fontWeight: FontWeight.w900),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Bottom Action Bar
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, -3))],
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        // PDF Preview / Export Button
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              side: const BorderSide(color: Color(0xFF0F4C81)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: const Icon(Icons.picture_as_pdf_outlined, color: Color(0xFF0F4C81), size: 18),
+                            label: const Text('Export PDF', style: TextStyle(color: Color(0xFF0F4C81), fontWeight: FontWeight.bold)),
+                            onPressed: () async {
+                              final ws = _workshopSettings.isNotEmpty ? _workshopSettings : {
+                                'name': 'AutoKe Workshop Ltd',
+                                'phone': '0700 000 000',
+                                'email': 'service@autocare.com',
+                                'address': 'Nairobi, Kenya',
+                                'currency': 'KES',
+                              };
+                              await InvoicePdfService.exportPdfFile(
+                                workshopSettings: ws,
+                                estimate: e,
+                                isInvoice: false,
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Print Button
+                        IconButton(
+                          tooltip: 'Print Quotation',
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFFEFF6FF),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.all(12),
+                          ),
+                          icon: const Icon(Icons.print_outlined, color: Color(0xFF1D4ED8)),
+                          onPressed: () async {
+                            final ws = _workshopSettings.isNotEmpty ? _workshopSettings : {
+                              'name': 'AutoKe Workshop Ltd',
+                              'phone': '0700 000 000',
+                              'email': 'service@autocare.com',
+                              'address': 'Nairobi, Kenya',
+                              'currency': 'KES',
+                            };
+                            await InvoicePdfService.printDocument(
+                              workshopSettings: ws,
+                              estimate: e,
+                              isInvoice: false,
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Quick Status Action Button
+                    if (status != 'APPROVED')
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF16A34A),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
+                          ),
+                          icon: const Icon(Icons.check_circle_outline, size: 18),
+                          label: const Text('Approve Quotation (Customer Confirmed)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _updateQuoteStatus(e['id'], 'APPROVED');
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(dynamic dateRaw) {
+    if (dateRaw == null) return '';
+    try {
+      final dt = DateTime.parse(dateRaw.toString());
+      return '${dt.day}/${dt.month}/${dt.year}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Widget _buildQuotesView() {
+    if (_isLoadingJobs && _estimates.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Filter estimates based on search and status
+    final filtered = _estimates.where((e) {
+      final status = (e['status'] ?? 'DRAFT').toString().toUpperCase();
+      if (_quoteStatusFilter != 'ALL') {
+        if (_quoteStatusFilter == 'PENDING' && (status != 'SENT' && status != 'DRAFT')) return false;
+        if (_quoteStatusFilter != 'PENDING' && status != _quoteStatusFilter) return false;
+      }
+      if (_quoteSearch.isNotEmpty) {
+        final q = _quoteSearch.toLowerCase();
+        final jc = e['jobCard'];
+        final plate = (jc?['vehicle']?['registrationNo'] ?? '').toString().toLowerCase();
+        final make = (jc?['vehicle']?['make'] ?? '').toString().toLowerCase();
+        final model = (jc?['vehicle']?['model'] ?? '').toString().toLowerCase();
+        final cust = (jc?['customer']?['name'] ?? '').toString().toLowerCase();
+        final jobNo = (jc?['jobNumber'] ?? '').toString().toLowerCase();
+        return plate.contains(q) || make.contains(q) || model.contains(q) || cust.contains(q) || jobNo.contains(q);
+      }
+      return true;
+    }).toList();
+
+    // Stats calculations
+    final totalQuotes = _estimates.length;
+    final approvedCount = _estimates.where((e) => (e['status'] ?? '').toString().toUpperCase() == 'APPROVED').length;
+    final pendingCount = _estimates.where((e) => (e['status'] ?? '').toString().toUpperCase() == 'SENT').length;
+    double totalVal = 0.0;
+    for (final e in _estimates) {
+      totalVal += (e['total'] as num?)?.toDouble() ?? 0.0;
+    }
+
     return RefreshIndicator(
       onRefresh: _fetchJobs,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: _estimates.length,
-        itemBuilder: (_, i) {
-          final e = _estimates[i];
-          final status = (e['status'] ?? 'DRAFT').toString();
-          final jc = e['jobCard'];
-          final total = (e['total'] is num) ? (e['total'] as num).toStringAsFixed(0) : '0';
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        children: [
+          // Top Metrics Overview Banner
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            color: Colors.white,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        '${jc?['jobNumber'] ?? 'Job'} â€¢ ${jc?['customer']?['name'] ?? ''}',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      child: _metricStatBox(
+                        title: 'Total Quotes',
+                        value: '$totalQuotes',
+                        subtitle: 'KES ${totalVal.toStringAsFixed(0)}',
+                        icon: Icons.request_quote_rounded,
+                        color: const Color(0xFF0F4C81),
                       ),
                     ),
-                    Text('KES $total', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF0F4C81))),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _metricStatBox(
+                        title: 'Awaiting Client',
+                        value: '$pendingCount',
+                        subtitle: 'Pending Approval',
+                        icon: Icons.schedule_rounded,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _metricStatBox(
+                        title: 'Approved',
+                        value: '$approvedCount',
+                        subtitle: 'Ready for Bay',
+                        icon: Icons.check_circle_outline_rounded,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text('${jc?['vehicle']?['registrationNo'] ?? ''} â€¢ ${(e['lineItems'] as List?)?.length ?? 0} item(s)',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54)),
                 const SizedBox(height: 10),
-                Wrap(
-                  spacing: 6,
-                  children: ['DRAFT', 'SENT', 'APPROVED', 'REJECTED']
-                      .map((s) => ChoiceChip(
-                            label: Text(s, style: const TextStyle(fontSize: 11)),
-                            selected: status == s,
-                            onSelected: (_) async {
-                              await http.put(
-                                Uri.parse('$_baseUrl/estimates/${e['id']}/status'),
-                                headers: {'Content-Type': 'application/json'},
-                                body: json.encode({'status': s}),
-                              );
-                              _fetchJobs();
-                            },
-                          ))
-                      .toList(),
+                // Search Input
+                Container(
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: TextField(
+                    onChanged: (v) => setState(() => _quoteSearch = v),
+                    decoration: InputDecoration(
+                      hintText: 'Search plate, customer, job #...',
+                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                      prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF64748B)),
+                      suffixIcon: _quoteSearch.isNotEmpty
+                          ? IconButton(icon: const Icon(Icons.clear, size: 16), onPressed: () => setState(() => _quoteSearch = ''))
+                          : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
-                  child: Text('Approve only with documented customer authorisation.',
-                      style: TextStyle(fontSize: 10.5, color: Colors.black45)),
+                const SizedBox(height: 8),
+                // Status Filter Chips
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _statusFilterChip('ALL', 'All ($totalQuotes)'),
+                      _statusFilterChip('SENT', 'Pending ($pendingCount)'),
+                      _statusFilterChip('APPROVED', 'Approved ($approvedCount)'),
+                      _statusFilterChip('DRAFT', 'Drafts'),
+                      _statusFilterChip('REJECTED', 'Rejected'),
+                    ],
+                  ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+
+          // Quotes List
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.request_quote_outlined, size: 60, color: Colors.grey.shade400),
+                        const SizedBox(height: 12),
+                        Text(
+                          _quoteSearch.isNotEmpty || _quoteStatusFilter != 'ALL' ? 'No quotations match filters.' : 'No quotations yet.',
+                          style: TextStyle(color: Colors.grey.shade600, fontSize: 15, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text('Estimates created from Job Cards will appear here.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) {
+                      final e = filtered[i];
+                      final status = (e['status'] ?? 'DRAFT').toString().toUpperCase();
+                      final jc = e['jobCard'];
+                      final cust = jc?['customer'];
+                      final veh = jc?['vehicle'];
+                      final total = (e['total'] is num) ? (e['total'] as num).toStringAsFixed(0) : '0';
+                      final lineItems = (e['lineItems'] as List?) ?? [];
+                      final regNo = (veh?['registrationNo'] ?? 'K-- ---').toString().toUpperCase();
+
+                      Color statusColor;
+                      switch (status) {
+                        case 'APPROVED':
+                          statusColor = const Color(0xFF16A34A);
+                          break;
+                        case 'SENT':
+                          statusColor = const Color(0xFF2563EB);
+                          break;
+                        case 'REJECTED':
+                          statusColor = const Color(0xFFDC2626);
+                          break;
+                        default:
+                          statusColor = const Color(0xFFD97706);
+                      }
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2)),
+                          ],
+                        ),
+                        child: InkWell(
+                          onTap: () => _showQuotePreviewModal(e),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Top Row: Plate, Make/Model, Status Badge
+                                Row(
+                                  children: [
+                                    // Plate badge
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEF08A),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.black87, width: 1.1),
+                                      ),
+                                      child: Text(
+                                        regNo,
+                                        style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.black, fontSize: 11, letterSpacing: 0.6),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${veh?['make'] ?? ''} ${veh?['model'] ?? ''}'.trim().isEmpty ? 'Vehicle' : '${veh?['make'] ?? ''} ${veh?['model'] ?? ''}',
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          Text(
+                                            'Job #${jc?['jobNumber'] ?? ''}',
+                                            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: statusColor.withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                                      ),
+                                      child: Text(
+                                        status,
+                                        style: TextStyle(color: statusColor, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const Divider(height: 18),
+
+                                // Customer & Item Count Row
+                                Row(
+                                  children: [
+                                    const Icon(Icons.person_outline, size: 14, color: Color(0xFF64748B)),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        '${cust?['name'] ?? 'Walk-in'}',
+                                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${lineItems.length} item(s)',
+                                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+
+                                // Price & Quick Actions Row
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('Total Estimate', style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                                        Text(
+                                          'KES $total',
+                                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Color(0xFF0F4C81)),
+                                        ),
+                                      ],
+                                    ),
+                                    Row(
+                                      children: [
+                                        // Preview button
+                                        ElevatedButton.icon(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFF0F4C81),
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                            elevation: 0,
+                                          ),
+                                          icon: const Icon(Icons.visibility_outlined, size: 15),
+                                          label: const Text('Preview', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                          onPressed: () => _showQuotePreviewModal(e),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        // PDF Export
+                                        IconButton(
+                                          tooltip: 'Export PDF',
+                                          style: IconButton.styleFrom(
+                                            backgroundColor: const Color(0xFFF1F5F9),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                            padding: const EdgeInsets.all(8),
+                                          ),
+                                          icon: const Icon(Icons.picture_as_pdf_outlined, size: 18, color: Color(0xFF0F4C81)),
+                                          onPressed: () async {
+                                            final ws = _workshopSettings.isNotEmpty ? _workshopSettings : {
+                                              'name': 'AutoKe Workshop Ltd',
+                                              'phone': '0700 000 000',
+                                              'email': 'service@autocare.com',
+                                              'address': 'Nairobi, Kenya',
+                                              'currency': 'KES',
+                                            };
+                                            await InvoicePdfService.exportPdfFile(
+                                              workshopSettings: ws,
+                                              estimate: e,
+                                              isInvoice: false,
+                                            );
+                                          },
+                                        ),
+                                        // Quick Status Menu
+                                        PopupMenuButton<String>(
+                                          icon: const Icon(Icons.more_vert, size: 18, color: Color(0xFF64748B)),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                          onSelected: (val) => _updateQuoteStatus(e['id'], val),
+                                          itemBuilder: (_) => const [
+                                            PopupMenuItem(value: 'APPROVED', child: Text('Mark as Approved', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold))),
+                                            PopupMenuItem(value: 'SENT', child: Text('Mark as Sent')),
+                                            PopupMenuItem(value: 'DRAFT', child: Text('Mark as Draft')),
+                                            PopupMenuItem(value: 'REJECTED', child: Text('Mark as Rejected', style: TextStyle(color: Colors.red))),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metricStatBox({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(color: color, fontSize: 10.5, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: color),
+          ),
+          Text(
+            subtitle,
+            style: const TextStyle(fontSize: 9.5, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusFilterChip(String key, String label) {
+    final selected = _quoteStatusFilter == key;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label, style: TextStyle(fontSize: 11, fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
+        selected: selected,
+        selectedColor: const Color(0xFFDBEAFE),
+        onSelected: (_) => setState(() => _quoteStatusFilter = key),
       ),
     );
   }
