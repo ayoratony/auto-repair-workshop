@@ -451,11 +451,27 @@ export function createInventoryRouter(
         const c = cat(l.category);
         const qty = posInt(l.quantity, 'quantity');
         if (c === 'TOOL_EQUIPMENT' && qty !== 1) throw new HttpError(400, 'Tool requests must be for exactly 1 asset');
-        const info = await itemInfo(tx, a.tenantId, c, String(l.itemId || ''));
+
+        let partId: string | null = null;
+        let inventoryItemId: string | null = null;
+        let toolAssetId: string | null = null;
+        let desc = text(l.description) || '';
+
+        if (text(l.itemId)) {
+          const info = await itemInfo(tx, a.tenantId, c, String(l.itemId));
+          partId = info.partId || null;
+          inventoryItemId = info.inventoryItemId || null;
+          toolAssetId = info.toolAssetId || null;
+          desc = info.name;
+        } else if (!desc) {
+          throw new HttpError(400, 'Item ID or description is required for each line');
+        }
+
         if (c === 'SPARE_PART' && !job) throw new HttpError(400, 'Spare parts must be requested against a job card');
+
         built.push({
-          tenantId: a.tenantId, category: c, partId: info.partId, inventoryItemId: info.inventoryItemId, toolAssetId: info.toolAssetId,
-          description: info.name, qtyRequested: qty, expectedReturnAt: l.expectedReturnAt ? new Date(l.expectedReturnAt) : null,
+          tenantId: a.tenantId, category: c, partId, inventoryItemId, toolAssetId,
+          description: desc, qtyRequested: qty, expectedReturnAt: l.expectedReturnAt ? new Date(l.expectedReturnAt) : null,
         });
       }
 
@@ -496,7 +512,30 @@ export function createInventoryRouter(
     if (!viewAll || req.query.mine === '1') where.technicianName = a.name;
     else if (text(req.query.technician)) where.technicianName = String(req.query.technician);
     if (text(req.query.jobCardId)) where.jobCardId = String(req.query.jobCardId);
-    return prisma.itemRequest.findMany({ where, include: { lines: true }, orderBy: { createdAt: 'desc' }, take: 200 });
+    if (text(req.query.vehicleId)) where.vehicleId = String(req.query.vehicleId);
+
+    const requests = await prisma.itemRequest.findMany({ where, include: { lines: true }, orderBy: { createdAt: 'desc' }, take: 200 });
+
+    const jobIds = [...new Set(requests.map((r) => r.jobCardId).filter(Boolean))] as string[];
+    const vehIds = [...new Set(requests.map((r) => r.vehicleId).filter(Boolean))] as string[];
+
+    const [jobs, vehs] = await Promise.all([
+      jobIds.length ? prisma.jobCard.findMany({ where: { id: { in: jobIds }, tenantId: a.tenantId }, select: { id: true, jobNumber: true, vehicleId: true } }) : [],
+      vehIds.length ? prisma.vehicle.findMany({ where: { id: { in: vehIds } }, select: { id: true, registrationNo: true, make: true, model: true } }) : [],
+    ]);
+    const jobMap = new Map(jobs.map((j) => [j.id, j]));
+    const vehMap = new Map(vehs.map((v) => [v.id, v]));
+
+    return requests.map((r) => {
+      const j = r.jobCardId ? jobMap.get(r.jobCardId) : undefined;
+      const v = (r.vehicleId ? vehMap.get(r.vehicleId) : undefined) || (j?.vehicleId ? vehMap.get(j.vehicleId) : undefined);
+      return {
+        ...r,
+        jobNumber: j?.jobNumber,
+        vehiclePlate: v?.registrationNo,
+        vehicleDescription: v ? `${v.make} ${v.model}`.trim() : undefined,
+      };
+    });
   }));
 
   router.get('/requests/:id', route(async (a, req) => {
@@ -509,25 +548,109 @@ export function createInventoryRouter(
       try {
         const id = l.partId || l.inventoryItemId || l.toolAssetId;
         if (id) availableNow = (await itemInfo(prisma as any, a.tenantId, l.category, id)).available;
-      } catch { /* item removed */ }
-      lines.push({ ...l, availableNow });
+        else availableNow = 0;
+      } catch {
+        availableNow = 0;
+      }
+      lines.push({ ...l, availableNow: availableNow ?? 0 });
     }
-    return { ...r, lines, history };
+
+    let vehiclePlate: string | undefined;
+    let vehicleDescription: string | undefined;
+    let jobNumber: string | undefined;
+    if (r.jobCardId) {
+      const j = await prisma.jobCard.findFirst({ where: { id: r.jobCardId, tenantId: a.tenantId }, include: { vehicle: true } });
+      jobNumber = j?.jobNumber || undefined;
+      if (j?.vehicle) {
+        vehiclePlate = j.vehicle.registrationNo;
+        vehicleDescription = `${j.vehicle.make} ${j.vehicle.model}`.trim();
+      }
+    }
+    if (!vehiclePlate && r.vehicleId) {
+      const v = await prisma.vehicle.findFirst({ where: { id: r.vehicleId } });
+      if (v) {
+        vehiclePlate = v.registrationNo;
+        vehicleDescription = `${v.make} ${v.model}`.trim();
+      }
+    }
+
+    return { ...r, jobNumber, vehiclePlate, vehicleDescription, lines, history };
   }));
 
   // =====================================================================
-  // 2. STOREKEEPER: APPROVE / REJECT / PARTIAL  (no stock movement here)
+  // 2. STOREKEEPER & WORKSHOP MANAGER: APPROVE / ORDER / RECEIVE_ORDER / REJECT
   // =====================================================================
   router.post('/requests/:id/decision', route(async (a, req) => {
-    require_(a, 'request:decide', 'approve or reject requests');
+    require_(a, 'request:decide', 'approve, order or reject requests');
     const action = String(req.body.action || '').toUpperCase();
-    if (!['APPROVE', 'REJECT', 'PARTIAL'].includes(action)) throw new HttpError(400, 'action must be APPROVE, REJECT or PARTIAL');
+    if (!['APPROVE', 'REJECT', 'PARTIAL', 'ORDER', 'RECEIVE_ORDER'].includes(action)) {
+      throw new HttpError(400, 'action must be APPROVE, REJECT, PARTIAL, ORDER, or RECEIVE_ORDER');
+    }
     const notes = text(req.body.notes);
-    if (action !== 'APPROVE' && !notes) throw new HttpError(400, 'notes are required when rejecting or partially approving');
+    if ((action === 'REJECT' || action === 'PARTIAL') && !notes) {
+      throw new HttpError(400, 'notes are required when rejecting or partially approving');
+    }
 
     return txn(async (tx) => {
       await lockRow(tx, 'ItemRequest', String(req.params.id), a.tenantId);
       const r = await loadRequest(a.tenantId, String(req.params.id), tx);
+
+      // Handle Purchase Order initiation for out-of-stock items
+      if (action === 'ORDER') {
+        if (!['PENDING', 'ORDERED'].includes(r.status)) throw new HttpError(409, `Request is ${r.status}; cannot be placed on order`);
+        const supplier = text(req.body.supplierName) || 'External Supplier';
+        const po = text(req.body.poNumber) || '';
+        const eta = text(req.body.expectedArrival) || '';
+        const cost = Number(req.body.estimatedCost) || 0;
+        const orderNotes = notes || `Ordered from ${supplier}${po ? ` (PO: ${po})` : ''}${eta ? ` - ETA: ${eta}` : ''}`;
+
+        await tx.itemRequest.update({
+          where: { id: r.id },
+          data: { status: 'ORDERED', decidedBy: a.name, decidedAt: new Date(), decisionNotes: orderNotes },
+        });
+
+        for (const l of r.lines) {
+          await ledger(tx, a, {
+            type: 'ORDER', category: l.category, partId: l.partId, inventoryItemId: l.inventoryItemId, toolAssetId: l.toolAssetId,
+            itemName: l.description, requestId: r.id, requestLineId: l.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId,
+            department: r.department, quantityDetail: l.qtyRequested, unitCost: cost, recipientName: r.technicianName,
+            reason: orderNotes, notes: `Supplier: ${supplier}, PO: ${po || 'N/A'}, ETA: ${eta || 'TBD'}`,
+          });
+        }
+
+        await tx.storeNotification.create({
+          data: { tenantId: a.tenantId, targetRole: 'MECHANIC', type: 'ORDER_PLACED', requestId: r.id, message: `Parts ordered for ${r.reference}: ${supplier}${eta ? ` (ETA: ${eta})` : ''}` },
+        });
+
+        return loadRequest(a.tenantId, r.id, tx);
+      }
+
+      // Handle ordered parts arriving at store
+      if (action === 'RECEIVE_ORDER') {
+        if (r.status !== 'ORDERED') throw new HttpError(409, `Request is ${r.status}; only ORDERED requests can be marked as received`);
+        const receiveNotes = notes || `Parts received at Main Store. Ready for physical issuance to ${r.technicianName}.`;
+
+        for (const l of r.lines) {
+          await tx.itemRequestLine.update({ where: { id: l.id }, data: { qtyApproved: l.qtyRequested } });
+          await ledger(tx, a, {
+            type: 'RECEIVE', category: l.category, partId: l.partId, inventoryItemId: l.inventoryItemId, toolAssetId: l.toolAssetId,
+            itemName: l.description, requestId: r.id, requestLineId: l.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId,
+            department: r.department, quantityDetail: l.qtyRequested, recipientName: r.technicianName, reason: receiveNotes,
+          });
+        }
+
+        await tx.itemRequest.update({
+          where: { id: r.id },
+          data: { status: 'APPROVED', decisionNotes: receiveNotes },
+        });
+
+        await tx.storeNotification.create({
+          data: { tenantId: a.tenantId, targetRole: 'MECHANIC', type: 'ORDER_RECEIVED', requestId: r.id, message: `Parts for ${r.reference} have arrived at Main Store! Ready for collection.` },
+        });
+
+        return loadRequest(a.tenantId, r.id, tx);
+      }
+
       if (r.status !== 'PENDING') throw new HttpError(409, `Request is ${r.status}; only PENDING requests can be decided`);
 
       const approvals = new Map<string, number>();
@@ -550,10 +673,14 @@ export function createInventoryRouter(
       const exceptional: string[] = [];
       const availability: Record<string, number> = {};
       for (const l of r.lines) {
-        const id = (l.partId || l.inventoryItemId || l.toolAssetId)!;
-        const info = await itemInfo(tx, a.tenantId, l.category, id);
-        availability[l.id] = info.available;
-        if ((approvals.get(l.id) || 0) * info.cost > EXCEPTIONAL_LIMIT) exceptional.push(l.description);
+        const id = l.partId || l.inventoryItemId || l.toolAssetId;
+        if (id) {
+          const info = await itemInfo(tx, a.tenantId, l.category, id);
+          availability[l.id] = info.available;
+          if ((approvals.get(l.id) || 0) * info.cost > EXCEPTIONAL_LIMIT) exceptional.push(l.description);
+        } else {
+          availability[l.id] = 0;
+        }
       }
       if (exceptional.length && !can(a, 'request:decideExceptional')) {
         throw new HttpError(403, `High-value request (${exceptional.join(', ')}) needs Workshop Manager or Owner approval`);
@@ -563,7 +690,7 @@ export function createInventoryRouter(
       for (const l of r.lines) {
         const q = approvals.get(l.id) || 0;
         await tx.itemRequestLine.update({ where: { id: l.id }, data: { qtyApproved: q } });
-        await ledger(tx, a, { type: q > 0 ? 'APPROVE' : 'REJECT', category: l.category, partId: l.partId, inventoryItemId: l.inventoryItemId, toolAssetId: l.toolAssetId, itemName: l.description, requestId: r.id, requestLineId: l.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId, department: r.department, quantityDetail: q, recipientName: r.technicianName, reason: notes, notes: `requested ${l.qtyRequested}, available ${availability[l.id]}` });
+        await ledger(tx, a, { type: q > 0 ? 'APPROVE' : 'REJECT', category: l.category, partId: l.partId, inventoryItemId: l.inventoryItemId, toolAssetId: l.toolAssetId, itemName: l.description, requestId: r.id, requestLineId: l.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId, department: r.department, quantityDetail: q, recipientName: r.technicianName, reason: notes, notes: `requested ${l.qtyRequested}, available ${availability[l.id] ?? 0}` });
       }
       await tx.itemRequest.update({ where: { id: r.id }, data: { status: newStatus, decidedBy: a.name, decidedAt: new Date(), decisionNotes: notes } });
       const out = await loadRequest(a.tenantId, r.id, tx);
@@ -615,27 +742,36 @@ export function createInventoryRouter(
         if (qty > outstanding) throw new HttpError(409, `Only ${outstanding} approved and not yet issued for "${line.description}"`);
         if (line.category === 'SPARE_PART' && !r.jobCardId) throw new HttpError(400, 'Spare parts must be issued against a job card');
 
-        const id = (line.partId || line.inventoryItemId || line.toolAssetId)!;
-        const info = await itemInfo(tx, a.tenantId, line.category, id);
+        const id = line.partId || line.inventoryItemId || line.toolAssetId;
+        if (id) {
+          const info = await itemInfo(tx, a.tenantId, line.category, id);
 
-        if (line.category === 'TOOL_EQUIPMENT') {
-          const n = await tx.toolAsset.updateMany({
-            where: { id, tenantId: a.tenantId, status: 'AVAILABLE' },
-            data: { status: 'CHECKED_OUT', assignedTo: receiver, department: r.department, usedAt: r.jobCardId ? `Job ${r.jobCardId}` : r.department, checkedOutAt: new Date(), expectedReturnAt: line.expectedReturnAt },
-          });
-          if (n.count !== 1) throw new HttpError(409, `Asset is not available: ${info.name}`);
-        } else {
-          await moveStock(tx, a.tenantId, line.category, id, -qty);
-          if (line.category === 'SPARE_PART') {
-            await partMovement(tx, a, id, 'ISSUED', qty, info, r.jobCardId, `Issued to ${receiver} (${r.reference})`);
+          if (line.category === 'TOOL_EQUIPMENT') {
+            const n = await tx.toolAsset.updateMany({
+              where: { id, tenantId: a.tenantId, status: 'AVAILABLE' },
+              data: { status: 'CHECKED_OUT', assignedTo: receiver, department: r.department, usedAt: r.jobCardId ? `Job ${r.jobCardId}` : r.department, checkedOutAt: new Date(), expectedReturnAt: line.expectedReturnAt },
+            });
+            if (n.count !== 1) throw new HttpError(409, `Asset is not available: ${info.name}`);
+          } else {
+            await moveStock(tx, a.tenantId, line.category, id, -qty);
+            if (line.category === 'SPARE_PART') {
+              await partMovement(tx, a, id, 'ISSUED', qty, info, r.jobCardId, `Issued to ${receiver} (${r.reference})`);
+            }
           }
+          await tx.itemRequestLine.update({ where: { id: line.id }, data: { qtyIssued: { increment: qty } } });
+          await ledger(tx, a, {
+            type: 'ISSUE', ...lineRef(line), itemName: line.description, requestId: r.id, requestLineId: line.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId,
+            department: r.department, location: info.location, quantity: -qty, quantityDetail: qty, unitCost: info.cost, recipientName: receiver,
+            reason: r.reason, notes: text(req.body.notes), condition: line.category === 'TOOL_EQUIPMENT' ? 'ISSUED' : undefined,
+          });
+        } else {
+          await tx.itemRequestLine.update({ where: { id: line.id }, data: { qtyIssued: { increment: qty } } });
+          await ledger(tx, a, {
+            type: 'ISSUE', category: line.category, itemName: line.description, requestId: r.id, requestLineId: line.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId,
+            department: r.department, location: 'Direct Handover', quantity: -qty, quantityDetail: qty, unitCost: 0, recipientName: receiver,
+            reason: r.reason, notes: text(req.body.notes) || 'Directly issued custom / ordered part',
+          });
         }
-        await tx.itemRequestLine.update({ where: { id: line.id }, data: { qtyIssued: { increment: qty } } });
-        await ledger(tx, a, {
-          type: 'ISSUE', ...lineRef(line), itemName: line.description, requestId: r.id, requestLineId: line.id, jobCardId: r.jobCardId, vehicleId: r.vehicleId,
-          department: r.department, location: info.location, quantity: -qty, quantityDetail: qty, unitCost: info.cost, recipientName: receiver,
-          reason: r.reason, notes: text(req.body.notes), condition: line.category === 'TOOL_EQUIPMENT' ? 'ISSUED' : undefined,
-        });
       }
 
       const fresh = await loadRequest(a.tenantId, r.id, tx);

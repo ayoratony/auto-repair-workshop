@@ -955,7 +955,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Row(
-            children: ['ALL', 'PENDING', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED']
+            children: ['ALL', 'PENDING', 'ORDERED', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED']
                 .map((s) => Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
@@ -1011,6 +1011,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     Color badgeColor;
     switch (status) {
       case 'APPROVED': badgeColor = Colors.green; break;
+      case 'ORDERED': badgeColor = Colors.indigo; break;
       case 'ISSUED': badgeColor = Colors.blue; break;
       case 'PARTIALLY_ISSUED': badgeColor = Colors.orange; break;
       case 'REJECTED': badgeColor = Colors.red; break;
@@ -1038,15 +1039,60 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 ),
               ],
             ),
+            if (req['vehiclePlate'] != null || req['jobNumber'] != null) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.directions_car, size: 13, color: Color(0xFF0F4C81)),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${req['vehiclePlate'] ?? ''}${req['vehicleDescription'] != null ? ' (${req['vehicleDescription']})' : ''}${req['jobNumber'] != null ? ' • ${req['jobNumber']}' : ''}'.trim(),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (status == 'ORDERED') ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.shade50,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.indigo.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_shipping, size: 16, color: Colors.indigo),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Ordered from Supplier • PO: ${req['poNumber'] ?? '-'} • ETA: ${req['estimatedArrival'] ?? 'TBA'}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 6),
             Text('Reason: $reason', style: const TextStyle(fontSize: 13, color: Colors.black87)),
             if (req['jobCardId'] != null) ...[
               const SizedBox(height: 4),
               Row(
                 children: [
-                  const Icon(Icons.directions_car, size: 14, color: Colors.black54),
+                  const Icon(Icons.assignment, size: 14, color: Colors.black54),
                   const SizedBox(width: 4),
-                  Text('Job Card: ${req['jobCardId'].toString().substring(0, 8).toUpperCase()}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                  Text('Job Card: ${req['jobNumber'] ?? req['jobCardId'].toString().substring(0, 8).toUpperCase()}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
                 ],
               ),
             ],
@@ -1246,13 +1292,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     );
   }
 
-  void _showItemRequestDialog() {
+  void _showItemRequestDialog({String? preselectedJobId, String? preselectedVehiclePlate}) {
     String searchQuery = '';
     List<dynamic> catalogResults = [];
     Map<String, dynamic>? selectedItem;
+    bool isCustomItem = false;
+    final customDescCtrl = TextEditingController();
+    String customCategory = 'SPARE_PART';
     final qtyCtrl = TextEditingController(text: '1');
     final reasonCtrl = TextEditingController();
-    String? linkedJobId;
+    String? linkedJobId = preselectedJobId;
     String category = 'ALL';
 
     showModalBottomSheet(
@@ -1269,103 +1318,202 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               children: [
                 const Text('Request Parts, Tools, or Supplies', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 const SizedBox(height: 12),
-                // Category filter chips
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: ['ALL', 'SPARE_PART', 'TOOL_EQUIPMENT', 'CONSUMABLE'].map((c) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text(c == 'ALL' ? 'All' : c == 'SPARE_PART' ? 'Parts' : c == 'TOOL_EQUIPMENT' ? 'Tools' : 'Supplies', style: const TextStyle(fontSize: 11)),
-                        selected: category == c,
-                        onSelected: (_) => setSheet(() => category = c),
-                      ),
-                    )).toList(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                // Search field
-                TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search inventory catalog...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onChanged: (q) async {
-                    searchQuery = q;
-                    if (q.length < 2) { setSheet(() => catalogResults = []); return; }
-                    try {
-                      final catParam = category == 'ALL' ? '' : '&category=$category';
-                      final res = await http.get(
-                        Uri.parse('$_baseUrl/inventory/catalog?search=$q$catParam'),
-                        headers: {'x-user-role': 'MECHANIC'},
-                      );
-                      if (res.statusCode == 200) {
-                        setSheet(() => catalogResults = json.decode(res.body));
-                      }
-                    } catch (_) {}
-                  },
-                ),
-                if (catalogResults.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    constraints: const BoxConstraints(maxHeight: 180),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: catalogResults.length,
-                      itemBuilder: (_, i) {
-                        final item = catalogResults[i];
-                        final cat = item['category'] ?? '';
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            cat == 'TOOL_EQUIPMENT' ? Icons.build : cat == 'CONSUMABLE' ? Icons.cleaning_services : Icons.settings,
-                            color: cat == 'TOOL_EQUIPMENT' ? Colors.purple : cat == 'CONSUMABLE' ? Colors.teal : Colors.blue,
-                            size: 20,
-                          ),
-                          title: Text(item['name'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                          subtitle: Text('Stock: ${item['quantity'] ?? 0}  |  ${cat.replaceAll('_', ' ')}', style: const TextStyle(fontSize: 11)),
-                          selected: selectedItem?['id'] == item['id'],
-                          selectedTileColor: Colors.blue.shade50,
-                          onTap: () => setSheet(() { selectedItem = Map<String, dynamic>.from(item); catalogResults = []; }),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                if (selectedItem != null) ...[
-                  const SizedBox(height: 10),
+                if (preselectedJobId != null) ...[
                   Container(
                     padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
                     child: Row(
                       children: [
-                        const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                        const Icon(Icons.directions_car, color: Color(0xFF0F4C81), size: 18),
                         const SizedBox(width: 8),
-                        Expanded(child: Text('Selected: ${selectedItem!['name']} (${selectedItem!['category']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        Expanded(
+                          child: Text(
+                            'Vehicle: ${preselectedVehiclePlate ?? 'Assigned Vehicle'} (Requisition linked to this vehicle)',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F4C81)),
+                          ),
+                        ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
+                // Toggle: Catalog Item vs Custom/Order Item
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setSheet(() => isCustomItem = false),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: !isCustomItem ? const Color(0xFF0F4C81) : Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Inventory Catalog',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: !isCustomItem ? Colors.white : Colors.black87),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setSheet(() => isCustomItem = true),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isCustomItem ? Colors.amber.shade800 : Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Custom / Order Needed',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: isCustomItem ? Colors.white : Colors.black87),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                if (!isCustomItem) ...[
+                  // Category filter chips
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: ['ALL', 'SPARE_PART', 'TOOL_EQUIPMENT', 'CONSUMABLE'].map((c) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                          label: Text(c == 'ALL' ? 'All' : c == 'SPARE_PART' ? 'Parts' : c == 'TOOL_EQUIPMENT' ? 'Tools' : 'Supplies', style: const TextStyle(fontSize: 11)),
+                          selected: category == c,
+                          onSelected: (_) => setSheet(() => category = c),
+                        ),
+                      )).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Search field
+                  TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Search inventory catalog...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onChanged: (q) async {
+                      searchQuery = q;
+                      if (q.length < 2) { setSheet(() => catalogResults = []); return; }
+                      try {
+                        final catParam = category == 'ALL' ? '' : '&category=$category';
+                        final res = await http.get(
+                          Uri.parse('$_baseUrl/inventory/catalog?search=$q$catParam'),
+                          headers: {'x-user-role': 'MECHANIC'},
+                        );
+                        if (res.statusCode == 200) {
+                          setSheet(() => catalogResults = json.decode(res.body));
+                        }
+                      } catch (_) {}
+                    },
+                  ),
+                  if (catalogResults.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: catalogResults.length,
+                        itemBuilder: (_, i) {
+                          final item = catalogResults[i];
+                          final cat = item['category'] ?? '';
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              cat == 'TOOL_EQUIPMENT' ? Icons.build : cat == 'CONSUMABLE' ? Icons.cleaning_services : Icons.settings,
+                              color: cat == 'TOOL_EQUIPMENT' ? Colors.purple : cat == 'CONSUMABLE' ? Colors.teal : Colors.blue,
+                              size: 20,
+                            ),
+                            title: Text(item['name'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                            subtitle: Text('Stock: ${item['quantity'] ?? 0}  |  ${cat.replaceAll('_', ' ')}', style: const TextStyle(fontSize: 11)),
+                            selected: selectedItem?['id'] == item['id'],
+                            selectedTileColor: Colors.blue.shade50,
+                            onTap: () => setSheet(() { selectedItem = Map<String, dynamic>.from(item); catalogResults = []; }),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  if (selectedItem != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10)),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text('Selected: ${selectedItem!['name']} (${selectedItem!['category']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  // Custom Item Input
+                  TextField(
+                    controller: customDescCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Part / Supply Name * (e.g. Oxygen Sensor Bank 1)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: customCategory,
+                    decoration: const InputDecoration(labelText: 'Item Category', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)')),
+                      DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable')),
+                      DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment')),
+                    ],
+                    onChanged: (v) => setSheet(() => customCategory = v ?? 'SPARE_PART'),
                   ),
                 ],
                 const SizedBox(height: 10),
                 TextField(controller: qtyCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity *', border: OutlineInputBorder())),
                 const SizedBox(height: 10),
-                TextField(controller: reasonCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Reason for Request *', hintText: 'e.g. Brake pad replacement for KBA 123A', border: OutlineInputBorder())),
-                const SizedBox(height: 10),
-                // Link to job card
-                DropdownButtonFormField<String>(
-                  value: linkedJobId,
-                  decoration: const InputDecoration(labelText: 'Link to Job Card (optional)', border: OutlineInputBorder()),
-                  items: [
-                    const DropdownMenuItem(value: null, child: Text('-- No job card --')),
-                    ..._jobs.where((j) => j['status'] != 'COMPLETED').map((j) {
-                      final plate = j['vehiclePlate'] ?? '';
-                      final id = j['id'].toString();
-                      return DropdownMenuItem(value: id, child: Text('$plate - ${id.substring(0, 8).toUpperCase()}', style: const TextStyle(fontSize: 12)));
-                    }),
-                  ],
-                  onChanged: (v) => setSheet(() => linkedJobId = v),
-                ),
+                TextField(controller: reasonCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Reason for Request *', hintText: 'e.g. Front brake pads replacement for vehicle', border: OutlineInputBorder())),
+                if (preselectedJobId == null) ...[
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: linkedJobId,
+                    decoration: const InputDecoration(labelText: 'Select Assigned Vehicle / Job Card *', border: OutlineInputBorder()),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Job Card) --')),
+                      ..._jobs.where((j) => j['status'] != 'COMPLETED').map((j) {
+                        final plate = j['vehicle']?['registrationNo'] ?? j['vehiclePlate'] ?? '';
+                        final make = j['vehicle']?['make'] ?? '';
+                        final model = j['vehicle']?['model'] ?? '';
+                        final id = j['id'].toString();
+                        final jNo = j['jobNumber'] ?? id.substring(0, 8).toUpperCase();
+                        return DropdownMenuItem(
+                          value: id,
+                          child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 12)),
+                        );
+                      }),
+                    ],
+                    onChanged: (v) => setSheet(() => linkedJobId = v),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
@@ -1377,26 +1525,41 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     icon: const Icon(Icons.send),
-                    label: const Text('Submit Request', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    label: const Text('Submit Vehicle Requisition', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                     onPressed: () async {
-                      if (selectedItem == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select an item'), backgroundColor: Colors.orange));
+                      if (!isCustomItem && selectedItem == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select an item from catalog or switch to Custom Item'), backgroundColor: Colors.orange));
+                        return;
+                      }
+                      if (isCustomItem && customDescCtrl.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter the part description'), backgroundColor: Colors.orange));
                         return;
                       }
                       if (reasonCtrl.text.trim().isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a reason'), backgroundColor: Colors.orange));
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a reason for the request'), backgroundColor: Colors.orange));
                         return;
                       }
-                      final body = {
+
+                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      final line = isCustomItem
+                          ? {
+                              'category': customCategory,
+                              'description': customDescCtrl.text.trim(),
+                              'quantity': qty,
+                            }
+                          : {
+                              'category': selectedItem!['category'],
+                              'itemId': selectedItem!['id'],
+                              'description': selectedItem!['name'],
+                              'quantity': qty,
+                            };
+
+                      final body = <String, dynamic>{
                         'reason': reasonCtrl.text.trim(),
-                        'lines': [
-                          {
-                            'itemId': selectedItem!['id'],
-                            'qtyRequested': int.tryParse(qtyCtrl.text) ?? 1,
-                          }
-                        ],
+                        'lines': [line],
                       };
-                      if (linkedJobId != null) body['jobCardId'] = linkedJobId!;
+                      if (linkedJobId != null) body['jobCardId'] = linkedJobId;
+
                       try {
                         final res = await http.post(
                           Uri.parse('$_baseUrl/inventory/requests'),
@@ -1406,7 +1569,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         if (res.statusCode == 201) {
                           if (ctx.mounted) Navigator.pop(ctx);
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Item request submitted!'), backgroundColor: Colors.green),
+                            const SnackBar(content: Text('Requisition submitted! Appears in Storekeeper & Manager queue.'), backgroundColor: Colors.green),
                           );
                           _fetchJobs();
                         } else {
@@ -1426,7 +1589,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       ),
     );
   }
-
 
   static const List<String> _inspectionPoints = [
     'Engine & Oil',
@@ -1642,6 +1804,176 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
+                // -------------------------------------------------------------
+                // PARTS & TOOL REQUISITIONS FOR THIS VEHICLE
+                // -------------------------------------------------------------
+                Builder(builder: (_) {
+                  final reg = job['vehicle']?['registrationNo']?.toString();
+                  final jId = job['id']?.toString();
+                  final vReqs = _itemRequests.where((r) {
+                    final reqJobId = r['jobCardId']?.toString();
+                    final reqPlate = r['vehiclePlate']?.toString();
+                    return (jId != null && reqJobId == jId) ||
+                           (reg != null && reqPlate != null && reg.toUpperCase() == reqPlate.toUpperCase());
+                  }).toList();
+
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.blueGrey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.inventory_2_outlined, color: Color(0xFF0F4C81), size: 18),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Parts & Supplies (${vReqs.length})',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F4C81)),
+                                ),
+                              ],
+                            ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0F4C81),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              icon: const Icon(Icons.add, size: 14),
+                              label: const Text('Request Item', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              onPressed: () {
+                                _showItemRequestDialog(
+                                  preselectedJobId: job['id'].toString(),
+                                  preselectedVehiclePlate: job['vehicle']?['registrationNo']?.toString(),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        if (vReqs.isEmpty) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'No parts requested for this vehicle yet. Tap "+ Request Item" to request from Storekeeper.',
+                            style: TextStyle(fontSize: 11.5, color: Colors.black54),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 10),
+                          ...vReqs.map((vr) {
+                            final status = (vr['status'] ?? 'PENDING').toString();
+                            final ref = vr['reference'] ?? 'REQ';
+                            final lines = (vr['lines'] as List<dynamic>?) ?? [];
+                            final hasIssued = lines.any((l) => (l['qtyIssued'] ?? 0) > 0);
+                            final ack = vr['acknowledgedAt'] != null;
+
+                            Color sc = Colors.amber.shade800;
+                            if (status == 'ORDERED') sc = Colors.indigo;
+                            if (status == 'APPROVED') sc = Colors.green;
+                            if (status == 'ISSUED') sc = Colors.blue;
+                            if (status == 'REJECTED') sc = Colors.red;
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(ref, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                      const Spacer(),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(color: sc.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                                        child: Text(status.replaceAll('_', ' '), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: sc)),
+                                      ),
+                                    ],
+                                  ),
+                                  if (status == 'ORDERED') ...[
+                                    const SizedBox(height: 4),
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(color: Colors.indigo.shade50, borderRadius: BorderRadius.circular(6)),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.local_shipping, size: 14, color: Colors.indigo),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              'Ordered: PO #${vr['poNumber'] ?? '-'} • ETA: ${vr['estimatedArrival'] ?? 'TBA'}',
+                                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 4),
+                                  ...lines.map((l) => Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 2),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '• ${l['description'] ?? 'Item'} (x${l['qtyRequested']})',
+                                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                                          ),
+                                        ),
+                                        Text(
+                                          'Issued: ${l['qtyIssued'] ?? 0}',
+                                          style: TextStyle(fontSize: 11, color: (l['qtyIssued'] ?? 0) > 0 ? Colors.green.shade800 : Colors.black54),
+                                        ),
+                                      ],
+                                    ),
+                                  )),
+                                  if (hasIssued && !ack) ...[
+                                    const SizedBox(height: 6),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.green,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 6),
+                                          minimumSize: Size.zero,
+                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        icon: const Icon(Icons.check_circle_outline, size: 14),
+                                        label: const Text('Confirm Physical Receipt', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                        onPressed: () async {
+                                          await _acknowledgeReceipt(vr['id'].toString());
+                                          setSheet(() {});
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                  if (ack) ...[
+                                    const SizedBox(height: 4),
+                                    Text('✓ Receipt confirmed by ${vr['acknowledgedBy'] ?? 'Tech'}', style: TextStyle(fontSize: 10.5, color: Colors.green.shade800, fontWeight: FontWeight.bold)),
+                                  ],
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                  );
+                }),
                 const SizedBox(height: 18),
                 Row(
                   children: [

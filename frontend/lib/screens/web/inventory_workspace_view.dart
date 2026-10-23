@@ -265,7 +265,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
             children: [
               Wrap(
                 spacing: 8,
-                children: ['ALL', 'PENDING', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED']
+                children: ['ALL', 'PENDING', 'ORDERED', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED']
                     .map((s) => ChoiceChip(
                           label: Text(s.replaceAll('_', ' '), style: const TextStyle(fontSize: 11)),
                           selected: _requestFilter == s,
@@ -274,6 +274,17 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                     .toList(),
               ),
               const Spacer(),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F4C81),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('New Vehicle Requisition'),
+                onPressed: () => _showCreateRequisitionDialog(),
+              ),
+              const SizedBox(width: 12),
               Text('Showing ${filtered.length} requests', style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ],
           ),
@@ -303,6 +314,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
 
     Color badgeColor = Colors.grey;
     if (status == 'PENDING') badgeColor = Colors.amber.shade800;
+    if (status == 'ORDERED') badgeColor = Colors.indigo.shade700;
     if (status == 'APPROVED') badgeColor = Colors.blue.shade700;
     if (status == 'PARTIALLY_ISSUED') badgeColor = Colors.cyan.shade700;
     if (status == 'ISSUED') badgeColor = Colors.green.shade700;
@@ -340,6 +352,13 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   onPressed: () => _showDecisionDialog(req, isReject: true),
                 ),
                 const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.amber.shade900),
+                  icon: const Icon(Icons.shopping_cart, size: 16),
+                  label: const Text('Order (PO Needed)'),
+                  onPressed: () => _showOrderDialog(req),
+                ),
+                const SizedBox(width: 8),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
                   icon: const Icon(Icons.check_circle_outline, size: 16),
@@ -347,6 +366,13 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   onPressed: () => _showDecisionDialog(req, isReject: false),
                 ),
               ],
+              if (status == 'ORDERED')
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade800, foregroundColor: Colors.white),
+                  icon: const Icon(Icons.inventory_2_outlined, size: 16),
+                  label: const Text('Mark Received in Store'),
+                  onPressed: () => _showReceiveOrderDialog(req),
+                ),
               if (isApprovedOrPartial)
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
@@ -356,6 +382,55 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 ),
             ],
           ),
+          if (req['vehiclePlate'] != null || req['jobNumber'] != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.blueGrey.shade200),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.directions_car, size: 14, color: Color(0xFF0F4C81)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Vehicle: ${req['vehiclePlate'] ?? 'N/A'}${req['vehicleDescription'] != null ? ' (${req['vehicleDescription']})' : ''}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F4C81)),
+                  ),
+                  if (req['jobNumber'] != null) ...[
+                    const SizedBox(width: 8),
+                    Text('• ${req['jobNumber']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.black87)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+          if (status == 'ORDERED' && req['decisionNotes'] != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.amber.shade300),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.local_shipping, size: 16, color: Colors.brown),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Procurement / PO: ${req['decisionNotes']}',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.brown),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text('Reason: $reason', style: const TextStyle(fontSize: 13)),
           if (req['jobCardId'] != null)
@@ -513,6 +588,476 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
         ],
       ),
     );
+  }
+
+  void _showOrderDialog(dynamic req) {
+    final supplierCtrl = TextEditingController(text: 'AutoXpress / DT Dobie');
+    final poCtrl = TextEditingController(text: 'PO-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}');
+    final etaCtrl = TextEditingController(text: 'Tomorrow 10:00 AM');
+    final costCtrl = TextEditingController(text: '0');
+    final notesCtrl = TextEditingController(text: 'Out of stock in main store; ordered externally for vehicle');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.shopping_cart, color: Colors.amber),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Order from Supplier (${req['reference']})')),
+          ],
+        ),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Target Vehicle: ${req['vehiclePlate'] ?? req['vehicleId'] ?? 'N/A'}${req['jobNumber'] != null ? ' (${req['jobNumber']})' : ''}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.brown),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Technician: ${req['technicianName']} • ${((req['lines'] as List?) ?? []).length} item(s) requested',
+                        style: const TextStyle(fontSize: 12, color: Colors.black87),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: supplierCtrl,
+                  decoration: const InputDecoration(labelText: 'Target Supplier * (e.g. AutoXpress, Toyopet Spares)', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: poCtrl,
+                        decoration: const InputDecoration(labelText: 'PO / Ref Number', border: OutlineInputBorder()),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: etaCtrl,
+                        decoration: const InputDecoration(labelText: 'Expected Delivery (ETA)', border: OutlineInputBorder()),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: costCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Estimated Total Cost (KES)', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: notesCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(labelText: 'Procurement Notes', border: OutlineInputBorder()),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade800, foregroundColor: Colors.white),
+            icon: const Icon(Icons.send, size: 16),
+            label: const Text('Initiate Supplier Order'),
+            onPressed: () async {
+              try {
+                final res = await http.post(
+                  Uri.parse('$_baseUrl/inventory/requests/${req['id']}/decision'),
+                  headers: _headers,
+                  body: json.encode({
+                    'action': 'ORDER',
+                    'supplierName': supplierCtrl.text.trim(),
+                    'poNumber': poCtrl.text.trim(),
+                    'expectedArrival': etaCtrl.text.trim(),
+                    'estimatedCost': double.tryParse(costCtrl.text.trim()) ?? 0,
+                    'notes': notesCtrl.text.trim(),
+                  }),
+                );
+                if (res.statusCode == 200) {
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _toast('Order placed with ${supplierCtrl.text.trim()}! Technician & manager notified.', color: Colors.green);
+                  _fetchAllInventoryData();
+                  widget.onDataChanged();
+                } else {
+                  final err = json.decode(res.body)['error'] ?? 'Order failed';
+                  _toast(err, color: Colors.red);
+                }
+              } catch (e) {
+                _toast('Error: $e', color: Colors.red);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReceiveOrderDialog(dynamic req) {
+    final notesCtrl = TextEditingController(text: 'Parts physically verified and received at Main Store. Ready for collection.');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Receive Ordered Parts (${req['reference']})'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Vehicle: ${req['vehiclePlate'] ?? 'N/A'}${req['jobNumber'] != null ? ' (${req['jobNumber']})' : ''}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text('Technician: ${req['technicianName']}'),
+              const SizedBox(height: 8),
+              if (req['decisionNotes'] != null)
+                Text('Order Details: ${req['decisionNotes']}', style: const TextStyle(fontSize: 12, color: Colors.brown)),
+              const SizedBox(height: 14),
+              const Text(
+                'Confirming receipt marks this requisition as APPROVED and notifies the technician to collect parts.',
+                style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: notesCtrl,
+                decoration: const InputDecoration(labelText: 'Receiving Notes', border: OutlineInputBorder()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+            icon: const Icon(Icons.check_circle, size: 16),
+            label: const Text('Confirm Received in Store'),
+            onPressed: () async {
+              try {
+                final res = await http.post(
+                  Uri.parse('$_baseUrl/inventory/requests/${req['id']}/decision'),
+                  headers: _headers,
+                  body: json.encode({
+                    'action': 'RECEIVE_ORDER',
+                    'notes': notesCtrl.text.trim(),
+                  }),
+                );
+                if (res.statusCode == 200) {
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _toast('Parts received into store and approved for issuance!', color: Colors.green);
+                  _fetchAllInventoryData();
+                  widget.onDataChanged();
+                } else {
+                  final err = json.decode(res.body)['error'] ?? 'Receipt failed';
+                  _toast(err, color: Colors.red);
+                }
+              } catch (e) {
+                _toast('Error: $e', color: Colors.red);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showCreateRequisitionDialog({String? preselectedJobId, String? preselectedVehiclePlate}) async {
+    List<dynamic> activeJobs = [];
+    try {
+      final res = await http.get(Uri.parse('$_baseUrl/jobs'), headers: _headers);
+      if (res.statusCode == 200) {
+        final decoded = json.decode(res.body);
+        if (decoded is List) activeJobs = decoded;
+      }
+    } catch (_) {}
+
+    String? selectedJobId = preselectedJobId;
+    bool isCustomItem = false;
+    Map<String, dynamic>? selectedItem;
+    List<dynamic> catalogResults = [];
+    final customDescCtrl = TextEditingController();
+    String customCategory = 'SPARE_PART';
+    final qtyCtrl = TextEditingController(text: '1');
+    final reasonCtrl = TextEditingController();
+    final techNameCtrl = TextEditingController(text: widget.activeUserName.isNotEmpty ? widget.activeUserName : 'Technician');
+
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setModalState) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.inventory_2_outlined, color: Color(0xFF0F4C81)),
+                SizedBox(width: 8),
+                Text('New Vehicle Part / Item Requisition'),
+              ],
+            ),
+            content: SizedBox(
+              width: 540,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedJobId,
+                      decoration: const InputDecoration(
+                        labelText: 'Assign to Vehicle / Job Card *',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.directions_car),
+                      ),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('-- General Workshop (No Vehicle Assigned) --')),
+                        ...activeJobs.map((j) {
+                          final plate = j['vehicle']?['registrationNo'] ?? j['vehiclePlate'] ?? 'Vehicle';
+                          final make = j['vehicle']?['make'] ?? '';
+                          final model = j['vehicle']?['model'] ?? '';
+                          final jNo = j['jobNumber'] ?? j['id'].toString().substring(0, 8).toUpperCase();
+                          return DropdownMenuItem<String>(
+                            value: j['id'].toString(),
+                            child: Text('$plate ${make.isNotEmpty ? "($make $model)" : ""} • $jNo', style: const TextStyle(fontSize: 13)),
+                          );
+                        }),
+                      ],
+                      onChanged: (v) => setModalState(() => selectedJobId = v),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: techNameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Technician / Requester Name *',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setModalState(() => isCustomItem = false),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: !isCustomItem ? const Color(0xFF0F4C81) : Colors.grey.shade200,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Inventory Catalog',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: !isCustomItem ? Colors.white : Colors.black87),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setModalState(() => isCustomItem = true),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isCustomItem ? Colors.amber.shade800 : Colors.grey.shade200,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Custom / Order Needed',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isCustomItem ? Colors.white : Colors.black87),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (!isCustomItem) ...[
+                      TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Search stock catalog by name or part #...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onChanged: (q) async {
+                          if (q.length < 2) { setModalState(() => catalogResults = []); return; }
+                          try {
+                            final res = await http.get(Uri.parse('$_baseUrl/inventory/catalog?search=$q'), headers: _headers);
+                            if (res.statusCode == 200) {
+                              setModalState(() => catalogResults = json.decode(res.body));
+                            }
+                          } catch (_) {}
+                        },
+                      ),
+                      if (catalogResults.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 160),
+                          decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: catalogResults.length,
+                            itemBuilder: (_, i) {
+                              final item = catalogResults[i];
+                              return ListTile(
+                                dense: true,
+                                title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                subtitle: Text('Stock: ${item['quantity'] ?? 0}  |  ${item['category']}  |  ${item['location'] ?? 'Main Store'}', style: const TextStyle(fontSize: 11)),
+                                selected: selectedItem?['id'] == item['id'],
+                                selectedTileColor: Colors.blue.shade50,
+                                onTap: () => setModalState(() {
+                                  selectedItem = Map<String, dynamic>.from(item);
+                                  catalogResults = [];
+                                }),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                      if (selectedItem != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.green.shade200)),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text('Selected: ${selectedItem!['name']} (Stock: ${selectedItem!['quantity'] ?? 0})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ] else ...[
+                      TextField(
+                        controller: customDescCtrl,
+                        decoration: const InputDecoration(labelText: 'Part / Supply Name * (e.g. Brake Caliper Kit)', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: customCategory,
+                        decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem(value: 'SPARE_PART', child: Text('Spare Part (Vehicle Repair)')),
+                          DropdownMenuItem(value: 'CONSUMABLE', child: Text('Workshop Consumable')),
+                          DropdownMenuItem(value: 'TOOL_EQUIPMENT', child: Text('Tool / Special Equipment')),
+                        ],
+                        onChanged: (v) => setModalState(() => customCategory = v ?? 'SPARE_PART'),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Quantity Required *', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: reasonCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Reason for Request *',
+                        hintText: 'e.g. Replacement needed during 50,000 km service',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
+                icon: const Icon(Icons.send, size: 16),
+                label: const Text('Submit Requisition'),
+                onPressed: () async {
+                  if (!isCustomItem && selectedItem == null) {
+                    _toast('Please select an item from catalog or switch to Custom Item', color: Colors.orange);
+                    return;
+                  }
+                  if (isCustomItem && customDescCtrl.text.trim().isEmpty) {
+                    _toast('Please enter part description', color: Colors.orange);
+                    return;
+                  }
+                  if (reasonCtrl.text.trim().isEmpty) {
+                    _toast('Please provide a reason', color: Colors.orange);
+                    return;
+                  }
+
+                  final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                  final line = isCustomItem
+                      ? {
+                          'category': customCategory,
+                          'description': customDescCtrl.text.trim(),
+                          'quantity': qty,
+                        }
+                      : {
+                          'category': selectedItem!['category'],
+                          'itemId': selectedItem!['id'],
+                          'description': selectedItem!['name'],
+                          'quantity': qty,
+                        };
+
+                  final body = <String, dynamic>{
+                    'reason': reasonCtrl.text.trim(),
+                    'technicianName': techNameCtrl.text.trim(),
+                    'lines': [line],
+                  };
+                  if (selectedJobId != null) body['jobCardId'] = selectedJobId;
+
+                  try {
+                    final res = await http.post(
+                      Uri.parse('$_baseUrl/inventory/requests'),
+                      headers: _headers,
+                      body: json.encode(body),
+                    );
+                    if (res.statusCode == 201) {
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _toast('Requisition submitted successfully! Tracking under vehicle.', color: Colors.green);
+                      _fetchAllInventoryData();
+                      widget.onDataChanged();
+                    } else {
+                      final err = json.decode(res.body)['error'] ?? 'Submission failed';
+                      _toast(err, color: Colors.red);
+                    }
+                  } catch (e) {
+                    _toast('Error: $e', color: Colors.red);
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    }
   }
 
   void _showIssueItemsDialog(dynamic req) {
