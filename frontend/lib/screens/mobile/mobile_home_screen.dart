@@ -49,6 +49,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   List<DamageMarker> _damageMarkers = [];
   ReceivingMemoDetails _memoDetails = ReceivingMemoDetails();
   bool _signatureCaptured = false;
+  Map<String, String> _diagnostics = {
+    'Engine': 'Pass',
+    'Brakes': 'Pass',
+    'Suspension': 'Pass',
+    'Tyres': 'Pass',
+    'Battery': 'Pass',
+    'Electrical': 'Pass',
+    'AC': 'Pass',
+    'Transmission': 'Pass',
+  };
 
   @override
   void initState() {
@@ -133,11 +143,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           'status': 'BOOKED',
           'diagnosticChecklist': {
             'obdCodes': _obdController.text.trim(),
+            'diagnostics': _diagnostics,
           },
           'walkAroundData': {
             'bodyType': _selectedBodyType.name,
             'markers': _damageMarkers.map((m) => m.toJson()).toList(),
             'memoDetails': _memoDetails.toJson(),
+            'diagnostics': _diagnostics,
+            'obdCodes': _obdController.text.trim(),
             'signed': _signatureCaptured,
             'capturedAt': DateTime.now().toIso8601String(),
           },
@@ -163,6 +176,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           _damageMarkers = [];
           _memoDetails = ReceivingMemoDetails();
           _signatureCaptured = false;
+          _diagnostics = {
+            'Engine': 'Pass',
+            'Brakes': 'Pass',
+            'Suspension': 'Pass',
+            'Tyres': 'Pass',
+            'Battery': 'Pass',
+            'Electrical': 'Pass',
+            'AC': 'Pass',
+            'Transmission': 'Pass',
+          };
           _selectedIndex = 1; // Switch to Jobs list to see it
         });
         _fetchJobs();
@@ -1419,10 +1442,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   void _openJobSheet(Map<String, dynamic> job, {required bool techMode}) {
     final walk = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
     final tech = walk['techInspection'] is Map ? Map<String, dynamic>.from(walk['techInspection']) : <String, dynamic>{};
+    final rawDiag = walk['diagnostics'] is Map ? Map<String, dynamic>.from(walk['diagnostics']) : <String, dynamic>{};
+    final sheetDiag = <String, String>{
+      'Engine': rawDiag['Engine']?.toString() ?? 'Pass',
+      'Brakes': rawDiag['Brakes']?.toString() ?? 'Pass',
+      'Suspension': rawDiag['Suspension']?.toString() ?? 'Pass',
+      'Tyres': rawDiag['Tyres']?.toString() ?? 'Pass',
+      'Battery': rawDiag['Battery']?.toString() ?? 'Pass',
+      'Electrical': rawDiag['Electrical']?.toString() ?? 'Pass',
+      'AC': rawDiag['AC']?.toString() ?? 'Pass',
+      'Transmission': rawDiag['Transmission']?.toString() ?? 'Pass',
+    };
     final results = <String, String>{
       for (final p in _inspectionPoints) p: (tech['results'] is Map ? tech['results'][p]?.toString() : null) ?? '',
     };
-    final obdCtrl = TextEditingController(text: tech['obdCodes']?.toString() ?? '');
+    final obdCtrl = TextEditingController(text: walk['obdCodes']?.toString() ?? tech['obdCodes']?.toString() ?? '');
     final notesCtrl = TextEditingController(text: tech['notes']?.toString() ?? '');
     final hoursCtrl = TextEditingController(text: job['actualHours']?.toString() ?? '');
     String status = (job['status'] ?? 'BOOKED').toString();
@@ -1545,6 +1579,69 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     ],
                   ),
                 ],
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blueGrey.shade100),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Mechanical & OBD-II Diagnostic Health Check (Tap to toggle Pass / Attention / Fail)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: sheetDiag.keys.map((sys) {
+                          final currentVal = sheetDiag[sys] ?? 'Pass';
+                          final chipColor = currentVal == 'Pass'
+                              ? Colors.green
+                              : currentVal == 'Attention'
+                                  ? Colors.orange
+                                  : Colors.red;
+                          return InkWell(
+                            onTap: () {
+                              setSheet(() {
+                                sheetDiag[sys] = currentVal == 'Pass'
+                                    ? 'Attention'
+                                    : currentVal == 'Attention'
+                                        ? 'Fail'
+                                        : 'Pass';
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: chipColor.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: chipColor.withValues(alpha: 0.5)),
+                              ),
+                              child: Text(
+                                '$sys: $currentVal',
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: chipColor),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: obdCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'OBD-II Fault Codes / Scanner Notes (e.g. P0300 Random Misfire, ABS C1201)',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 18),
                 Row(
                   children: [
@@ -1577,6 +1674,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                             : () async {
                                 setSheet(() => saving = true);
                                 final body = <String, dynamic>{'status': status};
+                                walk['diagnostics'] = sheetDiag;
+                                walk['obdCodes'] = obdCtrl.text.trim();
                                 if (techMode) {
                                   walk['techInspection'] = {
                                     'results': results,
@@ -1585,12 +1684,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                     'by': _techName,
                                     'updatedAt': DateTime.now().toIso8601String(),
                                   };
-                                  body['walkAroundData'] = walk;
                                   final h = double.tryParse(hoursCtrl.text.trim());
                                   if (h != null) body['actualHours'] = h;
                                 } else {
                                   body['technician'] = assigned;
                                 }
+                                body['walkAroundData'] = walk;
                                 final ok = await _putJob(job['id'].toString(), body);
                                 if (ctx.mounted) Navigator.pop(ctx);
                                 _toast(ok ? 'Job updated' : 'Failed to update job', color: ok ? Colors.green : Colors.red);
@@ -1701,32 +1800,82 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _bayNumber,
-                  decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
-                  items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
-                      .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-                      .toList(),
-                  onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _obdController,
-                  decoration: const InputDecoration(labelText: 'OBD-II Codes (e.g. P0300)', border: OutlineInputBorder()),
-                ),
-              ),
-            ],
+          DropdownButtonFormField<String>(
+            value: _bayNumber,
+            decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
+            items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
+                .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                .toList(),
+            onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _serviceController,
             maxLines: 2,
             decoration: const InputDecoration(labelText: 'Work Requested / Customer Notes', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blueGrey.shade100),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Mechanical & OBD-II Diagnostic Health Check (Tap to toggle Pass / Attention / Fail)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: _diagnostics.keys.map((sys) {
+                    final currentVal = _diagnostics[sys] ?? 'Pass';
+                    final chipColor = currentVal == 'Pass'
+                        ? Colors.green
+                        : currentVal == 'Attention'
+                            ? Colors.orange
+                            : Colors.red;
+                    return InkWell(
+                      onTap: () {
+                        setState(() {
+                          _diagnostics[sys] = currentVal == 'Pass'
+                              ? 'Attention'
+                              : currentVal == 'Attention'
+                                  ? 'Fail'
+                                  : 'Pass';
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: chipColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: chipColor.withValues(alpha: 0.5)),
+                        ),
+                        child: Text(
+                          '$sys: $currentVal',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: chipColor),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _obdController,
+                  decoration: const InputDecoration(
+                    labelText: 'OBD-II Fault Codes / Scanner Notes (e.g. P0300 Random Misfire, ABS C1201)',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           WalkAroundChecklistWidget(
