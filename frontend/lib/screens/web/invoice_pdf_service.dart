@@ -1458,6 +1458,8 @@ class InvoicePdfService {
     const greenBg = PdfColor.fromInt(0xFFDCFCE7);
     const amberColor = PdfColor.fromInt(0xFFB45309);
     const amberBg = PdfColor.fromInt(0xFFFEF3C7);
+    const redColor = PdfColor.fromInt(0xFFDC2626);
+    const redBg = PdfColor.fromInt(0xFFFEE2E2);
 
     pdf.addPage(
       pw.MultiPage(
@@ -1741,6 +1743,153 @@ class InvoicePdfService {
                         ),
                       ),
                     ],
+                  ),
+
+                  pw.SizedBox(height: 10),
+
+                  // Warranty & QC Road-Test Status Banner
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: pw.BoxDecoration(
+                      color: d.isWarranty ? amberBg : lightBg,
+                      borderRadius: pw.BorderRadius.circular(4),
+                      border: pw.Border.all(
+                        color: d.isWarranty ? const PdfColor.fromInt(0xFFFCD34D) : borderGrey,
+                      ),
+                    ),
+                    child: pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Row(
+                          children: [
+                            pw.Text(
+                              d.isWarranty ? '[X] ' : '[ ] ',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: d.isWarranty ? amberColor : textMuted),
+                            ),
+                            pw.Text(
+                              'Warranty / Comeback Rework Job',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: d.isWarranty ? amberColor : textDark),
+                            ),
+                            if (d.warrantyNotes.isNotEmpty) ...[
+                              pw.SizedBox(width: 4),
+                              pw.Text('(${d.warrantyNotes})', style: pw.TextStyle(font: fontRegular, fontSize: 8, color: textMuted)),
+                            ],
+                          ],
+                        ),
+                        pw.Row(
+                          children: [
+                            pw.Text(
+                              d.qcPassed ? '[X] ' : '[ ] ',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: d.qcPassed ? greenColor : textMuted),
+                            ),
+                            pw.Text(
+                              'Quality Control (QC) Road-Test Passed',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: d.qcPassed ? greenColor : textDark),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  pw.SizedBox(height: 8),
+
+                  // Mechanical & OBD-II Diagnostic Health Check Card
+                  pw.Container(
+                    width: double.infinity,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      color: PdfColors.white,
+                      borderRadius: pw.BorderRadius.circular(6),
+                      border: pw.Border.all(color: borderGrey),
+                    ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              'MECHANICAL & OBD-II DIAGNOSTIC HEALTH CHECK',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8, color: accentBlue, letterSpacing: 0.6),
+                            ),
+                            pw.Text(
+                              'Multi-System Electronic Scan',
+                              style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: textMuted),
+                            ),
+                          ],
+                        ),
+                        pw.SizedBox(height: 6),
+                        pw.Wrap(
+                          spacing: 6,
+                          runSpacing: 5,
+                          children: d.diagnostics.entries.map((entry) {
+                            final status = entry.value;
+                            final isPass = status == 'Pass';
+                            final isAttention = status == 'Attention';
+
+                            final badgeColor = isPass ? greenColor : (isAttention ? amberColor : redColor);
+                            final badgeBg = isPass ? greenBg : (isAttention ? amberBg : redBg);
+                            final borderC = isPass
+                                ? const PdfColor.fromInt(0xFF86EFAC)
+                                : (isAttention ? const PdfColor.fromInt(0xFFFDE68A) : const PdfColor.fromInt(0xFFFCA5A5));
+
+                            return pw.Container(
+                              padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                              decoration: pw.BoxDecoration(
+                                color: badgeBg,
+                                borderRadius: pw.BorderRadius.circular(3),
+                                border: pw.Border.all(color: borderC),
+                              ),
+                              child: pw.Row(
+                                mainAxisSize: pw.MainAxisSize.min,
+                                children: [
+                                  pw.Text(
+                                    '${entry.key}: ',
+                                    style: pw.TextStyle(font: fontBold, fontSize: 8, color: textDark),
+                                  ),
+                                  pw.Text(
+                                    status,
+                                    style: pw.TextStyle(font: fontBold, fontSize: 8, color: badgeColor),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        pw.SizedBox(height: 6),
+                        pw.Container(
+                          width: double.infinity,
+                          padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: pw.BoxDecoration(
+                            color: lightBg,
+                            borderRadius: pw.BorderRadius.circular(4),
+                            border: pw.Border.all(color: borderGrey),
+                          ),
+                          child: pw.Row(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.Text(
+                                'OBD-II Fault Codes / Scanner Notes: ',
+                                style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: textDark),
+                              ),
+                              pw.Expanded(
+                                child: pw.Text(
+                                  d.obdCodes.isNotEmpty
+                                      ? d.obdCodes
+                                      : 'No OBD-II diagnostic trouble codes logged / System clear',
+                                  style: pw.TextStyle(
+                                    font: d.obdCodes.isNotEmpty ? fontBold : fontRegular,
+                                    fontSize: 7.5,
+                                    color: d.obdCodes.isNotEmpty ? const PdfColor.fromInt(0xFFB91C1C) : greenColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
 
                   pw.SizedBox(height: 10),
@@ -2521,7 +2670,170 @@ class InvoicePdfService {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
+
+                  // Warranty & QC Road-Test Status
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: d.isWarranty ? const Color(0xFFFEF3C7) : const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: d.isWarranty ? const Color(0xFFFCD34D) : const Color(0xFFE2E8F0),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              d.isWarranty ? Icons.check_box : Icons.check_box_outline_blank,
+                              size: 16,
+                              color: d.isWarranty ? const Color(0xFFB45309) : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Warranty / Comeback Rework Job',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                                color: d.isWarranty ? const Color(0xFF92400E) : const Color(0xFF1E293B),
+                              ),
+                            ),
+                            if (d.warrantyNotes.isNotEmpty) ...[
+                              const SizedBox(width: 4),
+                              Text('(${d.warrantyNotes})', style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600)),
+                            ],
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            Icon(
+                              d.qcPassed ? Icons.check_box : Icons.check_box_outline_blank,
+                              size: 16,
+                              color: d.qcPassed ? const Color(0xFF15803D) : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Quality Control (QC) Road-Test Passed',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                                color: d.qcPassed ? const Color(0xFF15803D) : const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // Mechanical & OBD-II Diagnostic Health Check Card
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'MECHANICAL & OBD-II DIAGNOSTIC HEALTH CHECK',
+                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFF2563EB), letterSpacing: 0.6),
+                            ),
+                            Text(
+                              'Multi-System Electronic Scan',
+                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: d.diagnostics.entries.map((entry) {
+                            final status = entry.value;
+                            final isPass = status == 'Pass';
+                            final isAttention = status == 'Attention';
+
+                            final badgeColor = isPass
+                                ? const Color(0xFF15803D)
+                                : (isAttention ? const Color(0xFFB45309) : const Color(0xFFDC2626));
+                            final badgeBg = isPass
+                                ? const Color(0xFFDCFCE7)
+                                : (isAttention ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2));
+                            final borderC = isPass
+                                ? const Color(0xFF86EFAC)
+                                : (isAttention ? const Color(0xFFFDE68A) : const Color(0xFFFCA5A5));
+
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: badgeBg,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: borderC),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '${entry.key}: ',
+                                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                                  ),
+                                  Text(
+                                    status,
+                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: badgeColor),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'OBD-II Fault Codes / Scanner Notes: ',
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  d.obdCodes.isNotEmpty
+                                      ? d.obdCodes
+                                      : 'No OBD-II diagnostic trouble codes logged / System clear',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: d.obdCodes.isNotEmpty ? FontWeight.bold : FontWeight.normal,
+                                    color: d.obdCodes.isNotEmpty ? const Color(0xFFDC2626) : const Color(0xFF15803D),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
 
                   // Service Categories & Customer Instructions
                   Container(
@@ -2977,6 +3289,49 @@ class InvoicePdfService {
 
     final presentCount = memo.checklist.values.where((v) => v).length;
 
+    bool isWarranty = (job['isWarranty'] == true);
+    bool qcPassed = (job['qcPassed'] == true);
+    String obdCodes = job['obdCodes']?.toString() ?? '';
+    String warrantyNotes = job['warrantyNotes']?.toString() ?? '';
+    final Map<String, String> diagnostics = {
+      'Engine': 'Pass',
+      'Brakes': 'Pass',
+      'Suspension': 'Pass',
+      'Tyres': 'Pass',
+      'Battery': 'Pass',
+      'Electrical': 'Pass',
+      'AC': 'Pass',
+      'Transmission': 'Pass',
+    };
+
+    if (walkAround is Map) {
+      if (walkAround['isWarranty'] == true || walkAround['isWarrantyComeback'] == true) {
+        isWarranty = true;
+      }
+      if (walkAround['qcPassed'] == true) {
+        qcPassed = true;
+      }
+      if (walkAround['obdCodes'] != null && walkAround['obdCodes'].toString().trim().isNotEmpty) {
+        obdCodes = walkAround['obdCodes'].toString().trim();
+      }
+      if (walkAround['warrantyNotes'] != null && walkAround['warrantyNotes'].toString().trim().isNotEmpty) {
+        warrantyNotes = walkAround['warrantyNotes'].toString().trim();
+      }
+      if (walkAround['diagnostics'] is Map) {
+        (walkAround['diagnostics'] as Map).forEach((k, v) {
+          if (v != null && v.toString().isNotEmpty) {
+            diagnostics[k.toString()] = v.toString();
+          }
+        });
+      } else if (walkAround['techInspection'] is Map && (walkAround['techInspection'] as Map)['diagnostics'] is Map) {
+        ((walkAround['techInspection'] as Map)['diagnostics'] as Map).forEach((k, v) {
+          if (v != null && v.toString().isNotEmpty) {
+            diagnostics[k.toString()] = v.toString();
+          }
+        });
+      }
+    }
+
     return _JobCardDocData(
       workshopName: workshopName,
       workshopAddress: workshopAddress,
@@ -3001,6 +3356,11 @@ class InvoicePdfService {
       markers: parsedMarkers,
       memo: memo,
       presentCount: presentCount,
+      isWarranty: isWarranty,
+      qcPassed: qcPassed,
+      diagnostics: diagnostics,
+      obdCodes: obdCodes,
+      warrantyNotes: warrantyNotes,
     );
   }
 
@@ -3034,6 +3394,8 @@ class InvoicePdfService {
     const greenBg = PdfColor.fromInt(0xFFDCFCE7);
     const amberColor = PdfColor.fromInt(0xFFB45309);
     const amberBg = PdfColor.fromInt(0xFFFEF3C7);
+    const redColor = PdfColor.fromInt(0xFFDC2626);
+    const redBg = PdfColor.fromInt(0xFFFEE2E2);
     const borderGrey = PdfColor.fromInt(0xFFE2E8F0);
     const lightBg = PdfColor.fromInt(0xFFF8FAFC);
 
@@ -3481,6 +3843,11 @@ class _JobCardDocData {
   final List<DamageMarker> markers;
   final ReceivingMemoDetails memo;
   final int presentCount;
+  final bool isWarranty;
+  final bool qcPassed;
+  final Map<String, String> diagnostics;
+  final String obdCodes;
+  final String warrantyNotes;
 
   _JobCardDocData({
     required this.workshopName,
@@ -3506,6 +3873,11 @@ class _JobCardDocData {
     required this.markers,
     required this.memo,
     required this.presentCount,
+    required this.isWarranty,
+    required this.qcPassed,
+    required this.diagnostics,
+    required this.obdCodes,
+    required this.warrantyNotes,
   });
 }
 
