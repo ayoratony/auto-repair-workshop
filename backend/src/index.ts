@@ -1534,14 +1534,28 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
     const compactPlate = cleanPlate.replace(/[\s\-_]/g, '');
     const tenant = await getActiveTenant();
 
+    // Build flexible search terms: full input, stripped spaces, prefix and number
+    const searchTerms = new Set<string>();
+    searchTerms.add(cleanPlate);
+    searchTerms.add(compactPlate);
+    if (compactPlate.length >= 3) {
+      searchTerms.add(compactPlate.substring(0, 3));
+    }
+    if (compactPlate.length >= 4) {
+      searchTerms.add(compactPlate.substring(compactPlate.length - 4));
+    }
+
+    const orConditions = Array.from(searchTerms)
+      .filter((t) => t.length >= 2)
+      .map((term) => ({
+        registrationNo: { contains: term, mode: 'insensitive' as const },
+      }));
+
     // Search vehicles under active workshop tenant matching the plate
     const vehicles = await prisma.vehicle.findMany({
       where: {
         customer: { tenantId: tenant.id },
-        registrationNo: {
-          contains: compactPlate.length >= 3 ? compactPlate : cleanPlate,
-          mode: 'insensitive',
-        },
+        OR: orConditions.length > 0 ? orConditions : [{ registrationNo: { contains: cleanPlate, mode: 'insensitive' } }],
       },
       include: {
         customer: true,
@@ -1555,17 +1569,19 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
           },
         },
       },
-      take: 10,
+      take: 20,
     });
 
-    // Try finding exact sanitized match first
+    // Try finding exact sanitized match first (ignoring spaces, hyphens, case)
     let matchedVehicle = vehicles.find(
       (v) => v.registrationNo.replace(/[\s\-_]/g, '').toUpperCase() === compactPlate
     );
 
     // Fallback to substring match or first found
     if (!matchedVehicle && vehicles.length > 0) {
-      matchedVehicle = vehicles[0];
+      matchedVehicle = vehicles.find((v) =>
+        v.registrationNo.replace(/[\s\-_]/g, '').toUpperCase().includes(compactPlate)
+      ) || vehicles[0];
     }
 
     if (!matchedVehicle) {
