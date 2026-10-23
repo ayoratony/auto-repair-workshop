@@ -599,76 +599,91 @@ class InvoicePdfService {
       builder: (ctx) {
         return Dialog(
           backgroundColor: const Color(0xFF1E293B),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           child: SizedBox(
             width: 900,
-            height: 820,
+            height: MediaQuery.of(ctx).size.height * 0.9,
             child: Column(
               children: [
-                // Top Action Bar
+                // Top Action Bar (Fully Responsive to avoid overflow)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: const BoxDecoration(
                     color: Color(0xFF0F172A),
                     borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.description_outlined, color: Colors.white),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          '${isInvoice ? "A4 Tax Invoice" : "A4 Official Estimate"} — $fileName',
-                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
+                      Row(
+                        children: [
+                          const Icon(Icons.description_outlined, color: Colors.white, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '${isInvoice ? "A4 Tax Invoice" : "A4 Official Estimate"} \u2014 $fileName',
+                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            tooltip: 'Close',
+                          ),
+                        ],
                       ),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          await printDocument(
-                            workshopSettings: workshopSettings,
-                            estimate: estimate,
-                            invoice: invoice,
-                            isInvoice: isInvoice,
-                          );
-                        },
-                        icon: const Icon(Icons.print, size: 16),
-                        label: const Text('Print A4'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          await exportPdfFile(
-                            workshopSettings: workshopSettings,
-                            estimate: estimate,
-                            invoice: invoice,
-                            isInvoice: isInvoice,
-                          );
-                          if (ctx.mounted) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              SnackBar(
-                                backgroundColor: Colors.green.shade700,
-                                content: Text('Downloaded $fileName.pdf'),
-                              ),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.download, size: 16),
-                        label: const Text('Export PDF'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade700,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        icon: const Icon(Icons.close, color: Colors.white70),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              await printDocument(
+                                workshopSettings: workshopSettings,
+                                estimate: estimate,
+                                invoice: invoice,
+                                isInvoice: isInvoice,
+                              );
+                            },
+                            icon: const Icon(Icons.print, size: 16),
+                            label: const Text('Print A4', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              await exportPdfFile(
+                                workshopSettings: workshopSettings,
+                                estimate: estimate,
+                                invoice: invoice,
+                                isInvoice: isInvoice,
+                              );
+                              if (ctx.mounted) {
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: Colors.green.shade700,
+                                    content: Text('Downloaded $fileName.pdf'),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.download, size: 16),
+                            label: const Text('Export PDF', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.shade700,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -2134,6 +2149,7 @@ class InvoicePdfService {
           builder: (context, setModalState) {
             return Dialog(
               backgroundColor: const Color(0xFF0F172A),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               clipBehavior: Clip.antiAlias,
               child: SizedBox(
@@ -2141,45 +2157,52 @@ class InvoicePdfService {
                 height: MediaQuery.of(context).size.height * 0.90,
                 child: Column(
                   children: [
-                    // Top Action Bar
+                    // Top Action Bar (Fully Responsive to avoid any pixel overflow on mobile)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                       color: const Color(0xFF1E293B),
-                      child: Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 12,
-                        runSpacing: 8,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Container(
-                                padding: const EdgeInsets.all(8),
+                                padding: const EdgeInsets.all(7),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF2563EB).withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: const Icon(Icons.assignment_turned_in_outlined, color: Color(0xFF60A5FA), size: 22),
+                                child: const Icon(Icons.assignment_turned_in_outlined, color: Color(0xFF60A5FA), size: 20),
                               ),
-                              const SizedBox(width: 12),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'A4 Job Card & Receiving Memo (Customer Copy) — ${d.jobNumber}',
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                                  ),
-                                  Text(
-                                    '${d.regNo} (${d.makeModel}) • Customer: ${d.customerName}',
-                                    style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
-                                  ),
-                                ],
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'A4 Job Card & Receiving Memo \u2014 ${d.jobNumber}',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      '${d.regNo} (${d.makeModel}) \u2022 Customer: ${d.customerName}',
+                                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                                onPressed: () => Navigator.pop(ctx),
+                                tooltip: 'Close Preview',
                               ),
                             ],
                           ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
                             children: [
                               OutlinedButton.icon(
                                 onPressed: isProcessing
@@ -2201,14 +2224,13 @@ class InvoicePdfService {
                                           if (ctx.mounted) setModalState(() => isProcessing = false);
                                         }
                                       },
-                                icon: const Icon(Icons.print_outlined, size: 18, color: Colors.white),
-                                label: const Text('Print Customer Copy', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                                icon: const Icon(Icons.print_outlined, size: 16, color: Colors.white),
+                                label: const Text('Print Customer Copy', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(color: Color(0xFF475569)),
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                 ),
                               ),
-                              const SizedBox(width: 10),
                               ElevatedButton.icon(
                                 onPressed: isProcessing
                                     ? null
@@ -2239,23 +2261,17 @@ class InvoicePdfService {
                                       },
                                 icon: isProcessing
                                     ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
+                                        width: 14,
+                                        height: 14,
                                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                       )
-                                    : const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                                label: const Text('Download PDF', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    : const Icon(Icons.picture_as_pdf_outlined, size: 16),
+                                label: const Text('Download PDF', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF2563EB),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                onPressed: () => Navigator.pop(ctx),
-                                icon: const Icon(Icons.close, color: Colors.white70),
-                                tooltip: 'Close Preview',
                               ),
                             ],
                           ),
@@ -3257,33 +3273,47 @@ class InvoicePdfService {
       builder: (ctx) {
         return Dialog(
           backgroundColor: const Color(0xFF0F172A),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           child: SizedBox(
             width: 820,
             height: MediaQuery.of(ctx).size.height * 0.9,
             child: Column(
               children: [
+                // Top Action Bar (Fully Responsive to avoid overflow)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: const BoxDecoration(
                     color: Color(0xFF1E293B),
                     borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.verified_outlined, color: Colors.greenAccent),
+                          const Icon(Icons.verified_outlined, color: Colors.greenAccent, size: 20),
                           const SizedBox(width: 10),
-                          Text(
-                            'Official Payment Receipt & Gate Pass (${d.regNo})',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                          Expanded(
+                            child: Text(
+                              'Official Payment Receipt & Gate Pass (${d.regNo})',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            tooltip: 'Close',
                           ),
                         ],
                       ),
-                      Row(
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
                         children: [
                           ElevatedButton.icon(
                             onPressed: () async {
@@ -3294,10 +3324,13 @@ class InvoicePdfService {
                               await printPdfBytesImpl(bytes, fileName);
                             },
                             icon: const Icon(Icons.print, size: 16),
-                            label: const Text('Print Receipt & Gate Pass'),
-                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+                            label: const Text('Print Receipt & Gate Pass', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            ),
                           ),
-                          const SizedBox(width: 10),
                           OutlinedButton.icon(
                             onPressed: () async {
                               final bytes = await generatePaymentReceiptPdf(
@@ -3307,12 +3340,11 @@ class InvoicePdfService {
                               await saveAndDownloadPdfImpl(bytes, '$fileName.pdf');
                             },
                             icon: const Icon(Icons.download, size: 16, color: Colors.white),
-                            label: const Text('Download PDF', style: TextStyle(color: Colors.white)),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            icon: const Icon(Icons.close, color: Colors.white70),
+                            label: const Text('Download PDF', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF475569)),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            ),
                           ),
                         ],
                       ),

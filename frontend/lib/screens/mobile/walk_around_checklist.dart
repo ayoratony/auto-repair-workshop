@@ -316,14 +316,16 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
             runSpacing: 12,
             children: [
               SizedBox(
-                width: 170,
+                width: 200,
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
+                  iconSize: 20,
                   value: kVisitTypes.contains(d.visitType) ? d.visitType : kVisitTypes.first,
                   decoration: const InputDecoration(
                     labelText: 'Customer Visit Type',
                     border: OutlineInputBorder(),
                     isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   items: kVisitTypes
                       .map((v) => DropdownMenuItem(
@@ -340,14 +342,16 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
                 ),
               ),
               SizedBox(
-                width: 180,
+                width: 200,
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
+                  iconSize: 20,
                   value: kPaymentModes.contains(d.paymentMode) ? d.paymentMode : kPaymentModes.first,
                   decoration: const InputDecoration(
                     labelText: 'Mode of Payment',
                     border: OutlineInputBorder(),
                     isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   items: kPaymentModes
                       .map((p) => DropdownMenuItem(
@@ -367,11 +371,13 @@ class _WalkAroundChecklistWidgetState extends State<WalkAroundChecklistWidget> {
                 width: 250,
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
+                  iconSize: 20,
                   value: kWorkshopSections.contains(d.workshopSection) ? d.workshopSection : kWorkshopSections.first,
                   decoration: const InputDecoration(
                     labelText: 'Workshop Section (LC/HC/Body)',
                     border: OutlineInputBorder(),
                     isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   items: kWorkshopSections
                       .map((s) => DropdownMenuItem(

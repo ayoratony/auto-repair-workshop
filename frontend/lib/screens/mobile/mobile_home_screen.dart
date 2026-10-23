@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../web/invoice_pdf_service.dart';
+import '../web/estimate_form.dart';
 import 'vehicle_damage_map.dart';
 import 'walk_around_checklist.dart';
 import '../../services/auth_service.dart';
@@ -812,6 +813,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             : null,
       ),
       body: _isAdvisor ? _buildAdvisorBody() : _buildTechnicianBody(),
+      floatingActionButton: (_isAdvisor && _selectedIndex == 3)
+          ? FloatingActionButton.extended(
+              backgroundColor: const Color(0xFF2563EB),
+              foregroundColor: Colors.white,
+              elevation: 4,
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('New Estimate', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              onPressed: () => _openCreateEstimateModal(),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         backgroundColor: Colors.white,
@@ -1627,6 +1638,64 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     }
   }
 
+  void _openCreateEstimateModal({String? initialJobCardId}) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.90,
+          minChildSize: 0.50,
+          maxChildSize: 0.96,
+          builder: (_, scrollController) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 10, bottom: 6),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: EdgeInsets.only(
+                        left: 14,
+                        right: 14,
+                        bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+                        top: 4,
+                      ),
+                      child: EstimateForm(
+                        initialJobCardId: initialJobCardId,
+                        isModal: true,
+                        onCancel: () => Navigator.pop(ctx),
+                        onSaved: () {
+                          Navigator.pop(ctx);
+                          _fetchJobs();
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildQuotesView() {
     if (_isLoadingJobs && _estimates.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -1705,6 +1774,23 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
+                // Create New Estimate Banner Button for Advisors
+                SizedBox(
+                  width: double.infinity,
+                  height: 42,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _openCreateEstimateModal(),
+                    icon: const Icon(Icons.add_circle, size: 18),
+                    label: const Text('Create New Estimate / Quotation', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 // Search Input
                 Container(
                   height: 42,
@@ -1748,18 +1834,33 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           Expanded(
             child: filtered.isEmpty
                 ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.request_quote_outlined, size: 60, color: Colors.grey.shade400),
-                        const SizedBox(height: 12),
-                        Text(
-                          _quoteSearch.isNotEmpty || _quoteStatusFilter != 'ALL' ? 'No quotations match filters.' : 'No quotations yet.',
-                          style: TextStyle(color: Colors.grey.shade600, fontSize: 15, fontWeight: FontWeight.w500),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text('Estimates created from Job Cards will appear here.', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.request_quote_outlined, size: 60, color: Colors.grey.shade400),
+                          const SizedBox(height: 12),
+                          Text(
+                            _quoteSearch.isNotEmpty || _quoteStatusFilter != 'ALL' ? 'No quotations match filters.' : 'No quotations yet.',
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 15, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text('Estimates created from Job Cards will appear here.', style: TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: () => _openCreateEstimateModal(),
+                            icon: const Icon(Icons.add, size: 16),
+                            label: const Text('Create New Estimate', style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -2379,7 +2480,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     label: const Text('Status', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81))),
                   ),
                   const SizedBox(width: 8),
-                  // Quotes shortcut
+                  // Quotes shortcut / Quick Create Estimate
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -2389,13 +2490,24 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     onPressed: () {
-                      setState(() {
-                        _selectedIndex = 3;
-                        _quoteSearch = reg.isNotEmpty ? reg : jobNo;
-                      });
+                      final hasEstimate = _estimates.any((e) =>
+                          e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id']);
+                      if (hasEstimate) {
+                        setState(() {
+                          _selectedIndex = 3;
+                          _quoteSearch = reg.isNotEmpty ? reg : jobNo;
+                        });
+                      } else {
+                        _openCreateEstimateModal(initialJobCardId: job['id']);
+                      }
                     },
                     icon: const Icon(Icons.request_quote_outlined, size: 14, color: Color(0xFF2563EB)),
-                    label: const Text('Quotes', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
+                    label: Text(
+                      _estimates.any((e) => e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id'])
+                          ? 'Quotes'
+                          : '+ Quote',
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                    ),
                   ),
                   const Spacer(),
                   // View Job Sheet (Primary)
@@ -3987,35 +4099,51 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   );
                 }),
                 const SizedBox(height: 18),
-                Row(
-                  children: [
-                    if (!techMode)
+                if (!techMode) ...[
+                  Row(
+                    children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          icon: const Icon(Icons.print_outlined),
-                          label: const Text('Customer Copy'),
+                          icon: const Icon(Icons.print_outlined, size: 15),
+                          label: const Text('Customer Copy', style: TextStyle(fontSize: 12)),
                           onPressed: () => InvoicePdfService.showJobCardPreviewModal(
                             context: context,
-                            workshopSettings: const {},
+                            workshopSettings: _workshopSettings,
                             job: job,
                           ),
                         ),
                       ),
-                    if (!techMode) const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF0F4C81),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.request_quote_outlined, size: 15, color: Color(0xFF2563EB)),
+                          label: const Text('Estimate', style: TextStyle(fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _openCreateEstimateModal(initialJobCardId: job['id']);
+                          },
                         ),
-                        icon: saving
-                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.save),
-                        label: const Text('Save'),
-                        onPressed: saving
-                            ? null
-                            : () async {
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F4C81),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: saving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.save),
+                    label: const Text('Save Job Sheet Updates', style: TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: saving
+                        ? null
+                        : () async {
                                 setSheet(() => saving = true);
                                 final body = <String, dynamic>{'status': status};
                                 walk['diagnostics'] = sheetDiag;
@@ -4041,8 +4169,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                               },
                       ),
                     ),
-                  ],
-                ),
                 const SizedBox(height: 12),
               ],
             ),
