@@ -464,6 +464,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
     String status = existingJob?['status'] ?? 'IN_PROGRESS';
     String priority = existingJob?['priority'] ?? 'Medium';
+    String fuelType = (existingJob?['vehicle']?['fuelType'] ?? existingJob?['fuelType'] ?? 'Petrol').toString();
     String fuelLevel = existingJob?['fuelLevel'] ?? 'Half';
     String bayNumber = existingJob?['bayNumber']?.toString() ?? 'Bay 1';
     bool isWarranty = existingJob?['isWarranty'] == true;
@@ -585,6 +586,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         }
                         if (v['category'] != null) {
                           clientCategory = v['category'].toString();
+                        }
+                        if (v['fuelType'] != null && (v['fuelType'] as String).isNotEmpty) {
+                          fuelType = v['fuelType'].toString();
                         }
                       });
                       return;
@@ -750,10 +754,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       ),
                       const SizedBox(height: 12),
 
-                      // Vehicle Specs Row
+                      // Vehicle Specs & Fuel Type Row
                       Row(
                         children: [
                           Expanded(
+                            flex: 2,
                             child: TextField(
                               controller: makeCtrl,
                               decoration: const InputDecoration(labelText: 'Vehicle Make (e.g. Toyota)', border: OutlineInputBorder()),
@@ -761,9 +766,30 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
+                            flex: 2,
                             child: TextField(
                               controller: modelCtrl,
                               decoration: const InputDecoration(labelText: 'Vehicle Model (e.g. Prado)', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: DropdownButtonFormField<String>(
+                              isExpanded: true,
+                              value: ['Petrol', 'Diesel', 'Hybrid', 'Electric'].contains(fuelType) ? fuelType : 'Petrol',
+                              decoration: const InputDecoration(
+                                labelText: 'Fuel Type *',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.local_gas_station, size: 18, color: Color(0xFF1E3A8A)),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'Petrol', child: Text('⛽ Petrol', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'Diesel', child: Text('🛢️ Diesel', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'Hybrid', child: Text('⚡ Hybrid', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 'Electric', child: Text('🔌 Electric', overflow: TextOverflow.ellipsis)),
+                              ],
+                              onChanged: (val) => setModalState(() => fuelType = val ?? 'Petrol'),
                             ),
                           ),
                         ],
@@ -1117,6 +1143,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               'driverPhone': driverPhoneCtrl.text.trim().isEmpty ? null : driverPhoneCtrl.text.trim(),
                               'make': makeCtrl.text.trim(),
                               'model': modelCtrl.text.trim(),
+                              'fuelType': fuelType,
                               'bodyType': bodyType.name,
                               'vinNumber': memoDetails.vinNumber,
                               'service': serviceCtrl.text.trim().isEmpty
@@ -3134,6 +3161,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     final technician = job['technician'] ?? 'Unassigned';
                     final rawStatus = job['status'] ?? 'IN_PROGRESS';
                     final priority = job['priority'] ?? 'Medium';
+                    final fuelType = (job['fuelType'] ?? job['vehicle']?['fuelType'] ?? 'Petrol').toString();
                     final dueDateStr = _formatDateShort(job['dueDate'] ?? job['createdAt']);
 
                     return _buildJobDataRow(
@@ -3141,6 +3169,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       id: jobNo,
                       customer: customerName,
                       vehicle: vehicleDisplay,
+                      fuelType: fuelType,
                       service: service,
                       technician: technician,
                       statusLabel: _statusLabel(rawStatus),
@@ -3164,6 +3193,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     required String id,
     required String customer,
     required String vehicle,
+    required String fuelType,
     required String service,
     required String technician,
     required String statusLabel,
@@ -3176,7 +3206,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       cells: [
         DataCell(Text(id, style: const TextStyle(fontWeight: FontWeight.bold))),
         DataCell(Text(customer)),
-        DataCell(Text(vehicle)),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(vehicle),
+              const SizedBox(width: 6),
+              _buildFuelBadge(fuelType),
+            ],
+          ),
+        ),
         DataCell(Text(service)),
         DataCell(Text(technician)),
         DataCell(
@@ -4175,7 +4214,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                const SizedBox(width: 6),
+                                _buildFuelBadge((v['fuelType'] ?? 'Petrol').toString()),
+                              ],
+                            ),
                             Text('${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
                           ],
                         ),
@@ -4211,11 +4257,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text('$lastOdo km', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                            if (daily != null && daily > 0)
-                              Text('~$daily km/day', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600))
+                            if (lastOdo != null && lastOdo > 0)
+                              Text('$lastOdo km', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))
                             else
-                              Text('Standard', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                              Text('Not Recorded', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11, color: Colors.grey.shade500)),
+                            if (lastOdo != null && lastOdo > 0 && visits > 1 && daily != null && daily > 0)
+                              Text('~$daily km/day', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600))
+                            else if (lastOdo != null && lastOdo > 0)
+                              Text('1st Visit Baseline', style: TextStyle(fontSize: 10, color: Colors.blueGrey.shade400))
+                            else
+                              Text('Awaiting intake', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
                           ],
                         ),
                       ),
@@ -4386,6 +4437,42 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           Icon(icon, size: 12, color: fg),
           const SizedBox(width: 4),
           Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.bold, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFuelBadge(String fuelType) {
+    final clean = fuelType.trim();
+    Color bg = const Color(0xFFEFF6FF);
+    Color fg = const Color(0xFF1D4ED8);
+    String icon = '⛽';
+    if (clean.toLowerCase() == 'diesel') {
+      bg = const Color(0xFFFEF3C7);
+      fg = const Color(0xFFB45309);
+      icon = '🛢️';
+    } else if (clean.toLowerCase() == 'hybrid') {
+      bg = const Color(0xFFECFDF5);
+      fg = const Color(0xFF047857);
+      icon = '⚡';
+    } else if (clean.toLowerCase() == 'electric') {
+      bg = const Color(0xFFF3E8FF);
+      fg = const Color(0xFF7E22CE);
+      icon = '🔌';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: fg.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 10)),
+          const SizedBox(width: 3),
+          Text(clean.toUpperCase(), style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: fg)),
         ],
       ),
     );

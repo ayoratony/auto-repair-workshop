@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'url_opener_stub.dart' if (dart.library.html) 'url_opener_web.dart';
@@ -38,6 +39,18 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   String _requestFilter = 'ALL';
   String _toolFilter = 'ALL';
 
+  String _requestSearchQuery = '';
+  final TextEditingController _requestSearchCtrl = TextEditingController();
+
+  String _partsSearchQuery = '';
+  final TextEditingController _partsSearchCtrl = TextEditingController();
+
+  String _toolsSearchQuery = '';
+  final TextEditingController _toolsSearchCtrl = TextEditingController();
+
+  String _consumablesSearchQuery = '';
+  final TextEditingController _consumablesSearchCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +61,10 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   @override
   void dispose() {
     _tabController.dispose();
+    _requestSearchCtrl.dispose();
+    _partsSearchCtrl.dispose();
+    _toolsSearchCtrl.dispose();
+    _consumablesSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -252,8 +269,24 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   // ===========================================================================
   Widget _buildRequestsTab() {
     final filtered = _requests.where((r) {
-      if (_requestFilter == 'ALL') return true;
-      return (r['status'] ?? '').toString().toUpperCase() == _requestFilter;
+      if (_requestFilter != 'ALL' && (r['status'] ?? '').toString().toUpperCase() != _requestFilter) {
+        return false;
+      }
+      if (_requestSearchQuery.isNotEmpty) {
+        final q = _requestSearchQuery.toLowerCase();
+        final ref = (r['reference'] ?? '').toString().toLowerCase();
+        final tech = (r['technicianName'] ?? '').toString().toLowerCase();
+        final job = (r['jobNumber'] ?? '').toString().toLowerCase();
+        final plate = (r['vehiclePlate'] ?? '').toString().toLowerCase();
+        final vehDesc = (r['vehicleDescription'] ?? '').toString().toLowerCase();
+        final reason = (r['reason'] ?? '').toString().toLowerCase();
+        final lines = (r['lines'] as List<dynamic>?) ?? [];
+        final hasLineMatch = lines.any((l) => (l['description'] ?? '').toString().toLowerCase().contains(q));
+        if (!ref.contains(q) && !tech.contains(q) && !job.contains(q) && !plate.contains(q) && !vehDesc.contains(q) && !reason.contains(q) && !hasLineMatch) {
+          return false;
+        }
+      }
+      return true;
     }).toList();
 
     return Padding(
@@ -288,10 +321,39 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
               Text('Showing ${filtered.length} requests', style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4)],
+            ),
+            child: TextField(
+              controller: _requestSearchCtrl,
+              decoration: InputDecoration(
+                hintText: '🔍 Search request orders by Unique Serial # (e.g. REQ-...), Job #, Vehicle Plate, or Technician...',
+                prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF0F4C81)),
+                suffixIcon: _requestSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _requestSearchCtrl.clear();
+                          setState(() => _requestSearchQuery = '');
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (val) => setState(() => _requestSearchQuery = val.trim()),
+            ),
+          ),
+          const SizedBox(height: 14),
           Expanded(
             child: filtered.isEmpty
-                ? const Center(child: Text('No item requests matching the selected filter.', style: TextStyle(color: Colors.grey)))
+                ? const Center(child: Text('No item requests matching the selected filter or search term.', style: TextStyle(color: Colors.grey)))
                 : ListView.builder(
                     itemCount: filtered.length,
                     itemBuilder: (_, i) => _buildRequestCard(filtered[i]),
@@ -334,7 +396,37 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
         children: [
           Row(
             children: [
-              Text(ref, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: ref.toString()));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      duration: const Duration(seconds: 2),
+                      backgroundColor: const Color(0xFF0F4C81),
+                      content: Text('Copied Order Serial # $ref to clipboard'),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF93C5FD)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.tag, size: 14, color: Color(0xFF1D4ED8)),
+                      const SizedBox(width: 4),
+                      Text(ref.toString(), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Color(0xFF1E3A8A))),
+                      const SizedBox(width: 5),
+                      const Icon(Icons.copy, size: 12, color: Color(0xFF1D4ED8)),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(width: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -1170,6 +1262,17 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   // TAB 2: SPARE PARTS (RESALE & REPAIRS)
   // ===========================================================================
   Widget _buildSparePartsTab() {
+    final filteredParts = _parts.where((p) {
+      if (_partsSearchQuery.isEmpty) return true;
+      final q = _partsSearchQuery.toLowerCase();
+      final pNum = (p['partNumber'] ?? '').toString().toLowerCase();
+      final desc = (p['description'] ?? '').toString().toLowerCase();
+      final brand = (p['brand'] ?? '').toString().toLowerCase();
+      final comp = (p['compatibility'] ?? '').toString().toLowerCase();
+      final loc = (p['location'] ?? '').toString().toLowerCase();
+      return pNum.contains(q) || desc.contains(q) || brand.contains(q) || comp.contains(q) || loc.contains(q);
+    }).toList();
+
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -1178,7 +1281,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${_parts.length} Spare Parts in Database (Resale / Customer Vehicle Repairs)', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${filteredParts.length} of ${_parts.length} Spare Parts (Resale / Customer Vehicle Repairs)', style: const TextStyle(fontWeight: FontWeight.bold)),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
                 icon: const Icon(Icons.add, size: 16),
@@ -1186,6 +1289,35 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 onPressed: _showAddPartDialog,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4)],
+            ),
+            child: TextField(
+              controller: _partsSearchCtrl,
+              decoration: InputDecoration(
+                hintText: '🔍 Search spare parts by Part Number, Description, Brand, Compatibility...',
+                prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF0F4C81)),
+                suffixIcon: _partsSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _partsSearchCtrl.clear();
+                          setState(() => _partsSearchQuery = '');
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (val) => setState(() => _partsSearchQuery = val.trim()),
+            ),
           ),
           const SizedBox(height: 14),
           Expanded(
@@ -1201,7 +1333,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   DataColumn(label: Text('Location', style: TextStyle(fontWeight: FontWeight.bold))),
                   DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                 ],
-                rows: _parts.map((p) {
+                rows: filteredParts.map((p) {
                   final qty = p['stockQuantity'] ?? 0;
                   final reorder = p['reorderLevel'] ?? 5;
                   final isLow = qty <= reorder;
@@ -1322,8 +1454,20 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   // ===========================================================================
   Widget _buildToolsTab() {
     final filtered = _tools.where((t) {
-      if (_toolFilter == 'ALL') return true;
-      return (t['status'] ?? '').toString().toUpperCase() == _toolFilter;
+      if (_toolFilter != 'ALL' && (t['status'] ?? '').toString().toUpperCase() != _toolFilter) {
+        return false;
+      }
+      if (_toolsSearchQuery.isNotEmpty) {
+        final q = _toolsSearchQuery.toLowerCase();
+        final aNum = (t['assetNumber'] ?? '').toString().toLowerCase();
+        final name = (t['name'] ?? '').toString().toLowerCase();
+        final ser = (t['serialNumber'] ?? '').toString().toLowerCase();
+        final assigned = (t['assignedTo'] ?? '').toString().toLowerCase();
+        final dept = (t['department'] ?? '').toString().toLowerCase();
+        final loc = (t['location'] ?? '').toString().toLowerCase();
+        return aNum.contains(q) || name.contains(q) || ser.contains(q) || assigned.contains(q) || dept.contains(q) || loc.contains(q);
+      }
+      return true;
     }).toList();
 
     return Padding(
@@ -1351,6 +1495,35 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 onPressed: _showRegisterAssetDialog,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4)],
+            ),
+            child: TextField(
+              controller: _toolsSearchCtrl,
+              decoration: InputDecoration(
+                hintText: '🔍 Search tools by Asset #, Serial #, Tool Name, Custodian, Department...',
+                prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF0F4C81)),
+                suffixIcon: _toolsSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _toolsSearchCtrl.clear();
+                          setState(() => _toolsSearchQuery = '');
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (val) => setState(() => _toolsSearchQuery = val.trim()),
+            ),
           ),
           const SizedBox(height: 14),
           Expanded(
@@ -1641,6 +1814,17 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
   // TAB 4: INTERNAL CONSUMABLES & SUPPLIES
   // ===========================================================================
   Widget _buildConsumablesTab() {
+    final filteredConsumables = _consumables.where((c) {
+      if (_consumablesSearchQuery.isEmpty) return true;
+      final q = _consumablesSearchQuery.toLowerCase();
+      final sku = (c['sku'] ?? '').toString().toLowerCase();
+      final name = (c['name'] ?? '').toString().toLowerCase();
+      final desc = (c['description'] ?? '').toString().toLowerCase();
+      final loc = (c['location'] ?? '').toString().toLowerCase();
+      final supp = (c['supplierName'] ?? '').toString().toLowerCase();
+      return sku.contains(q) || name.contains(q) || desc.contains(q) || loc.contains(q) || supp.contains(q);
+    }).toList();
+
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -1649,7 +1833,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${_consumables.length} Internal Consumables & Workshop Supplies (Non-Resale)', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${filteredConsumables.length} of ${_consumables.length} Internal Consumables & Workshop Supplies', style: const TextStyle(fontWeight: FontWeight.bold)),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
                 icon: const Icon(Icons.add, size: 16),
@@ -1657,6 +1841,35 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                 onPressed: _showAddConsumableDialog,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4)],
+            ),
+            child: TextField(
+              controller: _consumablesSearchCtrl,
+              decoration: InputDecoration(
+                hintText: '🔍 Search consumables by SKU, Name, Description, Storage Location...',
+                prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF0F4C81)),
+                suffixIcon: _consumablesSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _consumablesSearchCtrl.clear();
+                          setState(() => _consumablesSearchQuery = '');
+                        },
+                      )
+                    : null,
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (val) => setState(() => _consumablesSearchQuery = val.trim()),
+            ),
           ),
           const SizedBox(height: 14),
           Expanded(
@@ -1671,7 +1884,7 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
                   DataColumn(label: Text('Location', style: TextStyle(fontWeight: FontWeight.bold))),
                   DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                 ],
-                rows: _consumables.map((c) {
+                rows: filteredConsumables.map((c) {
                   final qty = c['quantityOnHand'] ?? 0;
                   final reorder = c['reorderLevel'] ?? 5;
                   final isLow = qty <= reorder;

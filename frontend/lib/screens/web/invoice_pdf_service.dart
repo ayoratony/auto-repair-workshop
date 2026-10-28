@@ -1284,7 +1284,9 @@ class InvoicePdfService {
     final regNo = vehicle['registrationNo']?.toString() ?? 'N/A';
     final makeModel = '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
     final odometer = job['odometer'] != null ? '${job['odometer']} km' : 'Recorded at intake';
-    final fuelLevel = job['fuelLevel']?.toString() ?? 'Recorded at intake';
+    final fuelType = (job['fuelType'] ?? vehicle['fuelType'] ?? 'Petrol').toString();
+    final rawFuelLevel = job['fuelLevel']?.toString() ?? 'Recorded at intake';
+    final fuelLevel = '$fuelType ($rawFuelLevel)';
     final technician = job['technician']?.toString() ?? 'Workshop Team';
     final serviceRequested = job['workRequested']?.toString() ?? 'General Service & Repairs';
 
@@ -1326,6 +1328,7 @@ class InvoicePdfService {
       regNo: regNo,
       makeModel: makeModel,
       odometer: odometer,
+      fuelType: fuelType,
       fuelLevel: fuelLevel,
       technician: technician,
       serviceRequested: serviceRequested,
@@ -1728,7 +1731,7 @@ class InvoicePdfService {
                                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                                 children: [
                                   _metaKeyValue(fontRegular, fontBold, 'Odometer:', d.odometer),
-                                  _metaKeyValue(fontRegular, fontBold, 'Fuel Level:', d.fuelLevel),
+                                  _metaKeyValue(fontRegular, fontBold, 'Fuel Type & Level:', '${d.fuelType.toUpperCase()} (${d.fuelLevel})'),
                                 ],
                               ),
                               pw.Row(
@@ -2654,7 +2657,7 @@ class InvoicePdfService {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   _previewMetaRow('Odometer:', d.odometer),
-                                  _previewMetaRow('Fuel Level:', d.fuelLevel),
+                                  _previewMetaRow('Fuel Type & Level:', '${d.fuelType.toUpperCase()} (${d.fuelLevel})'),
                                 ],
                               ),
                               Row(
@@ -3248,6 +3251,7 @@ class InvoicePdfService {
     final regNo = vehicle['registrationNo']?.toString() ?? 'N/A';
     final makeModel = '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
     final odometer = job['odometer'] != null ? '${job['odometer']} km' : 'Recorded at intake';
+    final fuelType = (job['fuelType'] ?? vehicle['fuelType'] ?? 'Petrol').toString();
     final fuelLevel = job['fuelLevel']?.toString() ?? '1/2';
     final technician = (job['technician']?.toString().trim().isNotEmpty ?? false) ? job['technician'].toString() : 'Workshop Team';
     final workRequested = (job['workRequested']?.toString().trim().isNotEmpty ?? false)
@@ -3348,6 +3352,7 @@ class InvoicePdfService {
       regNo: regNo,
       makeModel: makeModel,
       odometer: odometer,
+      fuelType: fuelType,
       fuelLevel: fuelLevel,
       technician: technician,
       workRequested: workRequested,
@@ -3835,6 +3840,7 @@ class _JobCardDocData {
   final String regNo;
   final String makeModel;
   final String odometer;
+  final String fuelType;
   final String fuelLevel;
   final String technician;
   final String workRequested;
@@ -3865,6 +3871,7 @@ class _JobCardDocData {
     required this.regNo,
     required this.makeModel,
     required this.odometer,
+    required this.fuelType,
     required this.fuelLevel,
     required this.technician,
     required this.workRequested,
@@ -3897,6 +3904,7 @@ class _DocData {
   final String regNo;
   final String makeModel;
   final String odometer;
+  final String fuelType;
   final String fuelLevel;
   final String technician;
   final String serviceRequested;
@@ -3930,6 +3938,7 @@ class _DocData {
     required this.regNo,
     required this.makeModel,
     required this.odometer,
+    required this.fuelType,
     required this.fuelLevel,
     required this.technician,
     required this.serviceRequested,

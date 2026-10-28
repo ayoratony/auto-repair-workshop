@@ -151,6 +151,7 @@ model JobCard {
   vehicle            Vehicle       @relation(fields: [vehicleId], references: [id])
 
   odometer           Int?
+  fuelType           String?       @default("Petrol") // Petrol, Diesel, Hybrid, Electric
   fuelLevel          String?       // e.g., "1/4", "Half", "Full"
   walkAroundData     Json?         // Checklists, 360Â° Damage Markers, Diagnostic & QC Data
   workRequested      String?

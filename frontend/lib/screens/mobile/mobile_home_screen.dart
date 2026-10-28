@@ -62,6 +62,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   bool _isLookingUpVehicle = false;
   Map<String, dynamic>? _foundVehicleData;
 
+  String _fuelType = 'Petrol';
   String _fuelLevel = 'Half';
   String _priority = 'Medium';
   String _bayNumber = 'Bay 1';
@@ -173,6 +174,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           'driverPhone': _driverPhoneController.text.trim().isEmpty ? null : _driverPhoneController.text.trim(),
           'make': _makeController.text.trim(),
           'model': _modelController.text.trim(),
+          'fuelType': _fuelType,
           'vinNumber': _memoDetails.vinNumber,
           'odometer': int.tryParse(_odometerController.text.trim()),
           'fuelLevel': _fuelLevel,
@@ -1136,6 +1138,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               if (v['category'] != null) {
                 _selectedCategory = v['category'].toString();
               }
+              if (v['fuelType'] != null && (v['fuelType'] as String).isNotEmpty) {
+                _fuelType = v['fuelType'].toString();
+              }
             });
             return;
           }
@@ -1193,6 +1198,42 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           Icon(icon, size: 10, color: fg),
           const SizedBox(width: 3),
           Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.bold, fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFuelTypePill(String fuel) {
+    final clean = fuel.trim().toUpperCase();
+    Color bg = const Color(0xFFEFF6FF);
+    Color fg = const Color(0xFF1D4ED8);
+    String icon = '⛽';
+    if (clean == 'DIESEL') {
+      bg = const Color(0xFFFEF3C7);
+      fg = const Color(0xFFB45309);
+      icon = '🛢️';
+    } else if (clean == 'HYBRID') {
+      bg = const Color(0xFFECFDF5);
+      fg = const Color(0xFF047857);
+      icon = '⚡';
+    } else if (clean == 'ELECTRIC') {
+      bg = const Color(0xFFF3E8FF);
+      fg = const Color(0xFF7E22CE);
+      icon = '🔌';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: fg.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 10)),
+          const SizedBox(width: 3),
+          Text(clean, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: fg)),
         ],
       ),
     );
@@ -2592,9 +2633,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               const SizedBox(height: 10),
 
               // ROW 2: VEHICLE MODEL & WORK REQUESTED
-              Text(
-                vehicle.isNotEmpty ? vehicle : 'Vehicle Specification Pending',
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF0F172A)),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      vehicle.isNotEmpty ? vehicle : 'Vehicle Specification Pending',
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF0F172A)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildFuelTypePill((job['fuelType'] ?? job['vehicle']?['fuelType'] ?? 'Petrol').toString()),
+                ],
               ),
               const SizedBox(height: 3),
               Row(
@@ -4086,8 +4135,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               controller: scroll,
               padding: const EdgeInsets.all(16),
               children: [
-                Text('${job['jobNumber'] ?? 'Job Card'} \u2022 ${job['vehicle']?['registrationNo'] ?? ''}',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('${job['jobNumber'] ?? 'Job Card'} \u2022 ${job['vehicle']?['registrationNo'] ?? ''}',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    ),
+                    const SizedBox(width: 8),
+                    _buildFuelTypePill((job['fuelType'] ?? job['vehicle']?['fuelType'] ?? 'Petrol').toString()),
+                  ],
+                ),
                 Text('${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''} \u2022 ${job['customer']?['name'] ?? ''}',
                     style: const TextStyle(color: Colors.black54)),
                 const SizedBox(height: 4),
@@ -4683,6 +4740,25 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               Expanded(
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
+                  value: ['Petrol', 'Diesel', 'Hybrid', 'Electric'].contains(_fuelType) ? _fuelType : 'Petrol',
+                  decoration: const InputDecoration(
+                    labelText: 'Fuel Type *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.local_gas_station, size: 18, color: Color(0xFF1E3A8A)),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'Petrol', child: Text('⛽ Petrol', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'Diesel', child: Text('🛢️ Diesel', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'Hybrid', child: Text('⚡ Hybrid', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: 'Electric', child: Text('🔌 Electric', overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (val) => setState(() => _fuelType = val ?? 'Petrol'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   value: _fuelLevel,
                   decoration: const InputDecoration(labelText: 'Fuel Level', border: OutlineInputBorder()),
                   items: ['Empty', '1/4', 'Half', '3/4', 'Full']
@@ -4691,7 +4767,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   onChanged: (val) => setState(() => _fuelLevel = val ?? 'Half'),
                 ),
               ),
-              const SizedBox(width: 12),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
                   isExpanded: true,
@@ -4703,17 +4783,19 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   onChanged: (val) => setState(() => _priority = val ?? 'Medium'),
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: _bayNumber,
+                  decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
+                  items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
+                      .map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
+                ),
+              ),
             ],
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            isExpanded: true,
-            value: _bayNumber,
-            decoration: const InputDecoration(labelText: 'Workshop Bay / Lift', border: OutlineInputBorder()),
-            items: ['Bay 1', 'Bay 2', 'Bay 3', 'Lift A', 'Lift B', 'Diagnostic Bay']
-                .map((b) => DropdownMenuItem(value: b, child: Text(b, overflow: TextOverflow.ellipsis)))
-                .toList(),
-            onChanged: (val) => setState(() => _bayNumber = val ?? 'Bay 1'),
           ),
           const SizedBox(height: 12),
           TextField(

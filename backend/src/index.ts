@@ -453,6 +453,7 @@ app.get('/api/jobs', async (req: Request, res: Response) => {
           j.vehicle.registrationNo.toLowerCase().includes(q) ||
           (j.vehicle.make && j.vehicle.make.toLowerCase().includes(q)) ||
           (j.vehicle.model && j.vehicle.model.toLowerCase().includes(q)) ||
+          (((j as any).fuelType || j.vehicle.fuelType) && ((j as any).fuelType || j.vehicle.fuelType)!.toLowerCase().includes(q)) ||
           (j.workRequested && j.workRequested.toLowerCase().includes(q)) ||
           (j.bayNumber && j.bayNumber.toLowerCase().includes(q))
       );
@@ -667,6 +668,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
           dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 2 * 86400000),
           status: (status as JobStatus) || 'IN_PROGRESS',
           odometer: odometer ? Number(odometer) : null,
+          fuelType: fuelType || vehicle.fuelType || 'Petrol',
           fuelLevel: fuelLevel || null,
           estimatedHours: estimatedHours !== undefined ? Number(estimatedHours) : 2.0,
           actualHours: actualHours !== undefined ? Number(actualHours) : null,
@@ -790,6 +792,7 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
         ...(dueDate ? { dueDate: new Date(dueDate) } : {}),
         ...(status ? { status: status as JobStatus } : {}),
         ...(odometer !== undefined ? { odometer: odometer ? Number(odometer) : null } : {}),
+        ...(fuelType !== undefined ? { fuelType } : {}),
         ...(fuelLevel !== undefined ? { fuelLevel } : {}),
         ...(estimatedHours !== undefined
           ? { estimatedHours: estimatedHours !== null ? Number(estimatedHours) : null }

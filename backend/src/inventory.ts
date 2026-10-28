@@ -194,30 +194,63 @@ export function createInventoryRouter(
   // =====================================================================
   router.get('/catalog', route(async (a, req) => {
     require_(a, 'catalog:view', 'search the inventory');
-    const q = String(req.query.q || '').trim();
+    const q = String(req.query.q || req.query.search || '').trim();
     const only = req.query.category ? cat(req.query.category) : undefined;
     const like = q ? { contains: q, mode: 'insensitive' as const } : undefined;
     const out: any[] = [];
     if (!only || only === 'SPARE_PART') {
       const parts = await prisma.partCatalog.findMany({
-        where: { tenantId: a.tenantId, ...(like ? { OR: [{ description: like }, { partNumber: like }, { brand: like }] } : {}) },
-        take: 50, orderBy: { description: 'asc' },
+        where: { tenantId: a.tenantId, ...(like ? { OR: [{ description: like }, { partNumber: like }, { brand: like }, { compatibility: like }] } : {}) },
+        take: 100, orderBy: { description: 'asc' },
       });
-      out.push(...parts.map((p) => ({ category: 'SPARE_PART', id: p.id, name: p.description, code: p.partNumber, available: p.stockQuantity, location: p.location })));
+      out.push(...parts.map((p) => ({
+        category: 'SPARE_PART',
+        id: p.id,
+        name: p.description,
+        code: p.partNumber,
+        brand: p.brand,
+        compatibility: p.compatibility,
+        unitPrice: p.unitPrice,
+        costPrice: p.costPrice,
+        available: p.stockQuantity,
+        reorderLevel: p.reorderLevel,
+        location: p.location,
+      })));
     }
     if (!only || only === 'CONSUMABLE') {
       const items = await prisma.inventoryItem.findMany({
-        where: { tenantId: a.tenantId, ...(like ? { OR: [{ name: like }, { sku: like }] } : {}) },
-        take: 50, orderBy: { name: 'asc' },
+        where: { tenantId: a.tenantId, ...(like ? { OR: [{ name: like }, { sku: like }, { description: like }] } : {}) },
+        take: 100, orderBy: { name: 'asc' },
       });
-      out.push(...items.map((i) => ({ category: 'CONSUMABLE', id: i.id, name: i.name, code: i.sku, unit: i.unit, available: i.quantityOnHand, location: i.location })));
+      out.push(...items.map((i) => ({
+        category: 'CONSUMABLE',
+        id: i.id,
+        name: i.name,
+        code: i.sku,
+        unit: i.unit,
+        unitCost: i.unitCost,
+        available: i.quantityOnHand,
+        reorderLevel: i.reorderLevel,
+        location: i.location,
+      })));
     }
     if (!only || only === 'TOOL_EQUIPMENT') {
       const tools = await prisma.toolAsset.findMany({
         where: { tenantId: a.tenantId, status: { notIn: ['WRITTEN_OFF'] }, ...(like ? { OR: [{ name: like }, { assetNumber: like }, { serialNumber: like }] } : {}) },
-        take: 50, orderBy: { name: 'asc' },
+        take: 100, orderBy: { name: 'asc' },
       });
-      out.push(...tools.map((t) => ({ category: 'TOOL_EQUIPMENT', id: t.id, name: t.name, code: t.assetNumber, available: t.status === 'AVAILABLE' ? 1 : 0, status: t.status, location: t.location })));
+      out.push(...tools.map((t) => ({
+        category: 'TOOL_EQUIPMENT',
+        id: t.id,
+        name: t.name,
+        code: t.assetNumber,
+        serialNumber: t.serialNumber,
+        condition: t.condition,
+        assignedTo: t.assignedTo,
+        available: t.status === 'AVAILABLE' ? 1 : 0,
+        status: t.status,
+        location: t.location,
+      })));
     }
     return out;
   }));
@@ -247,9 +280,17 @@ export function createInventoryRouter(
     });
   }));
 
-  router.get('/items', route(async (a) => {
+  router.get('/items', route(async (a, req) => {
     require_(a, 'catalog:view', 'view consumables');
-    return prisma.inventoryItem.findMany({ where: { tenantId: a.tenantId }, orderBy: { name: 'asc' } });
+    const q = text(req.query.q || req.query.search);
+    const like = q ? { contains: q, mode: 'insensitive' as const } : undefined;
+    return prisma.inventoryItem.findMany({
+      where: {
+        tenantId: a.tenantId,
+        ...(like ? { OR: [{ name: like }, { sku: like }, { description: like }, { location: like }] } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
   }));
 
   router.post('/assets', route(async (a, req) => {
@@ -276,7 +317,16 @@ export function createInventoryRouter(
   router.get('/assets', route(async (a, req) => {
     require_(a, 'catalog:view', 'view assets');
     const status = text(req.query.status);
-    return prisma.toolAsset.findMany({ where: { tenantId: a.tenantId, ...(status ? { status } : {}) }, orderBy: { assetNumber: 'asc' } });
+    const q = text(req.query.q || req.query.search);
+    const like = q ? { contains: q, mode: 'insensitive' as const } : undefined;
+    return prisma.toolAsset.findMany({
+      where: {
+        tenantId: a.tenantId,
+        ...(status ? { status } : {}),
+        ...(like ? { OR: [{ name: like }, { assetNumber: like }, { serialNumber: like }, { assignedTo: like }, { department: like }, { location: like }] } : {}),
+      },
+      orderBy: { assetNumber: 'asc' },
+    });
   }));
 
   // Assign fixed / permanent equipment to a workshop, department or location (no checkout needed).
@@ -513,6 +563,45 @@ export function createInventoryRouter(
     else if (text(req.query.technician)) where.technicianName = String(req.query.technician);
     if (text(req.query.jobCardId)) where.jobCardId = String(req.query.jobCardId);
     if (text(req.query.vehicleId)) where.vehicleId = String(req.query.vehicleId);
+
+    const q = text(req.query.q || req.query.search || req.query.reference);
+    if (q) {
+      const [matchingJobs, matchingVehs] = await Promise.all([
+        prisma.jobCard.findMany({
+          where: { tenantId: a.tenantId, jobNumber: { contains: q, mode: 'insensitive' } },
+          select: { id: true },
+          take: 50,
+        }),
+        prisma.vehicle.findMany({
+          where: {
+            OR: [
+              { registrationNo: { contains: q, mode: 'insensitive' } },
+              { make: { contains: q, mode: 'insensitive' } },
+              { model: { contains: q, mode: 'insensitive' } },
+            ],
+          },
+          select: { id: true },
+          take: 50,
+        }),
+      ]);
+      const matchedJobIds = matchingJobs.map((j) => j.id);
+      const matchedVehIds = matchingVehs.map((v) => v.id);
+
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [
+            { reference: { contains: q, mode: 'insensitive' } },
+            { technicianName: { contains: q, mode: 'insensitive' } },
+            { reason: { contains: q, mode: 'insensitive' } },
+            { department: { contains: q, mode: 'insensitive' } },
+            { lines: { some: { description: { contains: q, mode: 'insensitive' } } } },
+            ...(matchedJobIds.length ? [{ jobCardId: { in: matchedJobIds } }] : []),
+            ...(matchedVehIds.length ? [{ vehicleId: { in: matchedVehIds } }] : []),
+          ],
+        },
+      ];
+    }
 
     const requests = await prisma.itemRequest.findMany({ where, include: { lines: true }, orderBy: { createdAt: 'desc' }, take: 200 });
 
