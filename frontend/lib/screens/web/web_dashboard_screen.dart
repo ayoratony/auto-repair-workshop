@@ -672,13 +672,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Row(
+                                    Wrap(
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      spacing: 8,
+                                      runSpacing: 4,
                                       children: [
                                         Text(
                                           'Registered Vehicle Match: ${lookupMatch!['vehicle']?['registrationNo']} (${lookupMatch!['vehicle']?['make']} ${lookupMatch!['vehicle']?['model']})',
                                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF14532D)),
                                         ),
-                                        const SizedBox(width: 8),
                                         _buildCategoryBadge(lookupMatch!['vehicle']?['category'] ?? 'PERSONAL'),
                                       ],
                                     ),
@@ -931,48 +933,78 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               onChanged: (val) => setModalState(() => fuelLevel = val ?? 'Half'),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 95,
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
                             child: TextField(
                               controller: estHoursCtrl,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(labelText: 'Est. Hrs', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(
+                                labelText: 'Est. Labour Hours',
+                                prefixIcon: Icon(Icons.timer_outlined, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 95,
+                          const SizedBox(width: 12),
+                          Expanded(
                             child: TextField(
                               controller: actualHoursCtrl,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(labelText: 'Actual Hrs', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(
+                                labelText: 'Actual Labour Hours',
+                                prefixIcon: Icon(Icons.history_toggle_off, size: 18),
+                                border: OutlineInputBorder(),
+                              ),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: isWarranty ? Colors.amber.shade50 : Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: isWarranty ? Colors.amber.shade300 : Colors.grey.shade200),
                         ),
-                        child: Row(
+                        child: Wrap(
+                          spacing: 20,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Checkbox(
-                              value: isWarranty,
-                              onChanged: (v) => setModalState(() => isWarranty = v ?? false),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(6),
+                              onTap: () => setModalState(() => isWarranty = !isWarranty),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Checkbox(
+                                    value: isWarranty,
+                                    onChanged: (v) => setModalState(() => isWarranty = v ?? false),
+                                  ),
+                                  const Text('Warranty / Comeback Rework Job', style: TextStyle(fontWeight: FontWeight.w600)),
+                                ],
+                              ),
                             ),
-                            const Text('Warranty / Comeback Rework Job', style: TextStyle(fontWeight: FontWeight.w600)),
-                            const SizedBox(width: 24),
-                            Checkbox(
-                              value: qcPassed,
-                              activeColor: Colors.green,
-                              onChanged: (v) => setModalState(() => qcPassed = v ?? false),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(6),
+                              onTap: () => setModalState(() => qcPassed = !qcPassed),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Checkbox(
+                                    value: qcPassed,
+                                    activeColor: Colors.green,
+                                    onChanged: (v) => setModalState(() => qcPassed = v ?? false),
+                                  ),
+                                  const Text('Quality Control (QC) Road-Test Passed', style: TextStyle(fontWeight: FontWeight.w600)),
+                                ],
+                              ),
                             ),
-                            const Text('Quality Control (QC) Road-Test Passed', style: TextStyle(fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),
@@ -1347,7 +1379,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Row(
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
                         children: [
                           OutlinedButton.icon(
                             onPressed: () async {
@@ -1377,7 +1411,6 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             icon: const Icon(Icons.cloud_upload_outlined, size: 16),
                             label: Text('Archive Inspection to Neon Cloud (${assetKeys.length})'),
                           ),
-                          const SizedBox(width: 10),
                           OutlinedButton.icon(
                             onPressed: () {
                               final msg = 'Hello ${customer['name'] ?? 'Customer'}, your vehicle ${vehicle['registrationNo'] ?? ''} (Job Card $jobNo) at ${_workshopSettings['name'] ?? 'AutoKe'} is currently in stage: ${_statusLabel(job['status'] ?? 'IN_PROGRESS')}.';
