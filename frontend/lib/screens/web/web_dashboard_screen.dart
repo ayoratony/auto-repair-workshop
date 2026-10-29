@@ -2066,6 +2066,21 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final estimates = (job['estimates'] as List<dynamic>?) ?? [];
     List<dynamic> vehicleRequests = [];
     bool loadingReqs = true;
+    List<dynamic> auditLogs = [];
+    bool loadingAuditLogs = true;
+    String photoCategoryFilter = 'ALL';
+
+    try {
+      final auditRes = await http.get(
+        Uri.parse('$_baseUrl/jobs/${job['id']}/audit-logs'),
+        headers: AuthService.instance.authHeaders,
+      );
+      if (auditRes.statusCode == 200) {
+        final d = json.decode(auditRes.body);
+        if (d is List) auditLogs = d;
+      }
+    } catch (_) {}
+    loadingAuditLogs = false;
 
     try {
       final reqRes = await http.get(
@@ -2390,13 +2405,26 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       // -------------------------------------------------------------
                       // VEHICLE CONDITION & SECURITY PHOTOS (NEON S3)
                       // -------------------------------------------------------------
-                      Builder(builder: (_) {
+                      StatefulBuilder(builder: (ctx, setLocal) {
                         final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
                         final photos = (walkData['securityPhotos'] is List)
                             ? (walkData['securityPhotos'] as List).whereType<Map>().map((p) => Map<String, dynamic>.from(p)).toList()
                             : <Map<String, dynamic>>[];
 
+                        final intakeList = photos.where((p) {
+                          final c = (p['category'] ?? 'INTAKE').toString().toUpperCase();
+                          return c == 'INTAKE' || (c != 'ADDITIONAL_FINDING' && c != 'RELEASE');
+                        }).toList();
+                        final findingList = photos.where((p) => (p['category'] ?? '').toString().toUpperCase() == 'ADDITIONAL_FINDING').toList();
+                        final releaseList = photos.where((p) => (p['category'] ?? '').toString().toUpperCase() == 'RELEASE').toList();
+
+                        List<Map<String, dynamic>> displayedPhotos = photos;
+                        if (photoCategoryFilter == 'INTAKE') displayedPhotos = intakeList;
+                        if (photoCategoryFilter == 'ADDITIONAL_FINDING') displayedPhotos = findingList;
+                        if (photoCategoryFilter == 'RELEASE') displayedPhotos = releaseList;
+
                         return Container(
+                          width: double.infinity,
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -2426,6 +2454,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     label: const Text('Add Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                     onPressed: () async {
                                       final regNo = job['vehicle']?['registrationNo']?.toString() ?? '';
+                                      final defaultCat = photoCategoryFilter == 'ADDITIONAL_FINDING'
+                                          ? VehiclePhotoService.categoryFinding
+                                          : (photoCategoryFilter == 'RELEASE'
+                                              ? VehiclePhotoService.categoryRelease
+                                              : VehiclePhotoService.categoryIntake);
                                       final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
                                         context: ctx,
                                         baseUrl: _baseUrl,
@@ -2433,6 +2466,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                         jobCardId: job['id']?.toString(),
                                         jobNumber: job['jobNumber']?.toString(),
                                         jobCreatedAt: job['createdAt'] != null ? _formatDateShort(job['createdAt']) : null,
+                                        defaultCategory: defaultCat,
                                       );
                                       if (uploaded != null) {
                                         _refreshAllData();
@@ -2447,24 +2481,64 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 ],
                               ),
                               if (photos.isNotEmpty) ...[
-                                const SizedBox(height: 10),
+                                const SizedBox(height: 8),
                                 Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  children: photos.map((photo) {
-                                    return VehiclePhotoService.buildPhotoCard(
-                                      photo: photo,
-                                      baseUrl: _baseUrl,
-                                      onTap: () {
-                                        VehiclePhotoService.showFullPhotoDialog(
-                                          context: ctx,
-                                          baseUrl: _baseUrl,
-                                          photo: photo,
-                                        );
-                                      },
-                                    );
-                                  }).toList(),
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    ChoiceChip(
+                                      label: Text('All (${photos.length})', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                      selected: photoCategoryFilter == 'ALL',
+                                      selectedColor: const Color(0xFFE2E8F0),
+                                      onSelected: (_) => setLocal(() => photoCategoryFilter = 'ALL'),
+                                    ),
+                                    ChoiceChip(
+                                      avatar: const Icon(Icons.shield_outlined, size: 12),
+                                      label: Text('🛡️ Intake (${intakeList.length})', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                      selected: photoCategoryFilter == 'INTAKE',
+                                      selectedColor: const Color(0xFFDBEAFE),
+                                      onSelected: (_) => setLocal(() => photoCategoryFilter = 'INTAKE'),
+                                    ),
+                                    ChoiceChip(
+                                      avatar: const Icon(Icons.search, size: 12),
+                                      label: Text('🔍 Findings (${findingList.length})', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                      selected: photoCategoryFilter == 'ADDITIONAL_FINDING',
+                                      selectedColor: const Color(0xFFFEF3C7),
+                                      onSelected: (_) => setLocal(() => photoCategoryFilter = 'ADDITIONAL_FINDING'),
+                                    ),
+                                    ChoiceChip(
+                                      avatar: const Icon(Icons.check_circle_outline, size: 12),
+                                      label: Text('🏁 Release (${releaseList.length})', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                      selected: photoCategoryFilter == 'RELEASE',
+                                      selectedColor: const Color(0xFFD1FAE5),
+                                      onSelected: (_) => setLocal(() => photoCategoryFilter = 'RELEASE'),
+                                    ),
+                                  ],
                                 ),
+                                const SizedBox(height: 10),
+                                if (displayedPhotos.isEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    child: Text('No photos in category $photoCategoryFilter', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                  )
+                                else
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: displayedPhotos.map((photo) {
+                                      return VehiclePhotoService.buildPhotoCard(
+                                        photo: photo,
+                                        baseUrl: _baseUrl,
+                                        onTap: () {
+                                          VehiclePhotoService.showFullPhotoDialog(
+                                            context: ctx,
+                                            baseUrl: _baseUrl,
+                                            photo: photo,
+                                          );
+                                        },
+                                      );
+                                    }).toList(),
+                                  ),
                               ],
                             ],
                           ),
@@ -2674,6 +2748,188 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             ),
                           );
                         }),
+                      const SizedBox(height: 16),
+                      // ==========================================
+                      // IMMUTABLE JOB CARD AUDIT TRAIL
+                      // ==========================================
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E3A8A).withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Icon(Icons.history_edu_outlined, size: 18, color: Color(0xFF1E3A8A)),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Security Activity & Audit Trail',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Color(0xFF0F172A)),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFECFDF5),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: const Color(0xFFA7F3D0)),
+                                  ),
+                                  child: const Text('🔒 Immutable', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
+                                ),
+                                const Spacer(),
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  icon: const Icon(Icons.refresh, size: 13),
+                                  label: const Text('Refresh', style: TextStyle(fontSize: 11)),
+                                  onPressed: () async {
+                                    try {
+                                      final aRes = await http.get(
+                                        Uri.parse('$_baseUrl/jobs/${job['id']}/audit-logs'),
+                                        headers: AuthService.instance.authHeaders,
+                                      );
+                                      if (aRes.statusCode == 200) {
+                                        final d = json.decode(aRes.body);
+                                        if (d is List) {
+                                          setModalState(() => auditLogs = d);
+                                        }
+                                      }
+                                    } catch (_) {}
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Every vehicle intake photo, mileage adjustment, technician assignment, and status modification is permanently recorded.',
+                              style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                            ),
+                            const SizedBox(height: 12),
+                            if (loadingAuditLogs)
+                              const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2)))
+                            else if (auditLogs.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF8FAFC),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: const Center(
+                                  child: Text('No audit events logged yet for this job card.', style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: auditLogs.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                itemBuilder: (ctx, i) {
+                                  final log = Map<String, dynamic>.from(auditLogs[i]);
+                                  final act = (log['action'] ?? '').toString();
+                                  final actor = (log['actorName'] ?? 'Staff').toString();
+                                  final role = (log['actorRole'] ?? 'USER').toString();
+                                  final details = (log['details'] ?? '').toString();
+                                  final created = log['createdAt']?.toString() ?? '';
+
+                                  IconData icon = Icons.info_outline;
+                                  Color color = const Color(0xFF2563EB);
+                                  if (act == 'CREATED') {
+                                    icon = Icons.add_circle_outline;
+                                    color = const Color(0xFF16A34A);
+                                  } else if (act == 'STATUS_CHANGE') {
+                                    icon = Icons.swap_horiz;
+                                    color = const Color(0xFF2563EB);
+                                  } else if (act == 'INTAKE_PHOTO_UPLOADED') {
+                                    icon = Icons.shield_outlined;
+                                    color = const Color(0xFF1E3A8A);
+                                  } else if (act == 'ADDITIONAL_FINDING_UPLOADED') {
+                                    icon = Icons.search;
+                                    color = const Color(0xFFD97706);
+                                  } else if (act == 'RELEASE_PHOTO_UPLOADED') {
+                                    icon = Icons.check_circle_outline;
+                                    color = const Color(0xFF059669);
+                                  } else if (act == 'PHOTO_DELETED') {
+                                    icon = Icons.delete_forever_outlined;
+                                    color = const Color(0xFFDC2626);
+                                  } else if (act == 'DETAILS_EDITED') {
+                                    icon = Icons.edit_note_outlined;
+                                    color = const Color(0xFF7C3AED);
+                                  }
+
+                                  return Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+                                          child: Icon(icon, size: 15, color: color),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Text(actor, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0F172A))),
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                                    decoration: BoxDecoration(color: Colors.blueGrey.shade50, borderRadius: BorderRadius.circular(4)),
+                                                    child: Text(role, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.blueGrey.shade700)),
+                                                  ),
+                                                  const Spacer(),
+                                                  Text(
+                                                    _formatDate(created),
+                                                    style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B)),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(details, style: const TextStyle(fontSize: 11.5, color: Color(0xFF334155))),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),

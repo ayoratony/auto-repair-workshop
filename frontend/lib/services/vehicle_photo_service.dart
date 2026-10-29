@@ -8,27 +8,65 @@ import 'auth_service.dart';
 import 'platform_launcher.dart';
 
 class VehiclePhotoService {
-  static const List<String> presetLabels = [
+  // Category constants
+  static const String categoryIntake = 'INTAKE';
+  static const String categoryFinding = 'ADDITIONAL_FINDING';
+  static const String categoryRelease = 'RELEASE';
+
+  // Preset labels per category
+  static const List<String> intakeLabels = [
     '📷 Front View',
     '📷 Rear Bumper & Plate',
     '📷 Left Side Profile',
     '📷 Right Side Profile',
-    '📷 Dashboard & Odometer',
-    '📷 Interior & Valuables',
-    '⚠️ Existing Scratch / Dent',
-    '🔧 Engine Bay / Mechanical',
-    '✅ Release Condition Proof',
-    '📁 General Photo',
+    '📷 Dashboard & Odometer Proof',
+    '📷 Interior & Valuables Check',
+    '⚠️ Existing Scratch / Dent / Body Damage',
+    '🔧 Engine Bay / Fluid Leaks',
+    '📁 General Intake Photo',
   ];
 
+  static const List<String> findingLabels = [
+    '🔍 Worn Brake Pads / Scored Discs',
+    '🔍 Oil / Coolant Fluid Leak',
+    '🔍 Suspension / Bushing / Ball Joint Tear',
+    '🔍 Damaged Belt / Pulley / Alternator',
+    '🔍 Electrical / Melted Wiring Fault',
+    '🔍 Exhaust / Underbody Rust & Hole',
+    '⚠️ Unexpected Mechanical Hazard',
+    '🔧 Additional Repair Recommended',
+  ];
+
+  static const List<String> releaseLabels = [
+    '✅ Completed Work Evidence',
+    '✅ Replaced Old Parts Display',
+    '✅ Final Clean Delivery Condition',
+    '✅ Customer Handover Signature/Proof',
+  ];
+
+  static const List<String> presetLabels = intakeLabels;
+
+  static List<String> getLabelsForCategory(String category) {
+    switch (category) {
+      case categoryFinding:
+        return findingLabels;
+      case categoryRelease:
+        return releaseLabels;
+      case categoryIntake:
+      default:
+        return intakeLabels;
+    }
+  }
+
   /// Stretches and burns an immutable anti-dispute verification watermark banner
-  /// directly into the image pixel data (Registration plate, Job Card #, Issue date, Timestamp).
+  /// directly into the image pixel data (Registration plate, Job Card #, Issue date, Timestamp, Category Seal).
   static Future<Uint8List> stampWatermarkOnImage({
     required Uint8List rawBytes,
     required String registrationNo,
     String? jobNumber,
     String? jobCreatedAt,
     required String label,
+    String category = categoryIntake,
   }) async {
     try {
       final codec = await ui.instantiateImageCodec(rawBytes);
@@ -52,8 +90,13 @@ class VehiclePhotoService {
       final bgPaint = Paint()..color = const Color(0xF00A0F1D);
       canvas.drawRect(bannerRect, bgPaint);
 
-      // Top security accent line
-      final stripePaint = Paint()..color = const Color(0xFF2563EB);
+      // Top security accent line (Blue for Intake, Amber for Finding, Green for Release)
+      final stripeColor = category == categoryFinding
+          ? const Color(0xFFF59E0B) // Amber
+          : (category == categoryRelease
+              ? const Color(0xFF10B981) // Emerald Green
+              : const Color(0xFF2563EB)); // Electric Blue
+      final stripePaint = Paint()..color = stripeColor;
       canvas.drawRect(
         Rect.fromLTWH(0, height - bannerHeight, width, (bannerHeight * 0.04).clamp(2.5, 4.0)),
         stripePaint,
@@ -111,11 +154,17 @@ class VehiclePhotoService {
       tp1.paint(canvas, Offset(paddingH, line1Y));
 
       // Row 2: Official Timestamp & Condition Category Seal
+      final categoryBadge = category == categoryFinding
+          ? 'DISCOVERED DURING REPAIR (SUPPLEMENTAL FINDING)'
+          : (category == categoryRelease
+              ? 'FINAL RELEASE & DELIVERY PROOF'
+              : 'OFFICIAL INTAKE RECORD (LOCKED)');
+
       final tp2 = TextPainter(
         text: TextSpan(
           children: [
             TextSpan(
-              text: 'TIMESTAMP: $timeStr   •   TAG: $cleanLabel   •   OFFICIAL WORKSHOP INTAKE RECORD',
+              text: 'TIMESTAMP: $timeStr   •   TAG: $cleanLabel   •   $categoryBadge',
               style: TextStyle(
                 color: const Color(0xFFCBD5E1),
                 fontSize: subSize,
@@ -133,9 +182,8 @@ class VehiclePhotoService {
       tp2.paint(canvas, Offset(paddingH, line2Y));
 
       final picture = recorder.endRecording();
-      final finalImg = await picture.toImage(image.width, image.height);
-      final byteData = await finalImg.toByteData(format: ui.ImageByteFormat.png);
-
+      final rendered = await picture.toImage(width.toInt(), height.toInt());
+      final byteData = await rendered.toByteData(format: ui.ImageByteFormat.png);
       if (byteData != null) {
         return byteData.buffer.asUint8List();
       }
@@ -146,8 +194,8 @@ class VehiclePhotoService {
     }
   }
 
-  /// Prompts user to pick an image file, stamps official timestamp & job card details,
-  /// and uploads it as a verified vehicle photo.
+  /// Prompts user to pick an image file, choose category (Intake vs Additional Finding vs Release),
+  /// stamps official timestamp & job card details, and uploads it as a verified vehicle photo.
   static Future<Map<String, dynamic>?> pickAndUploadPhoto({
     required BuildContext context,
     required String baseUrl,
@@ -155,6 +203,7 @@ class VehiclePhotoService {
     String? jobCardId,
     String? jobNumber,
     String? jobCreatedAt,
+    String? defaultCategory,
     String? defaultLabel,
   }) async {
     try {
@@ -171,17 +220,19 @@ class VehiclePhotoService {
         return null;
       }
 
-      String selectedLabel = defaultLabel ?? presetLabels.first;
-      String category = selectedLabel.contains('Scratch') ? 'DAMAGE' : (selectedLabel.contains('Release') ? 'RELEASE' : 'PHOTO');
+      String currentCategory = defaultCategory ?? categoryIntake;
+      List<String> currentLabels = getLabelsForCategory(currentCategory);
+      String selectedLabel = defaultLabel ?? currentLabels.first;
       final notesCtrl = TextEditingController();
 
-      // Stamp official anti-dispute watermark with vehicle reg, job card #, and date/time
+      // Stamp official anti-dispute watermark with vehicle reg, job card #, category, and date/time
       Uint8List bytes = await stampWatermarkOnImage(
         rawBytes: rawBytes,
         registrationNo: registrationNo,
         jobNumber: jobNumber,
         jobCreatedAt: jobCreatedAt,
         label: selectedLabel,
+        category: currentCategory,
       );
 
       bool confirmed = false;
@@ -206,7 +257,7 @@ class VehiclePhotoService {
                   ],
                 ),
                 content: SizedBox(
-                  width: 460,
+                  width: 500,
                   child: SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -225,35 +276,158 @@ class VehiclePhotoService {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 10),
+
+                        // Categorization Toggle
+                        const Text('Select Category *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ChoiceChip(
+                                avatar: const Icon(Icons.shield_outlined, size: 14),
+                                label: const Text('🛡️ Intake', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                selected: currentCategory == categoryIntake,
+                                selectedColor: const Color(0xFFDBEAFE),
+                                onSelected: (sel) async {
+                                  if (sel) {
+                                    final newLabels = getLabelsForCategory(categoryIntake);
+                                    final newLbl = newLabels.first;
+                                    final updatedBytes = await stampWatermarkOnImage(
+                                      rawBytes: rawBytes,
+                                      registrationNo: registrationNo,
+                                      jobNumber: jobNumber,
+                                      jobCreatedAt: jobCreatedAt,
+                                      label: newLbl,
+                                      category: categoryIntake,
+                                    );
+                                    setDlg(() {
+                                      currentCategory = categoryIntake;
+                                      currentLabels = newLabels;
+                                      selectedLabel = newLbl;
+                                      bytes = updatedBytes;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: ChoiceChip(
+                                avatar: const Icon(Icons.search, size: 14),
+                                label: const Text('🔍 Finding', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                selected: currentCategory == categoryFinding,
+                                selectedColor: const Color(0xFFFEF3C7),
+                                onSelected: (sel) async {
+                                  if (sel) {
+                                    final newLabels = getLabelsForCategory(categoryFinding);
+                                    final newLbl = newLabels.first;
+                                    final updatedBytes = await stampWatermarkOnImage(
+                                      rawBytes: rawBytes,
+                                      registrationNo: registrationNo,
+                                      jobNumber: jobNumber,
+                                      jobCreatedAt: jobCreatedAt,
+                                      label: newLbl,
+                                      category: categoryFinding,
+                                    );
+                                    setDlg(() {
+                                      currentCategory = categoryFinding;
+                                      currentLabels = newLabels;
+                                      selectedLabel = newLbl;
+                                      bytes = updatedBytes;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: ChoiceChip(
+                                avatar: const Icon(Icons.check_circle_outline, size: 14),
+                                label: const Text('🏁 Release', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                selected: currentCategory == categoryRelease,
+                                selectedColor: const Color(0xFFD1FAE5),
+                                onSelected: (sel) async {
+                                  if (sel) {
+                                    final newLabels = getLabelsForCategory(categoryRelease);
+                                    final newLbl = newLabels.first;
+                                    final updatedBytes = await stampWatermarkOnImage(
+                                      rawBytes: rawBytes,
+                                      registrationNo: registrationNo,
+                                      jobNumber: jobNumber,
+                                      jobCreatedAt: jobCreatedAt,
+                                      label: newLbl,
+                                      category: categoryRelease,
+                                    );
+                                    setDlg(() {
+                                      currentCategory = categoryRelease;
+                                      currentLabels = newLabels;
+                                      selectedLabel = newLbl;
+                                      bytes = updatedBytes;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 8),
+
+                        // Security notice banner based on chosen category
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF0FDF4),
+                            color: currentCategory == categoryFinding
+                                ? const Color(0xFFFFFBEB)
+                                : (currentCategory == categoryRelease ? const Color(0xFFECFDF5) : const Color(0xFFEFF6FF)),
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFF86EFAC)),
+                            border: Border.all(
+                              color: currentCategory == categoryFinding
+                                  ? const Color(0xFFFDE68A)
+                                  : (currentCategory == categoryRelease ? const Color(0xFFA7F3D0) : const Color(0xFFBFDBFE)),
+                            ),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.check_circle, size: 15, color: Color(0xFF16A34A)),
+                              Icon(
+                                currentCategory == categoryFinding
+                                    ? Icons.info_outline
+                                    : (currentCategory == categoryRelease ? Icons.task_alt : Icons.lock_outline),
+                                size: 14,
+                                color: currentCategory == categoryFinding
+                                    ? Colors.amber.shade900
+                                    : (currentCategory == categoryRelease ? Colors.green.shade900 : const Color(0xFF1E3A8A)),
+                              ),
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  'Timestamp & Job # embedded on photo for customer dispute proof',
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green.shade900),
+                                  currentCategory == categoryFinding
+                                      ? 'Supplemental finding discovered during repair. Stamped separately from arrival intake.'
+                                      : (currentCategory == categoryRelease
+                                          ? 'Proof of completed repairs and vehicle delivery condition.'
+                                          : 'Baseline intake photo: Permanently locked upon job issuance to prevent tampering.'),
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: currentCategory == categoryFinding
+                                        ? Colors.amber.shade900
+                                        : (currentCategory == categoryRelease ? Colors.green.shade900 : const Color(0xFF1E3A8A)),
+                                  ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        const Text('Photo Category *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 12),
+
+                        const Text('Photo Tag / View *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
                         const SizedBox(height: 6),
                         DropdownButtonFormField<String>(
-                          value: selectedLabel,
+                          key: ValueKey(currentCategory),
+                          initialValue: currentLabels.contains(selectedLabel) ? selectedLabel : currentLabels.first,
                           isExpanded: true,
                           decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                          items: presetLabels
+                          items: currentLabels
                               .map((lbl) => DropdownMenuItem(value: lbl, child: Text(lbl, overflow: TextOverflow.ellipsis)))
                               .toList(),
                           onChanged: (v) async {
@@ -264,11 +438,11 @@ class VehiclePhotoService {
                                 jobNumber: jobNumber,
                                 jobCreatedAt: jobCreatedAt,
                                 label: v,
+                                category: currentCategory,
                               );
                               setDlg(() {
                                 selectedLabel = v;
                                 bytes = updatedBytes;
-                                category = v.contains('Scratch') ? 'DAMAGE' : (v.contains('Release') ? 'RELEASE' : 'PHOTO');
                               });
                             }
                           },
@@ -276,10 +450,14 @@ class VehiclePhotoService {
                         const SizedBox(height: 12),
                         TextField(
                           controller: notesCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Notes / Specific Details (Optional)',
-                            hintText: 'e.g. Minor paint scratch near left front door',
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: currentCategory == categoryFinding
+                                ? 'Mechanic Findings & Recommended Fix *'
+                                : (currentCategory == categoryRelease ? 'Release & Handover Notes' : 'Intake Notes / Scratch Location (Optional)'),
+                            hintText: currentCategory == categoryFinding
+                                ? 'e.g. Brake pads worn to 2mm, disc grooved beyond safe thickness'
+                                : 'e.g. Minor paint scratch near left front door',
+                            border: const OutlineInputBorder(),
                           ),
                           maxLines: 2,
                         ),
@@ -336,13 +514,13 @@ class VehiclePhotoService {
         headers: AuthService.instance.authHeaders,
         body: json.encode({
           'image': base64String,
-          'filename': 'stamped_${file.name.replaceAll(RegExp(r'\.[^\.]+$'), '')}.png',
+          'filename': file.name,
           'registrationNo': registrationNo.trim().toUpperCase(),
           'jobCardId': jobCardId,
           'jobNumber': jobNumber,
           'jobCreatedAt': jobCreatedAt,
           'label': selectedLabel,
-          'category': category,
+          'category': currentCategory,
           'notes': notesCtrl.text.trim(),
         }),
       );
@@ -391,8 +569,16 @@ class VehiclePhotoService {
     final regNo = photo['registrationNo']?.toString() ?? '';
     final jobNumber = photo['jobNumber']?.toString() ?? '';
     final jobCreatedAt = photo['jobCreatedAt']?.toString() ?? '';
+    final category = (photo['category'] ?? categoryIntake).toString().toUpperCase();
+    final isFinding = category == categoryFinding;
+    final isRelease = category == categoryRelease;
+    // ignore: unused_local_variable
+    final isIntake = !isFinding && !isRelease;
+
     final streamUrl = key.isNotEmpty ? '$baseUrl/storage/file?key=${Uri.encodeComponent(key)}' : (photo['url']?.toString() ?? '');
     final directUrl = photo['url']?.toString() ?? photo['publicUrl']?.toString() ?? '';
+
+    final isAdmin = AuthService.instance.isManager;
 
     showDialog(
       context: context,
@@ -499,11 +685,19 @@ class VehiclePhotoService {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.verified, size: 14, color: Color(0xFF4ADE80)),
+                        Icon(
+                          isFinding ? Icons.search : (isRelease ? Icons.check_circle : Icons.shield),
+                          size: 14,
+                          color: isFinding ? const Color(0xFFFBBF24) : (isRelease ? const Color(0xFF34D399) : const Color(0xFF4ADE80)),
+                        ),
                         const SizedBox(width: 4),
                         Text(
-                          'Official Intake Proof • $regNo',
-                          style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 11, fontWeight: FontWeight.bold),
+                          isFinding ? 'Finding During Repair' : (isRelease ? 'Release Proof' : 'Official Intake Proof'),
+                          style: TextStyle(
+                            color: isFinding ? const Color(0xFFFDE68A) : (isRelease ? const Color(0xFFA7F3D0) : const Color(0xFF86EFAC)),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -518,17 +712,28 @@ class VehiclePhotoService {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: isFinding ? const Color(0xFFFFFBEB) : const Color(0xFFF8FAFC),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blueGrey.shade100),
+                    border: Border.all(color: isFinding ? const Color(0xFFFDE68A) : Colors.blueGrey.shade100),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.sticky_note_2_outlined, size: 16, color: Color(0xFF2563EB)),
+                      Icon(
+                        isFinding ? Icons.warning_amber_rounded : Icons.sticky_note_2_outlined,
+                        size: 16,
+                        color: isFinding ? const Color(0xFFD97706) : const Color(0xFF2563EB),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(notes, style: const TextStyle(fontSize: 13, color: Color(0xFF1E293B))),
+                        child: Text(
+                          notes,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isFinding ? const Color(0xFF92400E) : const Color(0xFF1E293B),
+                            fontWeight: isFinding ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -539,13 +744,26 @@ class VehiclePhotoService {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFECFDF5),
+                      color: isFinding ? const Color(0xFFFEF3C7) : (isRelease ? const Color(0xFFECFDF5) : const Color(0xFFEFF6FF)),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: const Color(0xFFA7F3D0)),
+                      border: Border.all(
+                        color: isFinding ? const Color(0xFFFCD34D) : (isRelease ? const Color(0xFFA7F3D0) : const Color(0xFFBFDBFE)),
+                      ),
                     ),
-                    child: const Text('📷 Verified Intake Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
+                    child: Text(
+                      isFinding
+                          ? '🔍 Finding During Repair'
+                          : (isRelease ? '🏁 Final Release Proof' : '🛡️ Locked Intake Record'),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: isFinding
+                            ? const Color(0xFF92400E)
+                            : (isRelease ? const Color(0xFF047857) : const Color(0xFF1E3A8A)),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   if (uploadedBy.isNotEmpty)
@@ -561,31 +779,49 @@ class VehiclePhotoService {
                       onPressed: () => PlatformLauncher.openUrl(directUrl),
                     ),
                   if (onDelete != null)
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                      tooltip: 'Delete Photo',
-                      onPressed: () async {
-                        final ok = await showDialog<bool>(
-                          context: ctx,
-                          builder: (delCtx) => AlertDialog(
-                            title: const Text('Delete Photo?'),
-                            content: const Text('Are you sure you want to permanently delete this photo?'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(delCtx, false), child: const Text('Cancel')),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                                onPressed: () => Navigator.pop(delCtx, true),
-                                child: const Text('Delete'),
+                    if (isIntake && !isAdmin)
+                      Tooltip(
+                        message: 'Intake baseline photos are legally locked to protect both customer and workshop against tampering.',
+                        child: IconButton(
+                          icon: const Icon(Icons.lock, color: Colors.grey, size: 20),
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Colors.orange,
+                                content: Text('Intake photos are legally locked. Only an Administrator can authorize deletion.'),
                               ),
-                            ],
-                          ),
-                        );
-                        if (ok == true) {
-                          Navigator.pop(ctx);
-                          onDelete();
-                        }
-                      },
-                    ),
+                            );
+                          },
+                        ),
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                        tooltip: isIntake ? 'Delete (Admin Override - Logged to Audit)' : 'Delete Photo',
+                        onPressed: () async {
+                          final ok = await showDialog<bool>(
+                            context: ctx,
+                            builder: (delCtx) => AlertDialog(
+                              title: Text(isIntake ? 'Admin Override: Delete Intake Photo?' : 'Delete Photo?'),
+                              content: Text(isIntake
+                                  ? 'Warning: This photo is an official arrival intake record. Deleting it will be permanently recorded in the Job Card Audit Log.'
+                                  : 'Are you sure you want to permanently delete this photo?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(delCtx, false), child: const Text('Cancel')),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                  onPressed: () => Navigator.pop(delCtx, true),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok == true) {
+                            Navigator.pop(ctx);
+                            onDelete();
+                          }
+                        },
+                      ),
                 ],
               ),
             ],
@@ -644,13 +880,13 @@ class VehiclePhotoService {
     }
   }
 
-  /// Builds a card thumbnail widget representing a vehicle photo
+  /// Compact photo thumbnail card with category badges and watermarked timestamp
   static Widget buildPhotoCard({
     required Map<String, dynamic> photo,
     required String baseUrl,
     required VoidCallback onTap,
     VoidCallback? onDelete,
-    double width = 120,
+    double width = 125,
     double height = 120,
   }) {
     final key = photo['key']?.toString() ?? '';
@@ -658,18 +894,26 @@ class VehiclePhotoService {
     final uploadedAt = photo['uploadedAt']?.toString() ?? '';
     final jobNumber = photo['jobNumber']?.toString() ?? '';
     final streamUrl = key.isNotEmpty ? '$baseUrl/storage/file?key=${Uri.encodeComponent(key)}' : (photo['url']?.toString() ?? '');
-    final isDamage = (photo['category'] ?? '').toString().toUpperCase() == 'DAMAGE';
+    final category = (photo['category'] ?? categoryIntake).toString().toUpperCase();
+    final isFinding = category == categoryFinding;
+    final isRelease = category == categoryRelease;
+    // ignore: unused_local_variable
+    final isIntake = !isFinding && !isRelease;
+
+    final borderColor = isFinding
+        ? Colors.amber.shade600
+        : (isRelease ? Colors.green.shade600 : const Color(0xFF93C5FD));
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
         width: width,
-        height: height + 42,
+        height: height + 48,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: isDamage ? Colors.red.shade300 : Colors.blueGrey.shade200),
+          border: Border.all(color: borderColor, width: isFinding ? 1.5 : 1),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.05),
@@ -681,13 +925,13 @@ class VehiclePhotoService {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail image with timestamp watermark overlay
+            // Thumbnail image with category chip & timestamp watermark overlay
             Stack(
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
                   child: Container(
-                    height: height - 16,
+                    height: height - 12,
                     width: width,
                     color: const Color(0xFFF1F5F9),
                     child: Image.network(
@@ -711,6 +955,27 @@ class VehiclePhotoService {
                     ),
                   ),
                 ),
+
+                // Category pill on top-left
+                Positioned(
+                  top: 4,
+                  left: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isFinding
+                          ? const Color(0xFFD97706)
+                          : (isRelease ? const Color(0xFF059669) : const Color(0xFF1E3A8A)),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      isFinding ? '🔍 Finding' : (isRelease ? '🏁 Release' : '🛡️ Intake'),
+                      style: const TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+
+                // Timestamp pill at bottom of image
                 if (uploadedAt.isNotEmpty)
                   Positioned(
                     bottom: 0,
@@ -737,6 +1002,8 @@ class VehiclePhotoService {
                       ),
                     ),
                   ),
+
+                // Delete button
                 if (onDelete != null)
                   Positioned(
                     top: 2,
@@ -752,15 +1019,18 @@ class VehiclePhotoService {
                   ),
               ],
             ),
+
             // Caption & Label
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               child: Text(
-                label.replaceAll('📷 ', '').replaceAll('⚠️ ', '').replaceAll('🔧 ', '').replaceAll('✅ ', ''),
+                label.replaceAll('📷 ', '').replaceAll('⚠️ ', '').replaceAll('🔧 ', '').replaceAll('✅ ', '').replaceAll('🔍 ', ''),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
-                  color: isDamage ? Colors.red.shade800 : const Color(0xFF0F172A),
+                  color: isFinding
+                      ? const Color(0xFFB45309)
+                      : (isRelease ? const Color(0xFF047857) : const Color(0xFF0F172A)),
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

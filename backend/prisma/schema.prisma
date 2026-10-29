@@ -170,6 +170,7 @@ model JobCard {
 
   estimates          Estimate[]
   stockMovements     StockMovement[]
+  auditLogs          JobCardAuditLog[]
 
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
@@ -184,6 +185,24 @@ enum JobStatus {
   QUALITY_CHECK
   READY
   COMPLETED
+}
+
+// -------------------------------------
+// Immutable Audit Log for Job Cards
+// -------------------------------------
+model JobCardAuditLog {
+  id         String   @id @default(uuid())
+  jobCardId  String
+  jobCard    JobCard  @relation(fields: [jobCardId], references: [id], onDelete: Cascade)
+  actorName  String
+  actorRole  String?  @default("USER")
+  action     String   // CREATED, STATUS_CHANGE, DETAILS_EDITED, INTAKE_PHOTO_UPLOADED, ADDITIONAL_FINDING_UPLOADED, PHOTO_DELETED, ODOMETER_CHANGED
+  details    String
+  diff       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([jobCardId])
+  @@index([createdAt])
 }
 
 // -------------------------------------

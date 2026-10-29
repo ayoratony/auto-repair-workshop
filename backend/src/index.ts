@@ -474,6 +474,34 @@ app.get('/api/sync/status', async (req: Request, res: Response) => {
 });
 
 // ==========================================
+// JOB CARD AUDIT LOG HELPER
+// ==========================================
+export async function createJobCardAuditLog(params: {
+  jobCardId: string;
+  actorName: string;
+  actorRole?: string;
+  action: string;
+  details: string;
+  diff?: any;
+}) {
+  try {
+    return await prisma.jobCardAuditLog.create({
+      data: {
+        jobCardId: params.jobCardId,
+        actorName: params.actorName || 'Staff',
+        actorRole: params.actorRole || 'USER',
+        action: params.action,
+        details: params.details,
+        diff: params.diff ? params.diff : undefined,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to create job card audit log:', err);
+    return null;
+  }
+}
+
+// ==========================================
 // JOB CARDS API (7-Stage Workflow + Diagnostics + Warranty + Bay)
 // ==========================================
 app.get('/api/jobs', async (req: Request, res: Response) => {
@@ -773,6 +801,19 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
     inFlightJobCreations.set(dedupKey, creationPromise);
     try {
       const jobCard = await creationPromise;
+      await createJobCardAuditLog({
+        jobCardId: jobCard.id,
+        actorName: (req.headers['x-user-name'] as string) || 'Advisor',
+        actorRole: (req.headers['x-user-role'] as string) || 'ADVISOR',
+        action: 'CREATED',
+        details: `Job Card ${jobCard.jobNumber || 'JC'} created for ${jobCard.vehicle.registrationNo}. Initial status: ${jobCard.status}. Odometer: ${jobCard.odometer ?? 'Not recorded'} km.`,
+        diff: {
+          jobNumber: jobCard.jobNumber,
+          registrationNo: jobCard.vehicle.registrationNo,
+          status: jobCard.status,
+          odometer: jobCard.odometer,
+        },
+      });
       recordSyncEvent({
         type: 'JOB_UPDATED',
         entityId: jobCard.id,
@@ -916,7 +957,42 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       actorRole: (req.headers['x-user-role'] as string) || 'USER',
       message: `Job Card ${updated.jobNumber || 'JC'} updated (Status: ${updated.status})`,
       metadata: { jobId: updated.id, jobNumber: updated.jobNumber, status: updated.status },
+
     });
+
+    const changes: string[] = [];
+    if (status && status !== existing.status) {
+      changes.push(`Status: ${existing.status} ➔ ${status}`);
+    }
+    if (odometer !== undefined && Number(odometer) !== existing.odometer) {
+      changes.push(`Odometer: ${existing.odometer ?? 'None'} ➔ ${odometer} km`);
+    }
+    if (technician !== undefined && technician !== existing.technician) {
+      changes.push(`Technician: ${technician || 'Unassigned'}`);
+    }
+    if (bayNumber !== undefined && bayNumber !== existing.bayNumber) {
+      changes.push(`Bay: ${bayNumber || 'None'}`);
+    }
+    if (priority !== undefined && priority !== existing.priority) {
+      changes.push(`Priority: ${priority}`);
+    }
+    if (service !== undefined && service !== existing.workRequested) {
+      changes.push(`Work requested: "${service}"`);
+    }
+
+    if (changes.length > 0) {
+      await createJobCardAuditLog({
+        jobCardId: updated.id,
+        actorName: (req.headers['x-user-name'] as string) || 'User',
+        actorRole: (req.headers['x-user-role'] as string) || 'USER',
+        action: status && status !== existing.status ? 'STATUS_CHANGE' : 'DETAILS_EDITED',
+        details: changes.join(' | '),
+        diff: {
+          before: { status: existing.status, odometer: existing.odometer, technician: existing.technician, bayNumber: existing.bayNumber },
+          after: { status: updated.status, odometer: updated.odometer, technician: updated.technician, bayNumber: updated.bayNumber },
+        },
+      });
+    }
 
     res.json(updated);
   } catch (error) {
@@ -949,6 +1025,24 @@ app.delete('/api/jobs/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Delete job error:', error);
     res.status(500).json({ error: 'Failed to delete job card' });
+  }
+});
+
+// -------------------------------------------------------------
+// -------------------------------------------------------------
+// JOB CARD AUDIT TRAIL API
+// -------------------------------------------------------------
+app.get('/api/jobs/:id/audit-logs', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const logs = await prisma.jobCardAuditLog.findMany({
+      where: { jobCardId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(logs);
+  } catch (error) {
+    console.error('Fetch job card audit logs error:', error);
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
   }
 });
 
@@ -3059,7 +3153,7 @@ app.post('/api/vehicles/upload-image', async (req: Request, res: Response) => {
       proxyUrl,
       filename: filename || `${cleanReg}_${label || 'photo'}.${ext}`,
       label: label || 'Vehicle Photo',
-      category: category || 'PHOTO',
+      category: category || 'INTAKE',
       notes: notes || '',
       registrationNo: (registrationNo || cleanReg).trim().toUpperCase(),
       jobCardId: jobCardId ? String(jobCardId) : null,
@@ -3086,6 +3180,23 @@ app.post('/api/vehicles/upload-image', async (req: Request, res: Response) => {
           await prisma.jobCard.update({
             where: { id: job.id },
             data: { walkAroundData: walk },
+          });
+
+          const actionType = photoRecord.category === 'ADDITIONAL_FINDING'
+            ? 'ADDITIONAL_FINDING_UPLOADED'
+            : (photoRecord.category === 'RELEASE' ? 'RELEASE_PHOTO_UPLOADED' : 'INTAKE_PHOTO_UPLOADED');
+          const categoryTitle = photoRecord.category === 'ADDITIONAL_FINDING'
+            ? '🔍 Additional Finding Discovered'
+            : (photoRecord.category === 'RELEASE' ? '🏁 Release Proof' : '🛡️ Intake Condition Photo');
+          const notesText = photoRecord.notes ? ` - "${photoRecord.notes}"` : '';
+
+          await createJobCardAuditLog({
+            jobCardId: job.id,
+            actorName: photoRecord.uploadedBy,
+            actorRole: (req.headers['x-user-role'] as string) || 'USER',
+            action: actionType,
+            details: `${categoryTitle}: ${photoRecord.label}${notesText}`,
+            diff: { photoId: photoRecord.id, key: photoRecord.key, category: photoRecord.category, label: photoRecord.label },
           });
         }
       } catch (e) {
@@ -3147,11 +3258,12 @@ app.delete('/api/vehicles/photos', async (req: Request, res: Response) => {
     const key = String(req.query.key || req.body?.key || '');
     const jobCardId = req.query.jobCardId || req.body?.jobCardId;
     const photoId = req.query.photoId || req.body?.photoId;
+    const actorRole = ((req.headers['x-user-role'] as string) || (req as any).user?.role || 'USER').toUpperCase();
+    const actorName = (req.headers['x-user-name'] as string) || (req as any).user?.name || 'Staff';
+
     if (!key) {
       return res.status(400).json({ error: 'Object key is required' });
     }
-
-    await deleteVehicleImage(key);
 
     if (jobCardId) {
       const job = await prisma.jobCard.findUnique({ where: { id: String(jobCardId) } });
@@ -3159,6 +3271,20 @@ app.delete('/api/vehicles/photos', async (req: Request, res: Response) => {
         const walk = (job.walkAroundData && typeof job.walkAroundData === 'object'
           ? (job.walkAroundData as Record<string, any>)
           : {}) as Record<string, any>;
+        const targetPhoto = Array.isArray(walk.securityPhotos)
+          ? walk.securityPhotos.find((p: any) => p.key === key || (photoId && p.id === photoId))
+          : null;
+
+        // Security check: Protect INTAKE photos from tampering
+        const isIntake = targetPhoto && (targetPhoto.category === 'INTAKE' || !targetPhoto.category);
+        if (isIntake && actorRole !== 'ADMIN') {
+          return res.status(403).json({
+            error: 'Intake baseline photos are legally protected and cannot be deleted by workshop staff. Only an Administrator can authorize deletion.',
+          });
+        }
+
+        await deleteVehicleImage(key);
+
         if (Array.isArray(walk.securityPhotos)) {
           walk.securityPhotos = walk.securityPhotos.filter(
             (p: any) => p.key !== key && (!photoId || p.id !== photoId)
@@ -3168,9 +3294,21 @@ app.delete('/api/vehicles/photos', async (req: Request, res: Response) => {
             data: { walkAroundData: walk },
           });
         }
+
+        await createJobCardAuditLog({
+          jobCardId: job.id,
+          actorName,
+          actorRole,
+          action: 'PHOTO_DELETED',
+          details: `Photo [${targetPhoto?.label || key}] (${targetPhoto?.category || 'INTAKE'}) deleted by ${actorName} (${actorRole})`,
+          diff: { deletedKey: key, deletedPhotoId: photoId, label: targetPhoto?.label },
+        });
+
+        return res.json({ success: true, deleted: true, key });
       }
     }
 
+    await deleteVehicleImage(key);
     res.json({ success: true, deleted: true, key });
   } catch (err: any) {
     console.error('Failed to delete vehicle photo:', err);
