@@ -9,6 +9,7 @@ import '../mobile/vehicle_damage_map.dart';
 import '../mobile/walk_around_checklist.dart';
 import 'inventory_workspace_view.dart';
 import '../../services/auth_service.dart';
+import '../../services/sync_service.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -204,6 +205,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   String _technicianFilter = 'All';
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _topSearchController = TextEditingController();
+  StreamSubscription<SyncEvent>? _syncSubscription;
 
   @override
   void initState() {
@@ -216,6 +218,95 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     }
     _activeTab = _firstAllowedTab();
     _refreshAllData();
+
+    // Start background auto-sync loop across all workshop terminals
+    SyncService.instance.startAutoSync();
+    _syncSubscription = SyncService.instance.onSyncEvent.listen((evt) {
+      if (!mounted) return;
+      if (evt.type == 'RECOMMENDATION_ADDED') {
+        final currentUserName = AuthService.instance.userName.trim().toLowerCase();
+        final actor = evt.actorName.trim().toLowerCase();
+        if (currentUserName.isEmpty || !actor.contains(currentUserName)) {
+          final reg = evt.metadata['registrationNo'] ?? 'Vehicle';
+          final sys = evt.metadata['recommendation']?['system'] ?? 'Defect';
+          final cost = evt.metadata['recommendation']?['totalEstimated'] ?? 0;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFFB45309),
+              duration: const Duration(seconds: 6),
+              behavior: SnackBarBehavior.floating,
+              content: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '🔔 Alert from Technician ${evt.actorName}: $reg has $sys issue (Estimated: KES $cost)!',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+              action: SnackBarAction(
+                label: 'REFRESH NOW',
+                textColor: Colors.yellow,
+                onPressed: _refreshAllData,
+              ),
+            ),
+          );
+        }
+      }
+    });
+    SyncService.instance.addListener(_onSyncUpdate);
+  }
+
+  void _onSyncUpdate() {
+    if (mounted) {
+      _refreshAllDataSilently();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _topSearchController.dispose();
+    _syncSubscription?.cancel();
+    SyncService.instance.removeListener(_onSyncUpdate);
+    super.dispose();
+  }
+
+  Future<void> _refreshAllDataSilently() async {
+    try {
+      final authHeaders = AuthService.instance.authHeaders;
+      final responses = await Future.wait([
+        http.get(Uri.parse('$_baseUrl/dashboard'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/jobs'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/parts'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/estimates'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/invoices'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/customers'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/users'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/settings'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/appointments'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/expenses'), headers: authHeaders),
+        http.get(Uri.parse('$_baseUrl/vehicles'), headers: authHeaders),
+      ]);
+
+      if (!mounted) return;
+      setState(() {
+        if (responses[0].statusCode == 200) _dashboard = json.decode(responses[0].body);
+        if (responses[1].statusCode == 200) _jobs = json.decode(responses[1].body);
+        if (responses[2].statusCode == 200) _parts = json.decode(responses[2].body);
+        if (responses[3].statusCode == 200) _estimates = json.decode(responses[3].body);
+        if (responses[4].statusCode == 200) _invoices = json.decode(responses[4].body);
+        if (responses[5].statusCode == 200) _customers = json.decode(responses[5].body);
+        if (responses[6].statusCode == 200) _employees = json.decode(responses[6].body);
+        if (responses[7].statusCode == 200) _workshopSettings = json.decode(responses[7].body);
+        if (responses[8].statusCode == 200) _appointments = json.decode(responses[8].body);
+        if (responses[9].statusCode == 200) _expenses = json.decode(responses[9].body);
+        if (responses[10].statusCode == 200) _vehicles = json.decode(responses[10].body);
+      });
+    } catch (_) {}
   }
 
   Future<void> _refreshAllData() async {
@@ -1238,6 +1329,216 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     );
   }
 
+  Future<void> _showAddWebRecommendationDialog(Map<String, dynamic> job, StateSetter setParentState) async {
+    String selectedSystem = 'Engine';
+    String urgency = 'RECOMMENDED';
+    final issueCtrl = TextEditingController();
+    final fixCtrl = TextEditingController();
+    final partsCtrl = TextEditingController();
+    final labourPriceCtrl = TextEditingController();
+    final partsPriceCtrl = TextEditingController();
+    bool isSubmitting = false;
+
+    await showDialog(
+      context: context,
+      builder: (dCtx) => StatefulBuilder(
+        builder: (dCtx, setDlg) => AlertDialog(
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.build_circle, color: Color(0xFFB45309), size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('Add Technician Defect Finding & Recommendation', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedSystem,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Affected Vehicle System *', border: OutlineInputBorder(), isDense: true),
+                    items: const [
+                      DropdownMenuItem(value: 'Engine', child: Text('⚙️ Engine & Mechanical')),
+                      DropdownMenuItem(value: 'Braking System', child: Text('🛑 Braking System')),
+                      DropdownMenuItem(value: 'Suspension & Steering', child: Text('🔧 Suspension & Steering')),
+                      DropdownMenuItem(value: 'Transmission & Drivetrain', child: Text('🔄 Transmission & Gearbox')),
+                      DropdownMenuItem(value: 'Electrical & Battery', child: Text('⚡ Electrical & Battery')),
+                      DropdownMenuItem(value: 'Air Conditioning', child: Text('❄️ Air Conditioning & Heating')),
+                      DropdownMenuItem(value: 'Tyres & Alignment', child: Text('🛞 Tyres & Wheel Alignment')),
+                      DropdownMenuItem(value: 'Exhaust & Emissions', child: Text('💨 Exhaust & Emissions')),
+                      DropdownMenuItem(value: 'Body & Paint', child: Text('🚗 Bodywork & Paint')),
+                      DropdownMenuItem(value: 'General Service', child: Text('📋 General Workshop Inspection')),
+                    ],
+                    onChanged: (v) => setDlg(() => selectedSystem = v ?? 'Engine'),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: urgency,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Severity / Urgency *', border: OutlineInputBorder(), isDense: true),
+                    items: const [
+                      DropdownMenuItem(value: 'CRITICAL', child: Text('🔴 CRITICAL (Immediate Safety Risk / Failure Imminent)')),
+                      DropdownMenuItem(value: 'RECOMMENDED', child: Text('🟡 RECOMMENDED (Service Required Soon)')),
+                      DropdownMenuItem(value: 'ADVISORY', child: Text('🟢 ADVISORY (Preventive / Monitor Closely)')),
+                    ],
+                    onChanged: (v) => setDlg(() => urgency = v ?? 'RECOMMENDED'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: issueCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Defect / Issue Found * (e.g. Engine oil leak & misfire)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: fixCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Recommended Action / Repair * (e.g. Replace valve cover gasket & spark plugs)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: partsCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Specific Parts Needed (Optional, e.g. 1x Gasket Kit, 4x Iridium Plugs)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: labourPriceCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Est. Labour (KES)',
+                            prefixText: 'KES ',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: partsPriceCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Est. Parts (KES)',
+                            prefixText: 'KES ',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSubmitting ? null : () => Navigator.pop(dCtx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+              icon: isSubmitting
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.check, size: 16),
+              label: Text(isSubmitting ? 'Saving...' : 'Add Recommendation'),
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      final issue = issueCtrl.text.trim();
+                      final fix = fixCtrl.text.trim();
+                      if (issue.isEmpty || fix.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(backgroundColor: Colors.orange, content: Text('Please enter both the Issue and Recommended Repair.')),
+                        );
+                        return;
+                      }
+                      setDlg(() => isSubmitting = true);
+                      try {
+                        final authHeaders = AuthService.instance.authHeaders;
+                        final techName = (job['technician'] != null && job['technician'].toString().isNotEmpty)
+                            ? job['technician'].toString()
+                            : AuthService.instance.userName;
+                        final resp = await http.post(
+                          Uri.parse('$_baseUrl/jobs/${job['id']}/recommendations'),
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...authHeaders,
+                            'x-user-name': AuthService.instance.userName,
+                            'x-user-role': AuthService.instance.role,
+                          },
+                          body: json.encode({
+                            'system': selectedSystem,
+                            'issue': issue,
+                            'recommendation': fix,
+                            'urgency': urgency,
+                            'partsNeeded': partsCtrl.text.trim(),
+                            'estimatedLabour': double.tryParse(labourPriceCtrl.text.trim()) ?? 0.0,
+                            'estimatedParts': double.tryParse(partsPriceCtrl.text.trim()) ?? 0.0,
+                            'technicianName': techName,
+                          }),
+                        );
+                        if (resp.statusCode == 201) {
+                          final resData = json.decode(resp.body);
+                          final newRec = resData['recommendation'];
+                          if (job['walkAroundData'] is! Map) {
+                            job['walkAroundData'] = <String, dynamic>{};
+                          }
+                          final wad = job['walkAroundData'] as Map<String, dynamic>;
+                          final recs = (wad['recommendations'] is List) ? List<dynamic>.from(wad['recommendations']) : [];
+                          wad['recommendations'] = [newRec, ...recs];
+
+                          setParentState(() {});
+                          if (dCtx.mounted) Navigator.pop(dCtx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              backgroundColor: Colors.green.shade700,
+                              content: const Text('Recommendation added! It will now appear on Estimates automatically.'),
+                            ),
+                          );
+                          SyncService.instance.triggerSync();
+                          _refreshAllDataSilently();
+                        } else {
+                          throw Exception(resp.body);
+                        }
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(backgroundColor: Colors.red, content: Text('Error adding recommendation: $e')),
+                        );
+                      } finally {
+                        if (dCtx.mounted) setDlg(() => isSubmitting = false);
+                      }
+                    },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showViewJobDialog(Map<String, dynamic> job) async {
     final jobNo = job['jobNumber'] ?? job['id'].toString().substring(0, 8).toUpperCase();
     final customer = job['customer'] ?? {};
@@ -1379,6 +1680,173 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+
+                      // -------------------------------------------------------------
+                      // TECHNICIAN DEFECT FINDINGS & RECOMMENDATIONS
+                      // -------------------------------------------------------------
+                      Builder(builder: (_) {
+                        final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final recs = (walkData['recommendations'] is List)
+                            ? (walkData['recommendations'] as List).whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
+                            : <Map<String, dynamic>>[];
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: recs.isNotEmpty ? const Color(0xFFFFFBEB) : Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: recs.isNotEmpty ? const Color(0xFFFDE68A) : Colors.grey.shade300),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(Icons.build_circle, color: recs.isNotEmpty ? const Color(0xFFB45309) : const Color(0xFF1E3A8A), size: 18),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'TECHNICIAN FINDINGS & RECOMMENDATIONS (${recs.length})',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                          color: recs.isNotEmpty ? const Color(0xFF78350F) : Colors.grey.shade800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2563EB),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: const Icon(Icons.add, size: 14),
+                                    label: const Text('Add Finding', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                    onPressed: () => _showAddWebRecommendationDialog(job, setModalState),
+                                  ),
+                                ],
+                              ),
+                              if (recs.isEmpty) ...[
+                                const SizedBox(height: 6),
+                                const Text(
+                                  'No additional defects logged for this vehicle yet. Click "+ Add Finding" to record newly discovered issues or parts recommendations.',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
+                              ] else ...[
+                                const SizedBox(height: 8),
+                                ...recs.map((rec) {
+                                  final sys = (rec['system'] ?? 'General').toString();
+                                  final issue = (rec['issue'] ?? '').toString();
+                                  final fix = (rec['recommendation'] ?? '').toString();
+                                  final urgency = (rec['urgency'] ?? 'RECOMMENDED').toString();
+                                  final tech = (rec['technicianName'] ?? 'Technician').toString();
+                                  final partsPrice = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
+                                  final labourPrice = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
+                                  final total = partsPrice + labourPrice;
+
+                                  final isCritical = urgency == 'CRITICAL';
+                                  final badgeColor = isCritical ? Colors.red : (urgency == 'ADVISORY' ? Colors.blue : Colors.orange.shade800);
+
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: Colors.amber.shade200),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: badgeColor.withValues(alpha: 0.1),
+                                                borderRadius: BorderRadius.circular(4),
+                                                border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
+                                              ),
+                                              child: Text(
+                                                '$sys \u2022 $urgency',
+                                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: badgeColor),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text('Discovered by $tech', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                            const Spacer(),
+                                            Text(
+                                              'Total: KES ${total.toStringAsFixed(0)} (Labour: ${labourPrice.toStringAsFixed(0)} | Parts: ${partsPrice.toStringAsFixed(0)})',
+                                              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text('Defect / Issue: $issue', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                                        Text('Recommended Action: $fix', style: const TextStyle(fontSize: 12, color: Color(0xFF334155))),
+                                        if (rec['partsNeeded'] != null && rec['partsNeeded'].toString().isNotEmpty)
+                                          Text('Parts Required: ${rec['partsNeeded']}', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700)),
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 4,
+                                          children: [
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                minimumSize: Size.zero,
+                                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                foregroundColor: Colors.green.shade700,
+                                                side: BorderSide(color: Colors.green.shade600),
+                                              ),
+                                              icon: const Icon(Icons.chat_outlined, size: 13, color: Colors.green),
+                                              label: const Text('WhatsApp Customer Recommendation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                              onPressed: () {
+                                                final custPhone = customer['phone']?.toString() ?? '';
+                                                final custName = customer['name']?.toString() ?? 'Customer';
+                                                final regNo = vehicle['registrationNo']?.toString() ?? 'vehicle';
+                                                final makeModel = '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
+                                                final msg = 'Hello $custName, during inspection of your $makeModel ($regNo) at ${_workshopSettings['name'] ?? 'our workshop'}, technician $tech identified an additional issue:\n\n• $sys Issue: $issue\n• Recommended Repair: $fix\n• Estimated Cost: KES ${total.toStringAsFixed(0)} (Labour: KES ${labourPrice.toStringAsFixed(0)}, Parts: KES ${partsPrice.toStringAsFixed(0)})\n\nWould you like us to add this to your estimate and proceed with repair?';
+                                                _launchWhatsAppMessage(custPhone, msg);
+                                              },
+                                            ),
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                minimumSize: Size.zero,
+                                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                foregroundColor: const Color(0xFF2563EB),
+                                                side: const BorderSide(color: Color(0xFF2563EB)),
+                                              ),
+                                              icon: const Icon(Icons.receipt_long, size: 13),
+                                              label: const Text('Create Estimate with this Finding', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                              onPressed: () {
+                                                Navigator.pop(ctx);
+                                                setState(() {
+                                                  _activeSidebar = 'Estimates';
+                                                  _activeTab = 'Estimates';
+                                                  _showEstimateCreator = true;
+                                                  _preselectedJobIdForEstimate = job['id'];
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ],
+                          ),
+                        );
+                      }),
                       Wrap(
                         spacing: 10,
                         runSpacing: 8,
@@ -2689,6 +3157,44 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               onPressed: _refreshAllData,
             ),
             const SizedBox(width: 8),
+            AnimatedBuilder(
+              animation: SyncService.instance,
+              builder: (_, __) {
+                final isSyncing = SyncService.instance.isSyncing;
+                final isLive = SyncService.instance.hasLiveConnection;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isLive ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: isLive ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: isLive ? const Color(0xFF16A34A) : Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        isSyncing ? 'Syncing...' : 'Live Sync',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                          color: isLive ? const Color(0xFF15803D) : Colors.red.shade800,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
@@ -3249,7 +3755,40 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ],
           ),
         ),
-        DataCell(Text(service)),
+        DataCell(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(service, overflow: TextOverflow.ellipsis),
+              Builder(builder: (_) {
+                final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : null;
+                final recs = (wad != null && wad['recommendations'] is List) ? (wad['recommendations'] as List) : [];
+                if (recs.isEmpty) return const SizedBox.shrink();
+                return Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFFF59E0B), width: 0.8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.lightbulb, size: 10, color: Color(0xFFB45309)),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${recs.length} Tech Finding${recs.length > 1 ? "s" : ""}',
+                        style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
         DataCell(Text(technician)),
         DataCell(
           Container(

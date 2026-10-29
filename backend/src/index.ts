@@ -417,6 +417,57 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
 });
 
 // ==========================================
+// REAL-TIME SYSTEM-WIDE SYNC & EVENT TRACKER
+// ==========================================
+export interface SyncEvent {
+  id: string;
+  type: 'JOB_UPDATED' | 'RECOMMENDATION_ADDED' | 'RECOMMENDATION_UPDATED' | 'ESTIMATE_CREATED' | 'ESTIMATE_UPDATED' | 'INVENTORY_REQUEST' | 'STATUS_CHANGED';
+  entityId: string;
+  actorName: string;
+  actorRole: string;
+  message: string;
+  metadata?: Record<string, any>;
+  timestamp: string;
+}
+
+let lastSystemUpdateTimestamp = new Date().toISOString();
+const recentSyncEvents: SyncEvent[] = [];
+
+export function recordSyncEvent(event: Omit<SyncEvent, 'id' | 'timestamp'>): SyncEvent {
+  lastSystemUpdateTimestamp = new Date().toISOString();
+  const newEvent: SyncEvent = {
+    ...event,
+    id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: lastSystemUpdateTimestamp,
+  };
+  recentSyncEvents.unshift(newEvent);
+  if (recentSyncEvents.length > 100) {
+    recentSyncEvents.pop();
+  }
+  return newEvent;
+}
+
+app.get('/api/sync/status', async (req: Request, res: Response) => {
+  try {
+    const since = req.query.since ? String(req.query.since) : null;
+    const filteredEvents = since
+      ? recentSyncEvents.filter((e) => e.timestamp > since)
+      : recentSyncEvents.slice(0, 20);
+
+    const hasChanges = since ? lastSystemUpdateTimestamp > since : true;
+
+    res.json({
+      lastUpdated: lastSystemUpdateTimestamp,
+      serverTime: new Date().toISOString(),
+      hasChanges,
+      events: filteredEvents,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch sync status' });
+  }
+});
+
+// ==========================================
 // JOB CARDS API (7-Stage Workflow + Diagnostics + Warranty + Bay)
 // ==========================================
 app.get('/api/jobs', async (req: Request, res: Response) => {
@@ -689,6 +740,14 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
     inFlightJobCreations.set(dedupKey, creationPromise);
     try {
       const jobCard = await creationPromise;
+      recordSyncEvent({
+        type: 'JOB_UPDATED',
+        entityId: jobCard.id,
+        actorName: (req.headers['x-user-name'] as string) || 'Advisor',
+        actorRole: (req.headers['x-user-role'] as string) || 'ADVISOR',
+        message: `New Job Card created: ${jobCard.jobNumber || 'JC'} for ${jobCard.vehicle.registrationNo}`,
+        metadata: { jobId: jobCard.id, jobNumber: jobCard.jobNumber, registrationNo: jobCard.vehicle.registrationNo },
+      });
       res.status(201).json(jobCard);
     } finally {
       setTimeout(() => inFlightJobCreations.delete(dedupKey), 3000);
@@ -817,6 +876,15 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       },
     });
 
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: updated.id,
+      actorName: (req.headers['x-user-name'] as string) || 'User',
+      actorRole: (req.headers['x-user-role'] as string) || 'USER',
+      message: `Job Card ${updated.jobNumber || 'JC'} updated (Status: ${updated.status})`,
+      metadata: { jobId: updated.id, jobNumber: updated.jobNumber, status: updated.status },
+    });
+
     res.json(updated);
   } catch (error) {
     console.error('Update job error:', error);
@@ -834,10 +902,268 @@ app.delete('/api/jobs/:id', async (req: Request, res: Response) => {
     }
     await prisma.estimate.deleteMany({ where: { jobCardId: id } });
     await prisma.jobCard.delete({ where: { id } });
+
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: id,
+      actorName: (req.headers['x-user-name'] as string) || 'Admin',
+      actorRole: (req.headers['x-user-role'] as string) || 'ADMIN',
+      message: `Job Card deleted: ${id}`,
+      metadata: { jobId: id },
+    });
+
     res.json({ success: true });
   } catch (error) {
     console.error('Delete job error:', error);
     res.status(500).json({ error: 'Failed to delete job card' });
+  }
+});
+
+// -------------------------------------------------------------
+// TECHNICIAN RECOMMENDATIONS & FINDINGS API
+// -------------------------------------------------------------
+app.get('/api/jobs/:id/recommendations', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const job = await prisma.jobCard.findUnique({
+      where: { id },
+      select: { id: true, jobNumber: true, walkAroundData: true },
+    });
+    if (!job) return res.status(404).json({ error: 'Job Card not found' });
+    const wad = job.walkAroundData && typeof job.walkAroundData === 'object' ? (job.walkAroundData as any) : {};
+    const recs = Array.isArray(wad.recommendations) ? wad.recommendations : [];
+    res.json(recs);
+  } catch (error) {
+    console.error('Fetch recommendations error:', error);
+    res.status(500).json({ error: 'Failed to fetch recommendations' });
+  }
+});
+
+app.post('/api/jobs/:id/recommendations', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const {
+      system,
+      issue,
+      recommendation,
+      urgency = 'RECOMMENDED',
+      estimatedLabour = 0,
+      estimatedParts = 0,
+      partsNeeded = '',
+      technicianName,
+    } = req.body;
+
+    if (!issue || !recommendation) {
+      return res.status(400).json({ error: 'Issue description and recommendation are required' });
+    }
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? (existing.walkAroundData as Record<string, any>)
+        : {};
+
+    const existingRecs = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations
+      : [];
+
+    const tech =
+      technicianName ||
+      (req.headers['x-user-name'] as string) ||
+      existing.technician ||
+      'Technician';
+
+    const newRecommendation = {
+      id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      system: (system || 'General').trim(),
+      issue: issue.trim(),
+      recommendation: recommendation.trim(),
+      urgency: String(urgency).toUpperCase(), // CRITICAL, RECOMMENDED, ADVISORY
+      estimatedLabour: Number(estimatedLabour) || 0,
+      estimatedParts: Number(estimatedParts) || 0,
+      totalEstimated: (Number(estimatedLabour) || 0) + (Number(estimatedParts) || 0),
+      partsNeeded: (partsNeeded || '').trim(),
+      technicianName: tech,
+      status: 'PENDING', // PENDING, APPROVED, DECLINED, ESTIMATED
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updatedRecs = [newRecommendation, ...existingRecs];
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        walkAroundData: {
+          ...currentWalkAround,
+          recommendations: updatedRecs,
+        },
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    recordSyncEvent({
+      type: 'RECOMMENDATION_ADDED',
+      entityId: existing.id,
+      actorName: tech,
+      actorRole: (req.headers['x-user-role'] as string) || 'MECHANIC',
+      message: `Technician ${tech} reported ${newRecommendation.system} issue on ${existing.vehicle.registrationNo}: ${newRecommendation.issue}`,
+      metadata: {
+        jobId: existing.id,
+        jobNumber: existing.jobNumber,
+        registrationNo: existing.vehicle.registrationNo,
+        customerName: existing.customer.name,
+        customerPhone: existing.customer.phone,
+        recommendation: newRecommendation,
+      },
+    });
+
+    res.status(201).json({
+      recommendation: newRecommendation,
+      job: updatedJob,
+    });
+  } catch (error) {
+    console.error('Add recommendation error:', error);
+    res.status(500).json({ error: 'Failed to add recommendation' });
+  }
+});
+
+app.put('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const recId = String(req.params.recId);
+    const { status, estimatedLabour, estimatedParts, issue, recommendation, urgency, partsNeeded } = req.body;
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? (existing.walkAroundData as Record<string, any>)
+        : {};
+
+    const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations
+      : [];
+
+    const recIndex = existingRecs.findIndex((r) => r.id === recId);
+    if (recIndex === -1) {
+      return res.status(404).json({ error: 'Recommendation not found' });
+    }
+
+    const updatedRec = {
+      ...existingRecs[recIndex],
+      ...(issue !== undefined ? { issue: issue.trim() } : {}),
+      ...(recommendation !== undefined ? { recommendation: recommendation.trim() } : {}),
+      ...(urgency !== undefined ? { urgency: String(urgency).toUpperCase() } : {}),
+      ...(estimatedLabour !== undefined ? { estimatedLabour: Number(estimatedLabour) || 0 } : {}),
+      ...(estimatedParts !== undefined ? { estimatedParts: Number(estimatedParts) || 0 } : {}),
+      ...(partsNeeded !== undefined ? { partsNeeded: (partsNeeded || '').trim() } : {}),
+      ...(status !== undefined ? { status: String(status).toUpperCase() } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    updatedRec.totalEstimated = (Number(updatedRec.estimatedLabour) || 0) + (Number(updatedRec.estimatedParts) || 0);
+
+    existingRecs[recIndex] = updatedRec;
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        walkAroundData: {
+          ...currentWalkAround,
+          recommendations: existingRecs,
+        },
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    recordSyncEvent({
+      type: 'RECOMMENDATION_UPDATED',
+      entityId: existing.id,
+      actorName: (req.headers['x-user-name'] as string) || 'Admin',
+      actorRole: (req.headers['x-user-role'] as string) || 'ADMIN',
+      message: `Recommendation on ${existing.vehicle.registrationNo} updated: status=${updatedRec.status}`,
+      metadata: {
+        jobId: existing.id,
+        recommendation: updatedRec,
+      },
+    });
+
+    res.json({ recommendation: updatedRec, job: updatedJob });
+  } catch (error) {
+    console.error('Update recommendation error:', error);
+    res.status(500).json({ error: 'Failed to update recommendation' });
+  }
+});
+
+app.delete('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const recId = String(req.params.recId);
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? (existing.walkAroundData as Record<string, any>)
+        : {};
+
+    const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations
+      : [];
+
+    const updatedRecs = existingRecs.filter((r) => r.id !== recId);
+
+    await prisma.jobCard.update({
+      where: { id },
+      data: {
+        walkAroundData: {
+          ...currentWalkAround,
+          recommendations: updatedRecs,
+        },
+      },
+    });
+
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: existing.id,
+      actorName: (req.headers['x-user-name'] as string) || 'User',
+      actorRole: (req.headers['x-user-role'] as string) || 'USER',
+      message: `Removed recommendation from job card`,
+    });
+
+    res.json({ success: true, count: updatedRecs.length });
+  } catch (error) {
+    console.error('Delete recommendation error:', error);
+    res.status(500).json({ error: 'Failed to delete recommendation' });
   }
 });
 
@@ -1112,6 +1438,15 @@ app.post('/api/estimates', async (req: Request, res: Response) => {
       },
     });
 
+    recordSyncEvent({
+      type: 'ESTIMATE_CREATED',
+      entityId: estimate.id,
+      actorName: (req.headers['x-user-name'] as string) || 'User',
+      actorRole: (req.headers['x-user-role'] as string) || 'USER',
+      message: `Estimate created for ${estimate.jobCard?.vehicle?.registrationNo || 'vehicle'} (Total: KES ${estimate.total})`,
+      metadata: { estimateId: estimate.id, total: estimate.total, jobCardId: estimate.jobCardId },
+    });
+
     res.status(201).json(estimate);
   } catch (error) {
     console.error('Create estimate error:', error);
@@ -1132,6 +1467,16 @@ app.put('/api/estimates/:id/status', async (req: Request, res: Response) => {
         jobCard: { include: { customer: true, vehicle: true } },
       },
     });
+
+    recordSyncEvent({
+      type: 'ESTIMATE_UPDATED',
+      entityId: estimate.id,
+      actorName: (req.headers['x-user-name'] as string) || 'User',
+      actorRole: (req.headers['x-user-role'] as string) || 'USER',
+      message: `Estimate #${estimate.id.substring(0, 8)} status updated to ${status}`,
+      metadata: { estimateId: estimate.id, status },
+    });
+
     res.json(estimate);
   } catch (error) {
     console.error(error);

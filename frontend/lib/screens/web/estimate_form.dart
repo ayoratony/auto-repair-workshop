@@ -120,6 +120,74 @@ class _EstimateFormState extends State<EstimateForm> {
     });
   }
 
+  List<Map<String, dynamic>> get _selectedJobRecommendations {
+    if (_selectedJobCardId == null) return [];
+    try {
+      final job = _jobs.firstWhere(
+        (j) => j['id'] == _selectedJobCardId,
+        orElse: () => null,
+      );
+      if (job == null) return [];
+      final walk = job['walkAroundData'];
+      if (walk is Map && walk['recommendations'] is List) {
+        return (walk['recommendations'] as List)
+            .whereType<Map>()
+            .map((r) => Map<String, dynamic>.from(r))
+            .toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  void _addRecommendationToEstimate(Map<String, dynamic> rec) {
+    final system = rec['system'] ?? 'General';
+    final issue = rec['issue'] ?? '';
+    final fix = rec['recommendation'] ?? '';
+    final partsNeeded = (rec['partsNeeded'] ?? '').toString().trim();
+    final partsPrice = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
+    final labourPrice = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
+
+    setState(() {
+      // Add Parts if cost > 0 or parts needed specified
+      if (partsPrice > 0 || partsNeeded.isNotEmpty) {
+        _items.add({
+          'description': partsNeeded.isNotEmpty
+              ? '$partsNeeded ($system - $issue)'
+              : '$system Replacement Parts: $fix',
+          'itemType': 'PART',
+          'partId': null,
+          'quantity': 1,
+          'unitPrice': partsPrice > 0 ? partsPrice : 0.0,
+        });
+      }
+
+      // Add Labour if cost > 0 or fix specified
+      if (labourPrice > 0 || fix.isNotEmpty) {
+        _items.add({
+          'description': 'Labour: $fix ($system)',
+          'itemType': 'LABOUR',
+          'partId': null,
+          'quantity': 1,
+          'unitPrice': labourPrice > 0 ? labourPrice : 0.0,
+        });
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF166534),
+        content: Text('Imported "$system: $fix" into estimate line items!'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _addAllRecommendationsToEstimate(List<Map<String, dynamic>> recs) {
+    for (final r in recs) {
+      _addRecommendationToEstimate(r);
+    }
+  }
+
   double get _partsSubtotal {
     return _items
         .where((i) => (i['itemType'] ?? 'PART') == 'PART')
@@ -310,6 +378,137 @@ class _EstimateFormState extends State<EstimateForm> {
                 onChanged: (val) => setState(() => _selectedJobCardId = val),
               ),
               const SizedBox(height: 12),
+
+              // -------------------------------------------------------------
+              // TECHNICIAN RECOMMENDATIONS & FINDINGS BANNER
+              // -------------------------------------------------------------
+              if (_selectedJobRecommendations.isNotEmpty) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFF59E0B)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Icon(Icons.build_circle, color: Color(0xFFB45309), size: 20),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'Technician Recommendations & Findings (${_selectedJobRecommendations.length})',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF78350F)),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFB45309),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.playlist_add_check, size: 15),
+                            label: const Text('Import All', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            onPressed: () => _addAllRecommendationsToEstimate(_selectedJobRecommendations),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ..._selectedJobRecommendations.map((rec) {
+                        final system = (rec['system'] ?? 'General').toString();
+                        final issue = (rec['issue'] ?? '').toString();
+                        final fix = (rec['recommendation'] ?? '').toString();
+                        final urgency = (rec['urgency'] ?? 'RECOMMENDED').toString();
+                        final tech = (rec['technicianName'] ?? 'Tech').toString();
+                        final partsPrice = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
+                        final labourPrice = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
+                        final total = partsPrice + labourPrice;
+
+                        final isCritical = urgency == 'CRITICAL';
+                        final badgeColor = isCritical ? Colors.red : (urgency == 'ADVISORY' ? Colors.blue : Colors.orange.shade800);
+
+                        return Container(
+                          margin: const EdgeInsets.only(top: 6),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber.shade300),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: badgeColor.withValues(alpha: 0.12),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
+                                          ),
+                                          child: Text(
+                                            '$system \u2022 $urgency',
+                                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: badgeColor),
+                                          ),
+                                        ),
+                                        Text('Reported by $tech', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text('Issue: $issue', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFF1E293B))),
+                                    Text('Recommended Action: $fix', style: const TextStyle(fontSize: 12, color: Color(0xFF334155))),
+                                    if (rec['partsNeeded'] != null && rec['partsNeeded'].toString().isNotEmpty)
+                                      Text('Parts Needed: ${rec['partsNeeded']}', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Estimated Pricing: Labour KES ${labourPrice.toStringAsFixed(0)} | Parts KES ${partsPrice.toStringAsFixed(0)} (Total: KES ${total.toStringAsFixed(0)})',
+                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF166534)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  foregroundColor: const Color(0xFFB45309),
+                                  side: const BorderSide(color: Color(0xFFB45309)),
+                                ),
+                                icon: const Icon(Icons.add_shopping_cart, size: 14),
+                                label: const Text('Add to Quote', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                onPressed: () => _addRecommendationToEstimate(rec),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ],
 
               // Discount & Tax Settings Row
               Row(

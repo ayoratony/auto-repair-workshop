@@ -1895,6 +1895,71 @@ class InvoicePdfService {
                     ),
                   ),
 
+                  if (d.recommendations.isNotEmpty) ...[
+                    pw.SizedBox(height: 8),
+                    pw.Container(
+                      width: double.infinity,
+                      padding: const pw.EdgeInsets.all(9),
+                      decoration: pw.BoxDecoration(
+                        color: const PdfColor.fromInt(0xFFFFFBEB),
+                        borderRadius: pw.BorderRadius.circular(6),
+                        border: pw.Border.all(color: const PdfColor.fromInt(0xFFFDE68A)),
+                      ),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Row(
+                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            children: [
+                              pw.Text(
+                                'TECHNICIAN DEFECT FINDINGS & RECOMMENDATIONS',
+                                style: pw.TextStyle(font: fontBold, fontSize: 8, color: const PdfColor.fromInt(0xFFB45309), letterSpacing: 0.5),
+                              ),
+                              pw.Text(
+                                'Recommended Additional Repairs (${d.recommendations.length})',
+                                style: pw.TextStyle(font: fontBold, fontSize: 7, color: const PdfColor.fromInt(0xFF78350F)),
+                              ),
+                            ],
+                          ),
+                          pw.SizedBox(height: 5),
+                          ...d.recommendations.map((rec) {
+                            final sys = (rec['system'] ?? 'General').toString();
+                            final issue = (rec['issue'] ?? '').toString();
+                            final fix = (rec['recommendation'] ?? '').toString();
+                            final urg = (rec['urgency'] ?? 'RECOMMENDED').toString();
+                            final labour = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
+                            final parts = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
+                            final total = labour + parts;
+
+                            return pw.Container(
+                              margin: const pw.EdgeInsets.only(bottom: 3),
+                              padding: const pw.EdgeInsets.all(5),
+                              decoration: pw.BoxDecoration(
+                                color: PdfColors.white,
+                                borderRadius: pw.BorderRadius.circular(3),
+                                border: pw.Border.all(color: const PdfColor.fromInt(0xFFFDE68A)),
+                              ),
+                              child: pw.Column(
+                                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                children: [
+                                  pw.Row(
+                                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      pw.Text('[$sys - $urg] $issue', style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: textDark)),
+                                      pw.Text('Est: KES ${total.toStringAsFixed(0)}', style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: greenColor)),
+                                    ],
+                                  ),
+                                  pw.SizedBox(height: 1.5),
+                                  pw.Text('Fix: $fix (Labour: KES ${labour.toStringAsFixed(0)}, Parts: KES ${parts.toStringAsFixed(0)})', style: pw.TextStyle(font: fontRegular, fontSize: 7, color: textDark)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   pw.SizedBox(height: 10),
 
                   // Service Categories + Work Requested Box
@@ -2137,6 +2202,71 @@ class InvoicePdfService {
                       ],
                     ),
                   ),
+
+                  if (d.recommendations.isNotEmpty) ...[
+                    pw.SizedBox(height: 8),
+                    pw.Container(
+                      width: double.infinity,
+                      padding: const pw.EdgeInsets.all(9),
+                      decoration: pw.BoxDecoration(
+                        color: const PdfColor.fromInt(0xFFFFFBEB),
+                        borderRadius: pw.BorderRadius.circular(6),
+                        border: pw.Border.all(color: const PdfColor.fromInt(0xFFFDE68A)),
+                      ),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Row(
+                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            children: [
+                              pw.Text(
+                                'TECHNICIAN DEFECT FINDINGS & RECOMMENDATIONS',
+                                style: pw.TextStyle(font: fontBold, fontSize: 8, color: const PdfColor.fromInt(0xFFB45309), letterSpacing: 0.5),
+                              ),
+                              pw.Text(
+                                'Recommended Additional Repairs (${d.recommendations.length})',
+                                style: pw.TextStyle(font: fontBold, fontSize: 7, color: const PdfColor.fromInt(0xFF78350F)),
+                              ),
+                            ],
+                          ),
+                          pw.SizedBox(height: 5),
+                          ...d.recommendations.map((rec) {
+                            final sys = (rec['system'] ?? 'General').toString();
+                            final issue = (rec['issue'] ?? '').toString();
+                            final fix = (rec['recommendation'] ?? '').toString();
+                            final urg = (rec['urgency'] ?? 'RECOMMENDED').toString();
+                            final labour = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
+                            final parts = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
+                            final total = labour + parts;
+
+                            return pw.Container(
+                              margin: const pw.EdgeInsets.only(bottom: 3),
+                              padding: const pw.EdgeInsets.all(5),
+                              decoration: pw.BoxDecoration(
+                                color: PdfColors.white,
+                                borderRadius: pw.BorderRadius.circular(3),
+                                border: pw.Border.all(color: const PdfColor.fromInt(0xFFFDE68A)),
+                              ),
+                              child: pw.Column(
+                                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                children: [
+                                  pw.Row(
+                                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      pw.Text('[$sys - $urg] $issue', style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: textDark)),
+                                      pw.Text('Est: KES ${total.toStringAsFixed(0)}', style: pw.TextStyle(font: fontBold, fontSize: 7.5, color: greenColor)),
+                                    ],
+                                  ),
+                                  pw.SizedBox(height: 1.5),
+                                  pw.Text('Fix: $fix (Labour: KES ${labour.toStringAsFixed(0)}, Parts: KES ${parts.toStringAsFixed(0)})', style: pw.TextStyle(font: fontRegular, fontSize: 7, color: textDark)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
 
                   pw.SizedBox(height: 10),
 
@@ -3336,6 +3466,14 @@ class InvoicePdfService {
       }
     }
 
+    List<Map<String, dynamic>> recommendations = [];
+    if (walkAround is Map && walkAround['recommendations'] is List) {
+      recommendations = (walkAround['recommendations'] as List)
+          .whereType<Map>()
+          .map((r) => Map<String, dynamic>.from(r))
+          .toList();
+    }
+
     return _JobCardDocData(
       workshopName: workshopName,
       workshopAddress: workshopAddress,
@@ -3366,6 +3504,7 @@ class InvoicePdfService {
       diagnostics: diagnostics,
       obdCodes: obdCodes,
       warrantyNotes: warrantyNotes,
+      recommendations: recommendations,
     );
   }
 
@@ -3854,6 +3993,7 @@ class _JobCardDocData {
   final Map<String, String> diagnostics;
   final String obdCodes;
   final String warrantyNotes;
+  final List<Map<String, dynamic>> recommendations;
 
   _JobCardDocData({
     required this.workshopName,
@@ -3885,6 +4025,7 @@ class _JobCardDocData {
     required this.diagnostics,
     required this.obdCodes,
     required this.warrantyNotes,
+    required this.recommendations,
   });
 }
 
