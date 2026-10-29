@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'image_picker_helper.dart';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 import 'platform_launcher.dart';
@@ -158,14 +158,10 @@ class VehiclePhotoService {
     String? defaultLabel,
   }) async {
     try {
-      final List<PlatformFile> files = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
-      );
+      final PickedFileData? file = await ImagePickerHelper.pickImage();
+      if (file == null) return null;
 
-      if (files.isEmpty) return null;
-      final PlatformFile file = files.first;
-      final Uint8List rawBytes = await file.readAsBytes();
+      final Uint8List rawBytes = file.bytes;
       if (rawBytes.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
