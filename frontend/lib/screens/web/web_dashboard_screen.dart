@@ -10,6 +10,7 @@ import '../mobile/walk_around_checklist.dart';
 import 'inventory_workspace_view.dart';
 import '../../services/auth_service.dart';
 import '../../services/sync_service.dart';
+import '../../services/vehicle_photo_service.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -622,6 +623,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final obdCodesCtrl = TextEditingController();
     bool qcPassed = false;
     List<String> assetKeys = [];
+    List<Map<String, dynamic>> securityPhotos = [];
 
     final existingWalkAround = existingJob?['walkAroundData'];
     if (existingWalkAround is Map) {
@@ -656,6 +658,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       }
       if (existingWalkAround['assetKeys'] is List) {
         assetKeys = (existingWalkAround['assetKeys'] as List).map((e) => e.toString()).toList();
+      }
+      if (existingWalkAround['securityPhotos'] is List) {
+        securityPhotos = (existingWalkAround['securityPhotos'] as List)
+            .whereType<Map>()
+            .map((p) => Map<String, dynamic>.from(p))
+            .toList();
       }
     }
 
@@ -1355,6 +1363,154 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         details: memoDetails,
                         onChanged: () => setModalState(() {}),
                       ),
+                      const SizedBox(height: 16),
+                      // ---------------------------------------------------------
+                      // VEHICLE SECURITY & CONDITION PHOTOS (NEON S3 STORAGE)
+                      // ---------------------------------------------------------
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E3A8A).withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.shield_outlined, color: Color(0xFF1E3A8A), size: 20),
+                                ),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Vehicle Condition & Security Photos (Neon S3)',
+                                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                                      ),
+                                      Text(
+                                        'Stored securely in Neon S3 bucket for intake condition proof & dispute prevention',
+                                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1E3A8A),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  icon: const Icon(Icons.add_a_photo_outlined, size: 16),
+                                  label: const Text('Add Security Photo', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  onPressed: () async {
+                                    if (regCtrl.text.trim().isEmpty) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(backgroundColor: Colors.orange, content: Text('Please enter Vehicle Registration Number first.')),
+                                      );
+                                      return;
+                                    }
+                                    final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
+                                      context: ctx,
+                                      baseUrl: _baseUrl,
+                                      registrationNo: regCtrl.text.trim(),
+                                      jobCardId: existingJob?['id']?.toString(),
+                                    );
+                                    if (uploaded != null) {
+                                      setModalState(() {
+                                        securityPhotos.add(uploaded);
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (securityPhotos.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.grey.shade300),
+                                ),
+                                child: Center(
+                                  child: Column(
+                                    children: [
+                                      Icon(Icons.photo_library_outlined, size: 36, color: Colors.blueGrey.shade300),
+                                      const SizedBox(height: 6),
+                                      const Text(
+                                        'No security photos uploaded for this job card yet.',
+                                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Capture 4-side photos, odometer proof, existing scratches, or valuables.',
+                                        style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            else
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: securityPhotos.map((photo) {
+                                  return VehiclePhotoService.buildPhotoCard(
+                                    photo: photo,
+                                    baseUrl: _baseUrl,
+                                    onTap: () {
+                                      VehiclePhotoService.showFullPhotoDialog(
+                                        context: ctx,
+                                        baseUrl: _baseUrl,
+                                        photo: photo,
+                                        onDelete: () {
+                                          setModalState(() {
+                                            securityPhotos.removeWhere((p) => p['id'] == photo['id'] || p['key'] == photo['key']);
+                                          });
+                                          http.delete(
+                                            Uri.parse('$_baseUrl/vehicles/photos'),
+                                            headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                            body: json.encode({
+                                              'key': photo['key'],
+                                              'photoId': photo['id'],
+                                              'jobCardId': existingJob?['id']?.toString(),
+                                            }),
+                                          );
+                                        },
+                                      );
+                                    },
+                                    onDelete: () {
+                                      setModalState(() {
+                                        securityPhotos.removeWhere((p) => p['id'] == photo['id'] || p['key'] == photo['key']);
+                                      });
+                                      http.delete(
+                                        Uri.parse('$_baseUrl/vehicles/photos'),
+                                        headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                        body: json.encode({
+                                          'key': photo['key'],
+                                          'photoId': photo['id'],
+                                          'jobCardId': existingJob?['id']?.toString(),
+                                        }),
+                                      );
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1458,6 +1614,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 'obdCodes': obdCodesCtrl.text.trim(),
                                 'qcPassed': qcPassed,
                                 'assetKeys': assetKeys,
+                                'securityPhotos': securityPhotos,
                                 'updatedAt': DateTime.now().toIso8601String(),
                               },
                             };
@@ -2028,6 +2185,87 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     ),
                                   );
                                 }),
+                              ],
+                            ],
+                          ),
+                        );
+                      }),
+                      // -------------------------------------------------------------
+                      // VEHICLE CONDITION & SECURITY PHOTOS (NEON S3)
+                      // -------------------------------------------------------------
+                      Builder(builder: (_) {
+                        final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final photos = (walkData['securityPhotos'] is List)
+                            ? (walkData['securityPhotos'] as List).whereType<Map>().map((p) => Map<String, dynamic>.from(p)).toList()
+                            : <Map<String, dynamic>>[];
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: photos.isNotEmpty ? Colors.white : Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: photos.isNotEmpty ? const Color(0xFFBFDBFE) : Colors.grey.shade300),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.shield_outlined, size: 16, color: photos.isNotEmpty ? const Color(0xFF1E3A8A) : Colors.grey),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Vehicle Security & Condition Photos (${photos.length}) \u2022 Neon S3',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                                  ),
+                                  const Spacer(),
+                                  OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: const Icon(Icons.add_a_photo, size: 13),
+                                    label: const Text('Add Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                    onPressed: () async {
+                                      final regNo = job['vehicle']?['registrationNo']?.toString() ?? '';
+                                      final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
+                                        context: ctx,
+                                        baseUrl: _baseUrl,
+                                        registrationNo: regNo,
+                                        jobCardId: job['id']?.toString(),
+                                      );
+                                      if (uploaded != null) {
+                                        _refreshAllData();
+                                        Navigator.pop(ctx);
+                                        final res = await http.get(Uri.parse('$_baseUrl/jobs/${job['id']}'), headers: AuthService.instance.authHeaders);
+                                        if (res.statusCode == 200) {
+                                          _showViewJobDialog(json.decode(res.body));
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                              if (photos.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: photos.map((photo) {
+                                    return VehiclePhotoService.buildPhotoCard(
+                                      photo: photo,
+                                      baseUrl: _baseUrl,
+                                      onTap: () {
+                                        VehiclePhotoService.showFullPhotoDialog(
+                                          context: ctx,
+                                          baseUrl: _baseUrl,
+                                          photo: photo,
+                                        );
+                                      },
+                                    );
+                                  }).toList(),
+                                ),
                               ],
                             ],
                           ),
@@ -7505,6 +7743,7 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
     final parts = (_historyData?['partsReplaced'] as List<dynamic>?) ?? [];
     final diagnostics = (_historyData?['diagnosticHistory'] as List<dynamic>?) ?? [];
     final mileageTimeline = (_historyData?['odometerTimeline'] as List<dynamic>?) ?? [];
+    final securityPhotos = (_historyData?['securityPhotos'] as List<dynamic>?) ?? [];
 
     return AlertDialog(
       titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
@@ -7589,6 +7828,7 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                             _buildStatItem('Total Spend', _formatKes(s['totalSpend'] ?? 0), Icons.receipt_long, const Color(0xFF16A34A)),
                             _buildStatItem('Recorded Odo', '${s['currentOdometer'] ?? v['lastOdometer'] ?? 0} km', Icons.speed, const Color(0xFFD97706)),
                             _buildStatItem('Replaced Parts', '${parts.length}', Icons.settings, const Color(0xFF7C3AED)),
+                            _buildStatItem('Security Photos', '${securityPhotos.length}', Icons.shield_outlined, const Color(0xFF0D9488)),
                             _buildStatItem('Next Due', s['nextServiceMileage'] != null ? '${s['nextServiceMileage']} km' : 'TBA', Icons.event_available, const Color(0xFF475569)),
                           ],
                         ),
@@ -7605,6 +7845,8 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                           _buildTabBtn('🔍 Diagnostics & OBD (${diagnostics.length})', 2),
                           const SizedBox(width: 8),
                           _buildTabBtn('📈 Mileage Log (${mileageTimeline.length})', 3),
+                          const SizedBox(width: 8),
+                          _buildTabBtn('📷 Security Photos (${securityPhotos.length})', 4),
                         ],
                       ),
                       const Divider(height: 16),
@@ -7617,7 +7859,9 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                                 ? _buildPartsLedger(parts)
                                 : _activeTab == 2
                                     ? _buildDiagnosticsLog(diagnostics)
-                                    : _buildMileageProgression(mileageTimeline),
+                                    : _activeTab == 3
+                                        ? _buildMileageProgression(mileageTimeline)
+                                        : _buildSecurityPhotosGallery(securityPhotos, v['registrationNo']?.toString() ?? ''),
                       ),
                     ],
                   ),
@@ -7820,6 +8064,119 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
           subtitle: Text('Recorded on ${_formatDateShort(entry['date'])}  \u2022  Job Card: ${entry['jobNumber']}'),
         );
       },
+    );
+  }
+
+  Widget _buildSecurityPhotosGallery(List<dynamic> photos, String regNo) {
+    if (photos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shield_outlined, size: 48, color: Colors.blueGrey.shade300),
+            const SizedBox(height: 10),
+            const Text(
+              'No Security or Intake Photos Archived Yet',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Photos taken during job card walk-around or intake are permanently archived here via Neon S3.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
+              icon: const Icon(Icons.add_a_photo_outlined, size: 16),
+              label: const Text('Upload Vehicle Photo to Neon S3', style: TextStyle(fontWeight: FontWeight.bold)),
+              onPressed: () async {
+                final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
+                  context: context,
+                  baseUrl: widget.baseUrl,
+                  registrationNo: regNo,
+                );
+                if (uploaded != null) {
+                  _fetchHistory();
+                }
+              },
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Permanent Security & Condition Archive (${photos.length} photos) \u2022 Neon S3',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E3A8A),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: const Icon(Icons.add_a_photo_outlined, size: 14),
+              label: const Text('Add Vehicle Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+              onPressed: () async {
+                final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
+                  context: context,
+                  baseUrl: widget.baseUrl,
+                  registrationNo: regNo,
+                );
+                if (uploaded != null) {
+                  _fetchHistory();
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: photos.map((p) {
+                final photoMap = Map<String, dynamic>.from(p is Map ? p : {});
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    VehiclePhotoService.buildPhotoCard(
+                      photo: photoMap,
+                      baseUrl: widget.baseUrl,
+                      width: 140,
+                      height: 130,
+                      onTap: () {
+                        VehiclePhotoService.showFullPhotoDialog(
+                          context: context,
+                          baseUrl: widget.baseUrl,
+                          photo: photoMap,
+                        );
+                      },
+                    ),
+                    if (photoMap['jobNumber'] != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, left: 4),
+                        child: Text(
+                          'Job: ${photoMap['jobNumber']}',
+                          style: TextStyle(fontSize: 9.5, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

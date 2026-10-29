@@ -1,15 +1,21 @@
 import path from 'path';
+import { randomUUID } from 'crypto';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaClient, JobStatus, EstimateStatus, PaymentStatus, Role, ClientCategory } from '@prisma/client';
 import {
   ASSETS_BUCKET,
+  CAR_PICS_BUCKET,
   uploadWorkshopAsset,
   downloadWorkshopAsset,
   getWorkshopAssetPresignedUrl,
   workshopAssetExists,
   deleteWorkshopAsset,
+  uploadVehicleImage,
+  deleteVehicleImage,
+  getVehicleImagePresignedUrl,
 } from './storage';
 import { createInventoryRouter } from './inventory';
 import {
@@ -2132,6 +2138,20 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
       jobNumber: string;
     }> = [];
 
+    const securityPhotos: Array<{
+      id: string;
+      url: string;
+      key: string;
+      proxyUrl?: string;
+      label?: string;
+      category?: string;
+      notes?: string;
+      uploadedAt?: string;
+      uploadedBy?: string;
+      jobNumber: string;
+      jobCardId: string;
+    }> = [];
+
     for (const jc of vehicle.jobCards) {
       if (jc.odometer) {
         odometerTimeline.push({
@@ -2151,6 +2171,15 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
             defects: Array.isArray(wad.defects) ? wad.defects : [],
             notes: wad.mechanicNotes || wad.generalNotes || '',
           });
+        }
+        if (Array.isArray(wad.securityPhotos)) {
+          for (const sp of wad.securityPhotos) {
+            securityPhotos.push({
+              ...sp,
+              jobNumber: jc.jobNumber || jc.id.slice(0, 8).toUpperCase(),
+              jobCardId: jc.id,
+            });
+          }
         }
       }
 
@@ -2186,10 +2215,12 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
         lastServiceDate: vehicle.lastServiceDate || vehicle.jobCards[0]?.createdAt || null,
         nextServiceMileage: vehicle.nextServiceMileage,
         nextServiceDate: vehicle.nextServiceDate,
+        totalSecurityPhotos: securityPhotos.length,
       },
       odometerTimeline,
       partsReplaced,
       diagnosticHistory,
+      securityPhotos,
     });
   } catch (error) {
     console.error('Vehicle history error:', error);
@@ -2916,6 +2947,199 @@ app.delete('/api/assets', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Object storage delete error:', error);
     res.status(500).json({ error: 'Failed to delete asset from Neon Object Storage', details: error?.message });
+  }
+});
+
+// ==========================================
+// VEHICLE SECURITY & CONDITION PHOTOS (NEON S3)
+// ==========================================
+
+app.post('/api/vehicles/upload-image', async (req: Request, res: Response) => {
+  try {
+    const { image, filename, registrationNo, jobCardId, label, category, notes, uploadedBy } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: 'Image data is required (base64 string)' });
+    }
+
+    let base64Data = String(image);
+    let mimeType = 'image/jpeg';
+    if (base64Data.includes(';base64,')) {
+      const parts = base64Data.split(';base64,');
+      const mimeMatch = parts[0].match(/data:(.*?)$/);
+      if (mimeMatch) mimeType = mimeMatch[1];
+      base64Data = parts[1];
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    const ext = mimeType.includes('png') ? 'png' : (mimeType.includes('webp') ? 'webp' : 'jpg');
+    const cleanReg = (registrationNo || 'UNKNOWN').trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const photoId = randomUUID();
+    const s3Key = `vehicles/${cleanReg}/${Date.now()}_${photoId.slice(0, 8)}.${ext}`;
+
+    const { publicUrl, presignedUrl } = await uploadVehicleImage(s3Key, buffer, mimeType);
+    const proxyUrl = `/api/storage/file?key=${encodeURIComponent(s3Key)}`;
+
+    const photoRecord = {
+      id: photoId,
+      key: s3Key,
+      url: publicUrl || presignedUrl,
+      publicUrl,
+      presignedUrl,
+      proxyUrl,
+      filename: filename || `${cleanReg}_${label || 'security'}.${ext}`,
+      label: label || 'Security & Condition Photo',
+      category: category || 'SECURITY',
+      notes: notes || '',
+      registrationNo: (registrationNo || cleanReg).trim().toUpperCase(),
+      jobCardId: jobCardId ? String(jobCardId) : null,
+      size: buffer.length,
+      mimeType,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: uploadedBy || (req as any).user?.name || 'Staff',
+    };
+
+    // If jobCardId is supplied, append to walkAroundData.securityPhotos
+    if (jobCardId) {
+      try {
+        const job = await prisma.jobCard.findUnique({ where: { id: String(jobCardId) } });
+        if (job) {
+          const walk = (job.walkAroundData && typeof job.walkAroundData === 'object'
+            ? (job.walkAroundData as Record<string, any>)
+            : {}) as Record<string, any>;
+          const existingPhotos = Array.isArray(walk.securityPhotos) ? walk.securityPhotos : [];
+          walk.securityPhotos = [...existingPhotos, photoRecord];
+          await prisma.jobCard.update({
+            where: { id: job.id },
+            data: { walkAroundData: walk },
+          });
+        }
+      } catch (e) {
+        console.error('Failed to link photo to job card walkAroundData:', e);
+      }
+    }
+
+    res.status(201).json({ success: true, photo: photoRecord });
+  } catch (err: any) {
+    console.error('Failed to upload vehicle image to Neon S3:', err);
+    res.status(500).json({ error: 'Failed to upload vehicle image to Neon S3', details: err?.message });
+  }
+});
+
+app.get('/api/vehicles/:registrationNo/photos', async (req: Request, res: Response) => {
+  try {
+    const reg = String(req.params.registrationNo).trim().toUpperCase();
+    const jobs = await prisma.jobCard.findMany({
+      where: {
+        vehicle: {
+          registrationNo: { equals: reg, mode: 'insensitive' },
+        },
+      },
+      select: {
+        id: true,
+        jobNumber: true,
+        createdAt: true,
+        walkAroundData: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const allPhotos: any[] = [];
+    for (const j of jobs) {
+      const walk = (j.walkAroundData && typeof j.walkAroundData === 'object'
+        ? (j.walkAroundData as Record<string, any>)
+        : {}) as Record<string, any>;
+      if (Array.isArray(walk.securityPhotos)) {
+        for (const p of walk.securityPhotos) {
+          allPhotos.push({
+            ...p,
+            jobNumber: j.jobNumber || j.id.slice(0, 8).toUpperCase(),
+            jobCardId: j.id,
+            jobCreatedAt: j.createdAt,
+          });
+        }
+      }
+    }
+
+    res.json(allPhotos);
+  } catch (err: any) {
+    console.error('Failed to get vehicle photos:', err);
+    res.status(500).json({ error: 'Failed to fetch vehicle photos' });
+  }
+});
+
+app.delete('/api/vehicles/photos', async (req: Request, res: Response) => {
+  try {
+    const key = String(req.query.key || req.body?.key || '');
+    const jobCardId = req.query.jobCardId || req.body?.jobCardId;
+    const photoId = req.query.photoId || req.body?.photoId;
+    if (!key) {
+      return res.status(400).json({ error: 'Object key is required' });
+    }
+
+    await deleteVehicleImage(key);
+
+    if (jobCardId) {
+      const job = await prisma.jobCard.findUnique({ where: { id: String(jobCardId) } });
+      if (job) {
+        const walk = (job.walkAroundData && typeof job.walkAroundData === 'object'
+          ? (job.walkAroundData as Record<string, any>)
+          : {}) as Record<string, any>;
+        if (Array.isArray(walk.securityPhotos)) {
+          walk.securityPhotos = walk.securityPhotos.filter(
+            (p: any) => p.key !== key && (!photoId || p.id !== photoId)
+          );
+          await prisma.jobCard.update({
+            where: { id: job.id },
+            data: { walkAroundData: walk },
+          });
+        }
+      }
+    }
+
+    res.json({ success: true, deleted: true, key });
+  } catch (err: any) {
+    console.error('Failed to delete vehicle photo:', err);
+    res.status(500).json({ error: 'Failed to delete vehicle photo from Neon S3' });
+  }
+});
+
+app.get('/api/storage/file', async (req: Request, res: Response) => {
+  try {
+    const key = String(req.query.key || '');
+    if (!key) return res.status(400).send('Missing ?key= parameter');
+
+    const s3 = new S3Client({
+      forcePathStyle: true,
+      endpoint: process.env.AWS_ENDPOINT_URL_S3,
+      region: process.env.AWS_REGION || 'us-east-1',
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      },
+    });
+
+    const bucket = process.env.NEON_S3_BUCKET || 'car-pics';
+    const s3Res = await s3.send(new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    }));
+
+    if (s3Res.ContentType) {
+      res.setHeader('Content-Type', s3Res.ContentType);
+    }
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+
+    if (s3Res.Body && (s3Res.Body as any).pipe) {
+      (s3Res.Body as any).pipe(res);
+    } else if (s3Res.Body) {
+      const bytes = await s3Res.Body.transformToByteArray();
+      res.send(Buffer.from(bytes));
+    } else {
+      res.status(404).send('File not found in Neon S3');
+    }
+  } catch (err: any) {
+    console.error('Storage stream error:', err);
+    res.status(404).send('File not found or access denied in Neon S3');
   }
 });
 

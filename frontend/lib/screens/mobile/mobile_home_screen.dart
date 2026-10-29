@@ -10,6 +10,7 @@ import 'walk_around_checklist.dart';
 import '../../services/auth_service.dart';
 import '../../services/platform_launcher.dart';
 import '../../services/sync_service.dart';
+import '../../services/vehicle_photo_service.dart';
 
 class MobileHomeScreen extends StatefulWidget {
   const MobileHomeScreen({Key? key}) : super(key: key);
@@ -4519,6 +4520,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       return a.compareTo(b);
     });
     final techOptions = ['Unassigned', ...candidateTechs];
+    List<Map<String, dynamic>> sheetPhotos = (walk['securityPhotos'] is List)
+        ? (walk['securityPhotos'] as List).whereType<Map>().map((p) => Map<String, dynamic>.from(p)).toList()
+        : <Map<String, dynamic>>[];
     bool saving = false;
 
     showModalBottomSheet(
@@ -4804,6 +4808,138 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
+
+                // -------------------------------------------------------------
+                // VEHICLE CONDITION & SECURITY PHOTOS (NEON S3 STORAGE)
+                // -------------------------------------------------------------
+                Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blueGrey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.shield_outlined, size: 17, color: Color(0xFF1E3A8A)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Security & Condition Photos (${sheetPhotos.length}) \u2022 Neon S3',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1E3A8A),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.add_a_photo, size: 13),
+                            label: const Text('Add Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            onPressed: () async {
+                              final reg = job['vehicle']?['registrationNo']?.toString() ?? '';
+                              final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
+                                context: context,
+                                baseUrl: _baseUrl,
+                                registrationNo: reg,
+                                jobCardId: job['id']?.toString(),
+                              );
+                              if (uploaded != null) {
+                                setSheet(() {
+                                  sheetPhotos.add(uploaded);
+                                  walk['securityPhotos'] = sheetPhotos;
+                                });
+                                _fetchJobs();
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (sheetPhotos.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: Center(
+                            child: Column(
+                              children: [
+                                Icon(Icons.photo_library_outlined, size: 28, color: Colors.blueGrey.shade300),
+                                const SizedBox(height: 4),
+                                const Text('No security photos uploaded yet', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Colors.blueGrey)),
+                                Text('Tap "Add Photo" to snap 4-side photos or scratches', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: sheetPhotos.map((photo) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: VehiclePhotoService.buildPhotoCard(
+                                  photo: photo,
+                                  baseUrl: _baseUrl,
+                                  width: 110,
+                                  height: 105,
+                                  onTap: () {
+                                    VehiclePhotoService.showFullPhotoDialog(
+                                      context: context,
+                                      baseUrl: _baseUrl,
+                                      photo: photo,
+                                      onDelete: () {
+                                        setSheet(() {
+                                          sheetPhotos.removeWhere((p) => p['id'] == photo['id'] || p['key'] == photo['key']);
+                                          walk['securityPhotos'] = sheetPhotos;
+                                        });
+                                        http.delete(
+                                          Uri.parse('$_baseUrl/vehicles/photos'),
+                                          headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                          body: json.encode({
+                                            'key': photo['key'],
+                                            'photoId': photo['id'],
+                                            'jobCardId': job['id']?.toString(),
+                                          }),
+                                        );
+                                      },
+                                    );
+                                  },
+                                  onDelete: () {
+                                    setSheet(() {
+                                      sheetPhotos.removeWhere((p) => p['id'] == photo['id'] || p['key'] == photo['key']);
+                                      walk['securityPhotos'] = sheetPhotos;
+                                    });
+                                    http.delete(
+                                      Uri.parse('$_baseUrl/vehicles/photos'),
+                                      headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                      body: json.encode({
+                                        'key': photo['key'],
+                                        'photoId': photo['id'],
+                                        'jobCardId': job['id']?.toString(),
+                                      }),
+                                    );
+                                  },
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
 
                 // -------------------------------------------------------------
                 // TECHNICIAN DEFECT FINDINGS & RECOMMENDATIONS CARD
@@ -5204,6 +5340,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 } else {
                                   body['technician'] = assigned;
                                 }
+                                walk['securityPhotos'] = sheetPhotos;
                                 body['walkAroundData'] = walk;
                                 final ok = await _putJob(job['id'].toString(), body);
                                 if (ctx.mounted) Navigator.pop(ctx);
