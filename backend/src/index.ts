@@ -560,6 +560,18 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       walkAroundData,
     } = req.body;
 
+    const cleanPhone = (phone || '').toString().trim();
+    if (!cleanPhone) {
+      if (customerId) {
+        const existingCust = await prisma.customer.findUnique({ where: { id: customerId } });
+        if (!existingCust?.phone || existingCust.phone.trim() === '') {
+          return res.status(400).json({ error: 'Customer / Owner phone number is mandatory when creating a job card.' });
+        }
+      } else {
+        return res.status(400).json({ error: 'Customer / Owner phone number is mandatory when creating a job card.' });
+      }
+    }
+
     const clientCat = parseCategory(category);
     const cleanCustomerName = (customerName || 'Customer').trim();
     const cleanRegNo = (registrationNo || 'N/A').trim().toUpperCase();

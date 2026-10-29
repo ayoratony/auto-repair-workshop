@@ -169,10 +169,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           if (results[1].statusCode == 200) _appointments = json.decode(results[1].body);
           if (results[2].statusCode == 200) _estimates = json.decode(results[2].body);
           if (results[3].statusCode == 200) {
-            _technicians = (json.decode(results[3].body) as List)
-                .where((u) => u['role'] == 'MECHANIC' || u['role'] == 'INSPECTOR')
-                .map<String>((u) => u['name'].toString())
-                .toList();
+            final allUsers = (json.decode(results[3].body) as List);
+            const nonTechRoles = {'SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ADVISOR', 'ACCOUNTS', 'CASHIER', 'STOREKEEPER', 'INVENTORY_MANAGER'};
+            var techFiltered = allUsers.where((u) {
+              final role = (u['role'] ?? '').toString().toUpperCase();
+              if (role == 'MECHANIC' || role == 'INSPECTOR' || role.contains('TECH')) return true;
+              final spec = (u['specialization'] ?? '').toString().trim();
+              return spec.isNotEmpty && !nonTechRoles.contains(role);
+            }).map<String>((u) => u['name'].toString()).toList();
+            if (techFiltered.isEmpty) {
+              techFiltered = allUsers.where((u) {
+                final role = (u['role'] ?? '').toString().toUpperCase();
+                return role != 'SUPER_ADMIN' && role != 'ACCOUNTS' && role != 'CASHIER' && role != 'STOREKEEPER';
+              }).map<String>((u) => u['name'].toString()).toList();
+            }
+            _technicians = techFiltered;
           }
           if (results[4].statusCode == 200) _itemRequests = json.decode(results[4].body);
           if (results[5].statusCode == 200) _workshopSettings = json.decode(results[5].body);
@@ -202,10 +213,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           if (results[1].statusCode == 200) _appointments = json.decode(results[1].body);
           if (results[2].statusCode == 200) _estimates = json.decode(results[2].body);
           if (results[3].statusCode == 200) {
-            _technicians = (json.decode(results[3].body) as List)
-                .where((u) => u['role'] == 'MECHANIC' || u['role'] == 'INSPECTOR')
-                .map<String>((u) => u['name'].toString())
-                .toList();
+            final allUsers = (json.decode(results[3].body) as List);
+            const nonTechRoles = {'SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ADVISOR', 'ACCOUNTS', 'CASHIER', 'STOREKEEPER', 'INVENTORY_MANAGER'};
+            var techFiltered = allUsers.where((u) {
+              final role = (u['role'] ?? '').toString().toUpperCase();
+              if (role == 'MECHANIC' || role == 'INSPECTOR' || role.contains('TECH')) return true;
+              final spec = (u['specialization'] ?? '').toString().trim();
+              return spec.isNotEmpty && !nonTechRoles.contains(role);
+            }).map<String>((u) => u['name'].toString()).toList();
+            if (techFiltered.isEmpty) {
+              techFiltered = allUsers.where((u) {
+                final role = (u['role'] ?? '').toString().toUpperCase();
+                return role != 'SUPER_ADMIN' && role != 'ACCOUNTS' && role != 'CASHIER' && role != 'STOREKEEPER';
+              }).map<String>((u) => u['name'].toString()).toList();
+            }
+            _technicians = techFiltered;
           }
           if (results[4].statusCode == 200) _itemRequests = json.decode(results[4].body);
           if (results[5].statusCode == 200) _workshopSettings = json.decode(results[5].body);
@@ -223,6 +245,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         const SnackBar(
           backgroundColor: Colors.orange,
           content: Text('Please enter Customer Name and Vehicle Registration Number.'),
+        ),
+      );
+      return;
+    }
+
+    if (_phoneController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orange,
+          content: Text('Customer / Owner Phone Number is mandatory.'),
         ),
       );
       return;
@@ -4469,7 +4501,24 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     final hoursCtrl = TextEditingController(text: job['actualHours']?.toString() ?? '');
     String status = (job['status'] ?? 'BOOKED').toString();
     String assigned = (job['technician'] ?? '').toString();
-    final techOptions = {..._technicians, if (assigned.isNotEmpty) assigned}.toList();
+    final candidateTechs = {..._technicians, if (assigned.isNotEmpty && assigned != 'Unassigned') assigned}.toList();
+    candidateTechs.sort((a, b) {
+      final countA = _jobs.where((j) {
+        if (j['id']?.toString() == job['id']?.toString()) return false;
+        final st = (j['status'] ?? '').toString().toUpperCase();
+        if (st == 'COMPLETED' || st == 'CANCELLED') return false;
+        return (j['technician'] ?? '').toString().toLowerCase().trim() == a.toLowerCase().trim();
+      }).length;
+      final countB = _jobs.where((j) {
+        if (j['id']?.toString() == job['id']?.toString()) return false;
+        final st = (j['status'] ?? '').toString().toUpperCase();
+        if (st == 'COMPLETED' || st == 'CANCELLED') return false;
+        return (j['technician'] ?? '').toString().toLowerCase().trim() == b.toLowerCase().trim();
+      }).length;
+      if (countA != countB) return countA.compareTo(countB);
+      return a.compareTo(b);
+    });
+    final techOptions = ['Unassigned', ...candidateTechs];
     bool saving = false;
 
     showModalBottomSheet(
@@ -4522,15 +4571,105 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
                     isExpanded: true,
-                    value: techOptions.contains(assigned) ? assigned : null,
-                    decoration: const InputDecoration(labelText: 'Assign Technician', border: OutlineInputBorder()),
+                    value: techOptions.contains(assigned) ? assigned : (assigned.isEmpty ? 'Unassigned' : techOptions.first),
+                    decoration: const InputDecoration(
+                      labelText: 'Assign / Re-assign Technician',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.engineering_outlined),
+                    ),
                     items: techOptions
-                        .map((t) => DropdownMenuItem(
-                              value: t,
-                              child: Text(t, overflow: TextOverflow.ellipsis),
-                            ))
+                        .map((t) {
+                          if (t == 'Unassigned') {
+                            return const DropdownMenuItem<String>(
+                              value: 'Unassigned',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.person_outline, size: 16, color: Colors.grey),
+                                  SizedBox(width: 8),
+                                  Text('Unassigned / Open Pool', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                                ],
+                              ),
+                            );
+                          }
+                          final activeCount = _jobs.where((j) {
+                            if (j['id']?.toString() == job['id']?.toString()) return false;
+                            final st = (j['status'] ?? '').toString().toUpperCase();
+                            if (st == 'COMPLETED' || st == 'CANCELLED') return false;
+                            return (j['technician'] ?? '').toString().toLowerCase().trim() == t.toLowerCase().trim();
+                          }).length;
+
+                          return DropdownMenuItem<String>(
+                            value: t,
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: activeCount == 0
+                                        ? Colors.green
+                                        : (activeCount <= 2 ? Colors.orange : Colors.red),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(t, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (activeCount == 0 ? Colors.green : Colors.orange).withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: (activeCount == 0 ? Colors.green : Colors.orange).withValues(alpha: 0.4)),
+                                  ),
+                                  child: Text(
+                                    activeCount == 0 ? '🟢 Available (0)' : '🟡 Assigned ($activeCount)',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: activeCount == 0 ? Colors.green.shade800 : Colors.orange.shade900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        })
                         .toList(),
-                    onChanged: (v) => setSheet(() => assigned = v ?? ''),
+                    selectedItemBuilder: (ctx) => techOptions.map((t) {
+                      if (t == 'Unassigned' || t.isEmpty) {
+                        return const Text('Unassigned / Open Pool', style: TextStyle(color: Colors.grey, fontSize: 13));
+                      }
+                      final activeCount = _jobs.where((j) {
+                        if (j['id']?.toString() == job['id']?.toString()) return false;
+                        final st = (j['status'] ?? '').toString().toUpperCase();
+                        if (st == 'COMPLETED' || st == 'CANCELLED') return false;
+                        return (j['technician'] ?? '').toString().toLowerCase().trim() == t.toLowerCase().trim();
+                      }).length;
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: activeCount == 0 ? Colors.green : Colors.orange,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '$t (${activeCount == 0 ? "Available" : "$activeCount active"})',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                    onChanged: (v) => setSheet(() => assigned = (v == null || v == 'Unassigned') ? '' : v),
                   ),
                 ],
                 if (techMode) ...[
@@ -5222,7 +5361,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           TextField(
             controller: _phoneController,
             keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'Customer Billing Phone', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+              labelText: 'Customer / Owner Phone Number *',
+              hintText: 'e.g. +254 712 345 678',
+              prefixIcon: Icon(Icons.phone_outlined),
+              border: OutlineInputBorder(),
+            ),
           ),
           const SizedBox(height: 12),
           Row(

@@ -443,6 +443,47 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     return techs.toList();
   }
 
+  List<Map<String, dynamic>> get _technicianEmployees {
+    final filtered = _employees.where((e) {
+      if (e is! Map) return false;
+      final role = (e['role'] ?? '').toString().toUpperCase();
+      const nonTechRoles = {
+        'SUPER_ADMIN',
+        'OWNER',
+        'ADMIN',
+        'MANAGER',
+        'ADVISOR',
+        'ACCOUNTS',
+        'CASHIER',
+        'STOREKEEPER',
+        'INVENTORY_MANAGER',
+      };
+      if (role == 'MECHANIC' || role == 'INSPECTOR' || role.contains('TECH')) return true;
+      final spec = (e['specialization'] ?? '').toString().trim();
+      return spec.isNotEmpty && !nonTechRoles.contains(role);
+    }).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+    if (filtered.isNotEmpty) return filtered;
+    final nonAdmins = _employees.where((e) {
+      if (e is! Map) return false;
+      final role = (e['role'] ?? '').toString().toUpperCase();
+      return role != 'SUPER_ADMIN' && role != 'ACCOUNTS' && role != 'CASHIER' && role != 'STOREKEEPER';
+    }).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    return nonAdmins.isNotEmpty ? nonAdmins : _employees.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  int _getTechnicianActiveJobsCount(String techName, {String? excludeJobId}) {
+    if (techName.isEmpty || techName == 'Unassigned') return 0;
+    final lowerTech = techName.toLowerCase().trim();
+    return _jobs.where((j) {
+      if (excludeJobId != null && j['id']?.toString() == excludeJobId) return false;
+      final status = (j['status'] ?? '').toString().toUpperCase();
+      if (status == 'COMPLETED' || status == 'CANCELLED') return false;
+      final assigned = (j['technician'] ?? '').toString().toLowerCase().trim();
+      return assigned == lowerTech;
+    }).length;
+  }
+
   String _formatDateShort(dynamic isoString) {
     if (isoString == null) return '-';
     try {
@@ -529,8 +570,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   // DIALOGS: CREATE / EDIT / VIEW JOB CARD
   // ==========================================
   Future<void> _showJobCardDialog({Map<String, dynamic>? existingJob}) async {
-    if (_deny(existingJob == null ? 'job:create' : 'job:edit', existingJob == null ? 'create job cards' : 'edit job cards')) return;
-    final isEdit = existingJob != null;
+    final isEdit = existingJob != null && existingJob['id'] != null;
+    if (_deny(isEdit ? 'job:edit' : 'job:create', isEdit ? 'edit job cards' : 'create job cards')) return;
     final customerNameCtrl = TextEditingController(text: existingJob?['customer']?['name'] ?? '');
     final phoneCtrl = TextEditingController(text: existingJob?['customer']?['phone'] ?? '');
     final regCtrl = TextEditingController(text: existingJob?['vehicle']?['registrationNo'] ?? '');
@@ -693,6 +734,26 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               });
             }
 
+            final candidateTechnicians = _technicianEmployees;
+            final currentTech = techCtrl.text.trim();
+            final Set<String> techNameSet = {'Unassigned'};
+            for (final emp in candidateTechnicians) {
+              final n = emp['name']?.toString().trim() ?? '';
+              if (n.isNotEmpty) techNameSet.add(n);
+            }
+            if (currentTech.isNotEmpty && currentTech != 'Unassigned') {
+              techNameSet.add(currentTech);
+            }
+            final techList = techNameSet.toList()
+              ..sort((a, b) {
+                if (a == 'Unassigned') return -1;
+                if (b == 'Unassigned') return 1;
+                final countA = _getTechnicianActiveJobsCount(a, excludeJobId: existingJob?['id']?.toString());
+                final countB = _getTechnicianActiveJobsCount(b, excludeJobId: existingJob?['id']?.toString());
+                if (countA != countB) return countA.compareTo(countB);
+                return a.compareTo(b);
+              });
+
             return AlertDialog(
               title: Text(isEdit
                   ? 'Edit Job Card (${existingJob['jobNumber'] ?? existingJob['id'].toString().substring(0, 8).toUpperCase()})'
@@ -840,7 +901,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             child: TextField(
                               controller: phoneCtrl,
                               keyboardType: TextInputType.phone,
-                              decoration: const InputDecoration(labelText: 'Billing / Contact Phone (WhatsApp)', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(
+                                labelText: 'Owner / Contact Phone (WhatsApp) *',
+                                hintText: 'e.g. +254 712 345 678',
+                                prefixIcon: Icon(Icons.phone_outlined),
+                                border: OutlineInputBorder(),
+                              ),
                             ),
                           ),
                         ],
@@ -900,24 +966,118 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             flex: 1,
-                            child: TextField(
-                              controller: techCtrl,
-                              decoration: InputDecoration(
-                                labelText: 'Assigned Technician',
-                                border: const OutlineInputBorder(),
-                                suffixIcon: _employees.isNotEmpty
-                                    ? PopupMenuButton<String>(
-                                        icon: const Icon(Icons.arrow_drop_down),
-                                        onSelected: (val) => setModalState(() => techCtrl.text = val),
-                                        itemBuilder: (_) => _employees
-                                            .map((e) => PopupMenuItem<String>(
-                                                  value: e['name'].toString(),
-                                                  child: Text(e['name'].toString()),
-                                                ))
-                                            .toList(),
-                                      )
-                                    : null,
+                            child: DropdownButtonFormField<String>(
+                              isExpanded: true,
+                              value: techList.contains(techCtrl.text.trim())
+                                  ? techCtrl.text.trim()
+                                  : (techCtrl.text.trim().isEmpty ? 'Unassigned' : techList.first),
+                              decoration: const InputDecoration(
+                                labelText: 'Assigned Technician (Live Status)',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.engineering_outlined),
                               ),
+                              items: techList.map((tName) {
+                                if (tName == 'Unassigned') {
+                                  return const DropdownMenuItem<String>(
+                                    value: 'Unassigned',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.person_outline, size: 16, color: Colors.grey),
+                                        SizedBox(width: 8),
+                                        Text('Unassigned / Pool', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                                      ],
+                                    ),
+                                  );
+                                }
+                                final activeCount = _getTechnicianActiveJobsCount(tName, excludeJobId: existingJob?['id']?.toString());
+                                final empMatch = candidateTechnicians.firstWhere((e) => e['name']?.toString() == tName, orElse: () => {});
+                                final spec = (empMatch['specialization'] ?? '').toString().trim();
+
+                                return DropdownMenuItem<String>(
+                                  value: tName,
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: activeCount == 0
+                                              ? const Color(0xFF10B981)
+                                              : (activeCount <= 2 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444)),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Text(tName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
+                                            if (spec.isNotEmpty)
+                                              Text(spec, style: const TextStyle(fontSize: 10, color: Colors.grey), overflow: TextOverflow.ellipsis),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: activeCount == 0
+                                              ? const Color(0xFFECFDF5)
+                                              : const Color(0xFFFFFBEB),
+                                          border: Border.all(
+                                            color: activeCount == 0
+                                                ? const Color(0xFFA7F3D0)
+                                                : const Color(0xFFFDE68A),
+                                          ),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          activeCount == 0 ? '🟢 Available (0 jobs)' : '🟡 Assigned ($activeCount active)',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: activeCount == 0 ? const Color(0xFF047857) : const Color(0xFFB45309),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                              selectedItemBuilder: (ctx) => techList.map((tName) {
+                                if (tName == 'Unassigned' || tName.isEmpty) {
+                                  return const Text('Unassigned / Pool', style: TextStyle(color: Colors.grey, fontSize: 13));
+                                }
+                                final activeCount = _getTechnicianActiveJobsCount(tName, excludeJobId: existingJob?['id']?.toString());
+                                return Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: activeCount == 0 ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        '$tName (${activeCount == 0 ? "Available" : "$activeCount active"})',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                setModalState(() {
+                                  techCtrl.text = (val == null || val == 'Unassigned') ? '' : val;
+                                });
+                              },
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -1245,6 +1405,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           if (customerNameCtrl.text.trim().isEmpty || regCtrl.text.trim().isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(backgroundColor: Colors.orange, content: Text('Customer Name and Registration No. are required.')),
+                            );
+                            return;
+                          }
+                          if (phoneCtrl.text.trim().isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(backgroundColor: Colors.orange, content: Text('Customer / Owner Phone Number is mandatory.')),
                             );
                             return;
                           }
@@ -1656,7 +1822,27 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   const Text('WORKSHOP ASSIGNMENT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   const SizedBox(height: 6),
                                   Text('Service: ${job['workRequested'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text('Technician: ${job['technician'] ?? 'Unassigned'}  \u2022  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
+                                  Row(
+                                    children: [
+                                      Text('Technician: ${job['technician'] ?? 'Unassigned'}  \u2022  Bay: ${job['bayNumber'] ?? 'Bay 1'}'),
+                                      const SizedBox(width: 8),
+                                      InkWell(
+                                        onTap: () {
+                                          Navigator.pop(ctx);
+                                          _showJobCardDialog(existingJob: job);
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEFF6FF),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: const Color(0xFFBFDBFE)),
+                                          ),
+                                          child: const Text('Re-assign', style: TextStyle(fontSize: 10.5, color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                   Text('Priority: ${job['priority'] ?? 'Medium'} \u2022 Due: ${_formatDateShort(job['dueDate'])}'),
                                 ],
                               ),
@@ -4431,7 +4617,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                       body: json.encode({'status': 'ARRIVED'}),
                                     );
                                     _refreshAllData();
-                                    _showJobCardDialog();
+                                    _showJobCardDialog(existingJob: {
+                                      'customer': {
+                                        'name': a['customerName'],
+                                        'phone': a['customerPhone'],
+                                      },
+                                      'vehicle': {
+                                        'registrationNo': a['registrationNo'],
+                                        'make': a['vehicleMake'],
+                                        'model': a['vehicleModel'],
+                                      },
+                                      'workRequested': a['serviceType'],
+                                      'bayNumber': a['assignedBay'] ?? a['bayNumber'],
+                                      'technician': a['technician'] ?? a['assignedTech'],
+                                    });
                                   },
                                   icon: const Icon(Icons.assignment_add, size: 15, color: Color(0xFF2563EB)),
                                   label: const Text('Convert to Job Card', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
