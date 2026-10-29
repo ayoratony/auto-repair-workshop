@@ -63,6 +63,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   Timer? _regLookupTimer;
   bool _isLookingUpVehicle = false;
   Map<String, dynamic>? _foundVehicleData;
+  String? _selectedCustomerId;
+  Timer? _customerLookupTimer;
+  bool _isLookingUpCustomer = false;
+  Map<String, dynamic>? _matchedCustomerData;
+  List<Map<String, dynamic>> _matchedCustomerVehicles = [];
 
   String _fuelType = 'Petrol';
   String _fuelLevel = 'Half';
@@ -277,6 +282,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         Uri.parse('$_baseUrl/jobs'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
+          'customerId': _selectedCustomerId,
           'customerName': _customerController.text.trim(),
           'phone': _phoneController.text.trim(),
           'registrationNo': _regController.text.trim(),
@@ -333,6 +339,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         _driverPhoneController.clear();
         setState(() {
           _foundVehicleData = null;
+          _selectedCustomerId = null;
+          _matchedCustomerData = null;
+          _matchedCustomerVehicles = [];
           _selectedCategory = 'PERSONAL';
           _damageMarkers = [];
           _memoDetails = ReceivingMemoDetails();
@@ -1237,6 +1246,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             setState(() {
               _foundVehicleData = data;
               _isLookingUpVehicle = false;
+              if (c != null && c['id'] != null) {
+                _selectedCustomerId = c['id'].toString();
+                _matchedCustomerData = Map<String, dynamic>.from(c);
+                if (c['vehicles'] is List) {
+                  _matchedCustomerVehicles = (c['vehicles'] as List)
+                      .whereType<Map>()
+                      .map((item) => Map<String, dynamic>.from(item))
+                      .toList();
+                }
+              }
               if (_customerController.text.trim().isEmpty) {
                 _customerController.text = c['name'] ?? '';
               }
@@ -1277,6 +1296,58 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           _foundVehicleData = null;
           _isLookingUpVehicle = false;
         });
+      }
+    });
+  }
+
+  void _onMobileCustomerInputChanged(String text) {
+    _customerLookupTimer?.cancel();
+    final query = text.trim();
+    if (query.length < 3) {
+      if (_matchedCustomerVehicles.isNotEmpty) {
+        setState(() {
+          _matchedCustomerData = null;
+          _matchedCustomerVehicles = [];
+        });
+      }
+      return;
+    }
+    _customerLookupTimer = Timer(const Duration(milliseconds: 350), () async {
+      setState(() => _isLookingUpCustomer = true);
+      try {
+        final res = await http.get(
+          Uri.parse('$_baseUrl/customers/lookup?q=${Uri.encodeComponent(query)}'),
+          headers: AuthService.instance.authHeaders,
+        );
+        if (res.statusCode == 200 && mounted) {
+          final data = json.decode(res.body);
+          if (data['found'] == true && data['customer'] != null) {
+            final c = data['customer'];
+            final vList = (c['vehicles'] as List<dynamic>?)
+                ?.whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList() ?? [];
+            setState(() {
+              _matchedCustomerData = Map<String, dynamic>.from(c);
+              _matchedCustomerVehicles = vList;
+              _selectedCustomerId = c['id']?.toString();
+              _isLookingUpCustomer = false;
+              if (_customerController.text.trim().isEmpty && (c['name'] ?? '').toString().isNotEmpty) {
+                _customerController.text = c['name'];
+              }
+              if (_phoneController.text.trim().isEmpty && (c['phone'] ?? '').toString().isNotEmpty) {
+                _phoneController.text = c['phone'];
+              }
+              if (c['category'] != null) {
+                _selectedCategory = c['category'].toString();
+              }
+            });
+            return;
+          }
+        }
+      } catch (_) {}
+      if (mounted) {
+        setState(() => _isLookingUpCustomer = false);
       }
     });
   }
@@ -5492,7 +5563,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           // Customer / Institutional Owner
           TextField(
             controller: _customerController,
-            decoration: const InputDecoration(labelText: 'Customer / Institution Name *', border: OutlineInputBorder()),
+            decoration: InputDecoration(
+              labelText: 'Customer / Institution Name *',
+              border: const OutlineInputBorder(),
+              suffixIcon: _isLookingUpCustomer
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  : null,
+            ),
+            onChanged: _onMobileCustomerInputChanged,
           ),
           const SizedBox(height: 12),
           TextField(
@@ -5504,7 +5585,108 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               prefixIcon: Icon(Icons.phone_outlined),
               border: OutlineInputBorder(),
             ),
+            onChanged: _onMobileCustomerInputChanged,
           ),
+
+          // Returning Owner Vehicles Selector
+          if (_matchedCustomerVehicles.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF86EFAC)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.people_alt, color: Color(0xFF16A34A), size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${_matchedCustomerData?['name'] ?? 'Owner'} has ${_matchedCustomerVehicles.length} registered vehicle${_matchedCustomerVehicles.length > 1 ? 's' : ''}:',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF14532D)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        ..._matchedCustomerVehicles.map((cv) {
+                          final isSelected = _regController.text.trim().toUpperCase() == (cv['registrationNo'] ?? '').toString().toUpperCase();
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _regController.text = cv['registrationNo'] ?? '';
+                                  _makeController.text = cv['make'] ?? '';
+                                  _modelController.text = cv['model'] ?? '';
+                                  if (cv['fuelType'] != null) _fuelType = cv['fuelType'].toString();
+                                  if (cv['category'] != null) _selectedCategory = cv['category'].toString();
+                                  if (cv['vinNumber'] != null) _memoDetails.vinNumber = cv['vinNumber'].toString();
+                                  _selectedCustomerId = _matchedCustomerData?['id']?.toString();
+                                  _foundVehicleData = {
+                                    'vehicle': cv,
+                                    'customer': _matchedCustomerData,
+                                    'totalJobsCount': cv['jobCardsCount'] ?? 0,
+                                  };
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF16A34A) : Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: isSelected ? const Color(0xFF15803D) : const Color(0xFF86EFAC)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.directions_car, size: 14, color: isSelected ? Colors.white : const Color(0xFF16A34A)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '${cv['registrationNo']} (${cv['make']} ${cv['model']})',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: isSelected ? Colors.white : const Color(0xFF16A34A),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                        ActionChip(
+                          avatar: const Icon(Icons.add, size: 14, color: Color(0xFF1D4ED8)),
+                          label: const Text('Add Another Car', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8))),
+                          backgroundColor: const Color(0xFFEFF6FF),
+                          side: const BorderSide(color: Color(0xFF93C5FD)),
+                          onPressed: () {
+                            setState(() {
+                              _regController.clear();
+                              _makeController.clear();
+                              _modelController.clear();
+                              _memoDetails.vinNumber = '';
+                              _foundVehicleData = null;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [

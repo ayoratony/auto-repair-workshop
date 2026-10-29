@@ -619,7 +619,22 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       if (customerId) {
         customer = await prisma.customer.findUnique({ where: { id: customerId } });
       }
-      if (!customer) {
+      const cleanPhone = phone ? String(phone).trim() : '';
+      if (!customer && cleanPhone) {
+        const phoneDigits = cleanPhone.replace(/\D/g, '');
+        const last9 = phoneDigits.length >= 9 ? phoneDigits.slice(-9) : (phoneDigits.length >= 6 ? phoneDigits : '');
+        customer = await prisma.customer.findFirst({
+          where: {
+            tenantId: tenant.id,
+            OR: [
+              { phone: { equals: cleanPhone } },
+              { phone: { equals: cleanPhone.replace(/\s+/g, '') } },
+              ...(last9 ? [{ phone: { contains: last9 } }] : []),
+            ],
+          },
+        });
+      }
+      if (!customer && cleanCustomerName) {
         customer = await prisma.customer.findFirst({
           where: {
             tenantId: tenant.id,
@@ -631,7 +646,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
         customer = await prisma.customer.create({
           data: {
             name: cleanCustomerName,
-            phone: phone || '',
+            phone: cleanPhone,
             email: email || '',
             address: address || '',
             category: clientCat,
@@ -646,7 +661,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
         customer = await prisma.customer.update({
           where: { id: customer.id },
           data: {
-            ...(phone ? { phone } : {}),
+            ...(cleanPhone ? { phone: cleanPhone } : {}),
             ...(email ? { email } : {}),
             ...(address ? { address } : {}),
             ...(category ? { category: clientCat } : {}),
@@ -1774,7 +1789,7 @@ app.get('/api/customers', async (_req: Request, res: Response) => {
     const seenNames = new Set<string>();
     for (const c of allCustomers) {
       const key = c.name.trim().toLowerCase();
-      if (seenNames.has(key) && c.jobCards.length === 0) {
+      if (seenNames.has(key) && c.jobCards.length === 0 && c.vehicles.length === 0) {
         await prisma.vehicle.deleteMany({ where: { customerId: c.id } });
         await prisma.customer.delete({ where: { id: c.id } });
       } else {
@@ -1801,6 +1816,63 @@ app.get('/api/customers', async (_req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch customers' });
+  }
+});
+
+app.get('/api/customers/lookup', async (req: Request, res: Response) => {
+  try {
+    const rawQuery = String(req.query.q || '').trim();
+    if (!rawQuery || rawQuery.length < 2) {
+      return res.status(400).json({ error: 'Search parameter "q" must be at least 2 characters' });
+    }
+    const tenant = await getActiveTenant();
+    const phoneDigits = rawQuery.replace(/\D/g, '');
+    const last9 = phoneDigits.length >= 9 ? phoneDigits.slice(-9) : (phoneDigits.length >= 6 ? phoneDigits : '');
+
+    const customers = await prisma.customer.findMany({
+      where: {
+        tenantId: tenant.id,
+        OR: [
+          { name: { contains: rawQuery, mode: 'insensitive' } },
+          { phone: { contains: rawQuery } },
+          ...(last9 ? [{ phone: { contains: last9 } }] : []),
+        ],
+      },
+      include: {
+        vehicles: {
+          orderBy: [{ lastServiceDate: 'desc' }, { updatedAt: 'desc' }],
+        },
+        _count: {
+          select: { jobCards: true },
+        },
+      },
+      take: 10,
+    });
+
+    if (customers.length === 0) {
+      return res.json({ found: false, count: 0, customers: [] });
+    }
+
+    const formattedCustomers = customers.map((c) => ({
+      id: c.id,
+      name: c.name,
+      phone: c.phone,
+      email: c.email,
+      category: c.category,
+      totalJobsCount: c._count.jobCards,
+      vehiclesCount: c.vehicles.length,
+      vehicles: c.vehicles,
+    }));
+
+    res.json({
+      found: true,
+      count: customers.length,
+      customers: formattedCustomers,
+      customer: formattedCustomers[0],
+    });
+  } catch (error) {
+    console.error('Customer lookup error:', error);
+    res.status(500).json({ error: 'Failed to look up customer' });
   }
 });
 

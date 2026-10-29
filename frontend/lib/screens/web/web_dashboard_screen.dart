@@ -181,6 +181,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   List<dynamic> _vehicles = [];
   Map<String, dynamic> _vehicleCounts = {'all': 0, 'personal': 0, 'government': 0, 'school': 0, 'organization': 0};
   String _vehicleCategoryFilter = 'ALL';
+  String _vehicleViewMode = 'grouped'; // 'grouped' or 'table'
   String _vehicleSearchQuery = '';
   List<dynamic> _employees = [];
   List<dynamic> _appointments = [];
@@ -582,9 +583,24 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final assignedDriverCtrl = TextEditingController(text: existingJob?['vehicle']?['assignedDriver'] ?? '');
     final driverPhoneCtrl = TextEditingController(text: existingJob?['vehicle']?['driverPhone'] ?? '');
     String clientCategory = (existingJob?['vehicle']?['category'] ?? existingJob?['customer']?['category'] ?? 'PERSONAL').toString();
+    String? selectedCustomerId = existingJob?['customer']?['id']?.toString() ?? existingJob?['customerId']?.toString();
     Timer? regLookupTimer;
     bool isLookingUp = false;
     Map<String, dynamic>? lookupMatch;
+    Timer? customerLookupTimer;
+    bool isLookingUpCustomer = false;
+    Map<String, dynamic>? matchedCustomer;
+    List<Map<String, dynamic>> customerVehicles = [];
+
+    if (existingJob?['customer'] != null) {
+      matchedCustomer = Map<String, dynamic>.from(existingJob!['customer'] as Map);
+      if (existingJob['customer']['vehicles'] is List) {
+        customerVehicles = (existingJob['customer']['vehicles'] as List)
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+      }
+    }
     final serviceCtrl = TextEditingController(text: existingJob?['workRequested'] ?? '');
     final techCtrl = TextEditingController(text: existingJob?['technician'] ?? '');
     final odometerCtrl = TextEditingController(text: existingJob?['odometer']?.toString() ?? '');
@@ -697,6 +713,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     if (data['found'] == true) {
                       final v = data['vehicle'];
                       final c = data['customer'];
+                      if (c != null && c['id'] != null) {
+                        selectedCustomerId = c['id'].toString();
+                        matchedCustomer = Map<String, dynamic>.from(c);
+                        if (c['vehicles'] is List) {
+                          customerVehicles = (c['vehicles'] as List)
+                              .whereType<Map>()
+                              .map((item) => Map<String, dynamic>.from(item))
+                              .toList();
+                        }
+                      }
                       setModalState(() {
                         lookupMatch = data;
                         isLookingUp = false;
@@ -738,6 +764,58 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 setModalState(() {
                   lookupMatch = null;
                   isLookingUp = false;
+                });
+              });
+            }
+
+            void onCustomerInputChanged(String val) {
+              customerLookupTimer?.cancel();
+              final q = val.trim();
+              if (q.length < 3) {
+                if (matchedCustomer != null && existingJob?['customer'] == null) {
+                  setModalState(() {
+                    matchedCustomer = null;
+                    customerVehicles = [];
+                  });
+                }
+                return;
+              }
+              customerLookupTimer = Timer(const Duration(milliseconds: 350), () async {
+                setModalState(() => isLookingUpCustomer = true);
+                try {
+                  final res = await http.get(
+                    Uri.parse('$_baseUrl/customers/lookup?q=${Uri.encodeComponent(q)}'),
+                    headers: AuthService.instance.authHeaders,
+                  );
+                  if (res.statusCode == 200) {
+                    final data = json.decode(res.body);
+                    if (data['found'] == true && data['customer'] != null) {
+                      final c = data['customer'];
+                      final vList = (c['vehicles'] as List<dynamic>?)
+                          ?.whereType<Map>()
+                          .map((item) => Map<String, dynamic>.from(item))
+                          .toList() ?? [];
+                      setModalState(() {
+                        matchedCustomer = Map<String, dynamic>.from(c);
+                        customerVehicles = vList;
+                        selectedCustomerId = c['id']?.toString();
+                        isLookingUpCustomer = false;
+                        if (customerNameCtrl.text.trim().isEmpty && (c['name'] ?? '').toString().isNotEmpty) {
+                          customerNameCtrl.text = c['name'];
+                        }
+                        if (phoneCtrl.text.trim().isEmpty && (c['phone'] ?? '').toString().isNotEmpty) {
+                          phoneCtrl.text = c['phone'];
+                        }
+                        if (c['category'] != null) {
+                          clientCategory = c['category'].toString();
+                        }
+                      });
+                      return;
+                    }
+                  }
+                } catch (_) {}
+                setModalState(() {
+                  isLookingUpCustomer = false;
                 });
               });
             }
@@ -901,7 +979,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           Expanded(
                             child: TextField(
                               controller: customerNameCtrl,
-                              decoration: const InputDecoration(labelText: 'Customer / Institution Name *', border: OutlineInputBorder()),
+                              decoration: InputDecoration(
+                                labelText: 'Customer / Institution Name *',
+                                border: const OutlineInputBorder(),
+                                suffixIcon: isLookingUpCustomer
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                                      )
+                                    : null,
+                              ),
+                              onChanged: onCustomerInputChanged,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -915,10 +1003,112 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 prefixIcon: Icon(Icons.phone_outlined),
                                 border: OutlineInputBorder(),
                               ),
+                              onChanged: onCustomerInputChanged,
                             ),
                           ),
                         ],
                       ),
+
+                      // Multi-vehicle owner selector banner
+                      if (customerVehicles.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.people_alt, color: Color(0xFF15803D), size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '${matchedCustomer?['name'] ?? 'Customer'} owns ${customerVehicles.length} registered vehicle${customerVehicles.length > 1 ? 's' : ''}. Select vehicle for this visit:',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF166534)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ...customerVehicles.map((cv) {
+                                    final isThisVehicleSelected = regCtrl.text.trim().toUpperCase() == (cv['registrationNo'] ?? '').toString().toUpperCase();
+                                    return InkWell(
+                                      onTap: () {
+                                        setModalState(() {
+                                          regCtrl.text = cv['registrationNo'] ?? '';
+                                          makeCtrl.text = cv['make'] ?? '';
+                                          modelCtrl.text = cv['model'] ?? '';
+                                          if ((cv['fuelType'] ?? '').toString().isNotEmpty) fuelType = cv['fuelType'].toString();
+                                          if ((cv['category'] ?? '').toString().isNotEmpty) clientCategory = cv['category'].toString();
+                                          if ((cv['vinNumber'] ?? '').toString().isNotEmpty) memoDetails.vinNumber = cv['vinNumber'].toString();
+                                          if ((cv['lastOdometer'] ?? 0) > 0 && odometerCtrl.text.isEmpty) {
+                                            odometerCtrl.text = cv['lastOdometer'].toString();
+                                          }
+                                          lookupMatch = {
+                                            'vehicle': cv,
+                                            'customer': matchedCustomer,
+                                            'totalJobsCount': cv['jobCardsCount'] ?? 0,
+                                          };
+                                        });
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: isThisVehicleSelected ? const Color(0xFF16A34A) : Colors.white,
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(color: isThisVehicleSelected ? const Color(0xFF15803D) : const Color(0xFF86EFAC)),
+                                          boxShadow: [
+                                            BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 2, offset: const Offset(0, 1)),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.directions_car, size: 14, color: isThisVehicleSelected ? Colors.white : const Color(0xFF166534)),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              '${cv['registrationNo']} (${cv['make']} ${cv['model']})',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: isThisVehicleSelected ? Colors.white : const Color(0xFF166534),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                  ActionChip(
+                                    avatar: const Icon(Icons.add, size: 14, color: Color(0xFF1D4ED8)),
+                                    label: const Text('Add Another Vehicle to this Customer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8))),
+                                    backgroundColor: const Color(0xFFEFF6FF),
+                                    side: const BorderSide(color: Color(0xFF93C5FD)),
+                                    onPressed: () {
+                                      setModalState(() {
+                                        regCtrl.clear();
+                                        makeCtrl.clear();
+                                        modelCtrl.clear();
+                                        memoDetails.vinNumber = '';
+                                        lookupMatch = null;
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
 
                       // Vehicle Specs & Fuel Type Row
@@ -1579,6 +1769,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           setModalState(() => isSaving = true);
                           try {
                             final payload = {
+                              'customerId': selectedCustomerId,
                               'customerName': customerNameCtrl.text.trim(),
                               'phone': phoneCtrl.text.trim(),
                               'registrationNo': regCtrl.text.trim(),
@@ -5007,10 +5198,41 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       DataCell(Text(c['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
                       DataCell(Text(c['phone'] ?? '-')),
                       DataCell(
-                        Text(
-                          vehicles.map((v) => '${v['registrationNo']} (${v['make']} ${v['model']})').join(', '),
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                        vehicles.isEmpty
+                            ? const Text('No vehicles registered', style: TextStyle(fontSize: 12, color: Colors.grey))
+                            : Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: vehicles.map((v) {
+                                  final vMap = Map<String, dynamic>.from(v as Map);
+                                  return InkWell(
+                                    onTap: () {
+                                      if (vMap['id'] != null) {
+                                        _showVehicleHistoryDialog(vMap['id'].toString(), initialVehicle: vMap);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEF08A),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: Colors.black87, width: 1),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.directions_car, size: 12, color: Colors.black87),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            '${vMap['registrationNo']} (${vMap['make']} ${vMap['model']})',
+                                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
                       ),
                       DataCell(Text('${jobs.length}', style: const TextStyle(fontWeight: FontWeight.bold))),
                       DataCell(
@@ -5026,6 +5248,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 foregroundColor: Colors.indigo.shade800,
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            OutlinedButton.icon(
+                              onPressed: () => _showJobCardDialog(existingJob: {
+                                'customer': c,
+                                'customerId': c['id'],
+                                'vehicle': {'category': c['category'] ?? 'PERSONAL'},
+                              }),
+                              icon: const Icon(Icons.add, size: 14),
+                              label: const Text('Add Car', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF2563EB),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -5171,7 +5407,41 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Data Table
+          // View Mode Switcher & Summary Info
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _vehicleViewMode == 'grouped'
+                    ? 'Owner & Fleet Groups View (Household & Corporate Accounts)'
+                    : 'All Registered Vehicles Table (${filteredVehicles.length})',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF334155)),
+              ),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'grouped',
+                    icon: Icon(Icons.group_work, size: 15),
+                    label: Text('Group by Owner / Fleets', style: TextStyle(fontSize: 12)),
+                  ),
+                  ButtonSegment(
+                    value: 'table',
+                    icon: Icon(Icons.table_rows, size: 15),
+                    label: Text('All Vehicles Table', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+                selected: {_vehicleViewMode},
+                onSelectionChanged: (val) => setState(() => _vehicleViewMode = val.first),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Data Table or Grouped View
           if (filteredVehicles.isEmpty)
             Container(
               padding: const EdgeInsets.all(40),
@@ -5186,6 +5456,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 ],
               ),
             )
+          else if (_vehicleViewMode == 'grouped')
+            _buildGroupedVehiclesView(filteredVehicles)
           else
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -5329,6 +5601,330 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGroupedVehiclesView(List<dynamic> vehicles) {
+    // Group vehicles by owner
+    final Map<String, List<Map<String, dynamic>>> groups = {};
+    final Map<String, Map<String, dynamic>> ownerMap = {};
+
+    for (final v in vehicles) {
+      final vMap = Map<String, dynamic>.from(v as Map);
+      final cust = (vMap['customer'] is Map) ? Map<String, dynamic>.from(vMap['customer']) : <String, dynamic>{};
+      final key = cust['id']?.toString() ?? cust['phone']?.toString() ?? cust['name']?.toString() ?? 'unknown_${vMap['id']}';
+      groups.putIfAbsent(key, () => []).add(vMap);
+      if (!ownerMap.containsKey(key)) {
+        ownerMap[key] = cust;
+      }
+    }
+
+    final sortedKeys = groups.keys.toList()
+      ..sort((a, b) {
+        final lenA = groups[a]!.length;
+        final lenB = groups[b]!.length;
+        if (lenA != lenB) return lenB.compareTo(lenA); // multi-vehicle owners first
+        return (ownerMap[a]?['name'] ?? '').toString().compareTo((ownerMap[b]?['name'] ?? '').toString());
+      });
+
+    final multiCarOwnersCount = groups.values.where((list) => list.length > 1).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Informative household / fleet banner
+        Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFBFDBFE)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, size: 18, color: Color(0xFF1D4ED8)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Showing ${groups.length} Owners across ${vehicles.length} Vehicles \u2022 $multiCarOwnersCount Multi-Vehicle / Household Fleets consolidated under unique customer profiles.',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF1E40AF), fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // List of Owner Group Cards
+        ...sortedKeys.map((k) {
+          final owner = ownerMap[k] ?? {};
+          final cars = groups[k]!;
+          final ownerName = (owner['name'] ?? 'Unknown Customer / Institutional Owner').toString();
+          final ownerPhone = (owner['phone'] ?? '').toString();
+          final ownerCat = (owner['category'] ?? cars.first['category'] ?? 'PERSONAL').toString();
+          final isMultiCar = cars.length > 1;
+          final totalJobs = cars.fold<int>(0, (sum, c) => sum + (c['jobCardsCount'] as int? ?? 0));
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isMultiCar ? const Color(0xFF93C5FD) : Colors.grey.shade200,
+                width: isMultiCar ? 1.5 : 1.0,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isMultiCar ? const Color(0xFF2563EB).withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Owner Header Bar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isMultiCar ? const Color(0xFFF8FAFC) : const Color(0xFFFAFAFA),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
+                    border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                  ),
+                  child: Row(
+                    children: [
+                      // Owner Avatar
+                      CircleAvatar(
+                        radius: 18,
+                        backgroundColor: isMultiCar ? const Color(0xFF1E3A8A) : Colors.blueGrey.shade100,
+                        foregroundColor: isMultiCar ? Colors.white : Colors.blueGrey.shade800,
+                        child: Text(
+                          ownerName.isNotEmpty ? ownerName.substring(0, 1).toUpperCase() : 'U',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  ownerName,
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                                ),
+                                const SizedBox(width: 8),
+                                _buildCategoryBadge(ownerCat),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                if (ownerPhone.isNotEmpty) ...[
+                                  Icon(Icons.phone_outlined, size: 13, color: Colors.grey.shade600),
+                                  const SizedBox(width: 4),
+                                  Text(ownerPhone, style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                                  const SizedBox(width: 6),
+                                  InkWell(
+                                    onTap: () {
+                                      final firstReg = cars.first['registrationNo'] ?? 'your vehicle';
+                                      _launchWhatsAppMessage(
+                                        ownerPhone,
+                                        'Hello $ownerName, friendly update from ${_workshopSettings['name'] ?? 'our Workshop'} regarding your vehicle $firstReg on file. How can we assist you today?',
+                                      );
+                                    },
+                                    child: const Icon(Icons.chat, size: 15, color: Color(0xFF16A34A)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                ],
+                                Text(
+                                  '\u2022  $totalJobs Total Workshop Visit${totalJobs != 1 ? 's' : ''}',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Multi-Car Fleet Badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isMultiCar ? const Color(0xFFEFF6FF) : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: isMultiCar ? const Color(0xFF93C5FD) : Colors.grey.shade300),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.directions_car, size: 14, color: isMultiCar ? const Color(0xFF1D4ED8) : Colors.grey.shade700),
+                            const SizedBox(width: 6),
+                            Text(
+                              isMultiCar ? '${cars.length} Vehicles \u2022 Fleet / Family' : '1 Vehicle',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: isMultiCar ? const Color(0xFF1D4ED8) : Colors.grey.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Actions: Add Car to this Owner + Full History
+                      OutlinedButton.icon(
+                        onPressed: () => _showJobCardDialog(existingJob: {
+                          'customer': owner,
+                          'customerId': owner['id'],
+                          'vehicle': {'category': ownerCat},
+                        }),
+                        icon: const Icon(Icons.add, size: 14),
+                        label: const Text('Add Car to Owner', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF2563EB),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Owner Service History',
+                        icon: const Icon(Icons.history, size: 18, color: Color(0xFF475569)),
+                        onPressed: () => _showCustomerHistoryDialog(owner),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Vehicle Cards Grid
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Wrap(
+                    spacing: 14,
+                    runSpacing: 14,
+                    children: cars.map((car) {
+                      final regNo = (car['registrationNo'] ?? '-').toString();
+                      final make = (car['make'] ?? '').toString();
+                      final model = (car['model'] ?? '').toString();
+                      final fuel = (car['fuelType'] ?? 'Petrol').toString();
+                      final body = (car['bodyType'] ?? 'sedan').toString();
+                      final odo = car['lastOdometer'] ?? 0;
+                      final visits = car['jobCardsCount'] ?? 0;
+                      final lastService = car['lastServiceDate'];
+
+                      return Container(
+                        width: 320,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _buildPlatePill(regNo),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.grey.shade300),
+                                  ),
+                                  child: Text(
+                                    '$visits visit${visits != 1 ? 's' : ''}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF334155)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '$make $model',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 6,
+                              children: [
+                                _buildFuelBadge(fuel),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(color: Colors.blueGrey.shade50, borderRadius: BorderRadius.circular(4)),
+                                  child: Text(body.toUpperCase(), style: TextStyle(fontSize: 10, color: Colors.blueGrey.shade800, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(Icons.speed, size: 14, color: Colors.grey.shade600),
+                                const SizedBox(width: 4),
+                                Text(
+                                  odo > 0 ? '$odo km' : 'Odometer not logged',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                                ),
+                                const Spacer(),
+                                Icon(Icons.event, size: 13, color: Colors.grey.shade600),
+                                const SizedBox(width: 4),
+                                Text(
+                                  lastService != null ? _formatDateShort(lastService) : 'No visit date',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () => _showJobCardDialog(existingJob: {
+                                      'customer': owner,
+                                      'customerId': owner['id'],
+                                      'vehicle': car,
+                                    }),
+                                    icon: const Icon(Icons.bolt, size: 14),
+                                    label: const Text('New Job', style: TextStyle(fontSize: 11)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2563EB),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 6),
+                                      elevation: 0,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    if (car['id'] != null) {
+                                      _showVehicleHistoryDialog(car['id'].toString(), initialVehicle: car);
+                                    }
+                                  },
+                                  icon: const Icon(Icons.history_edu, size: 14),
+                                  label: const Text('Passport', style: TextStyle(fontSize: 11)),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF0F172A),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 
