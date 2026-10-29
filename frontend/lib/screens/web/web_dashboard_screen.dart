@@ -1618,6 +1618,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                       baseUrl: _baseUrl,
                                       registrationNo: regCtrl.text.trim(),
                                       jobCardId: existingJob?['id']?.toString(),
+                                      jobNumber: existingJob?['jobNumber']?.toString(),
+                                      jobCreatedAt: existingJob?['createdAt'] != null ? _formatDateShort(existingJob!['createdAt']) : null,
                                     );
                                     if (uploaded != null) {
                                       setModalState(() {
@@ -2429,6 +2431,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                         baseUrl: _baseUrl,
                                         registrationNo: regNo,
                                         jobCardId: job['id']?.toString(),
+                                        jobNumber: job['jobNumber']?.toString(),
+                                        jobCreatedAt: job['createdAt'] != null ? _formatDateShort(job['createdAt']) : null,
                                       );
                                       if (uploaded != null) {
                                         _refreshAllData();

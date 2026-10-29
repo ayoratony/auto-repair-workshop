@@ -3027,7 +3027,7 @@ app.delete('/api/assets', async (req: Request, res: Response) => {
 
 app.post('/api/vehicles/upload-image', async (req: Request, res: Response) => {
   try {
-    const { image, filename, registrationNo, jobCardId, label, category, notes, uploadedBy } = req.body;
+    const { image, filename, registrationNo, jobCardId, jobNumber, jobCreatedAt, label, category, notes, uploadedBy } = req.body;
     if (!image) {
       return res.status(400).json({ error: 'Image data is required (base64 string)' });
     }
@@ -3057,23 +3057,27 @@ app.post('/api/vehicles/upload-image', async (req: Request, res: Response) => {
       publicUrl,
       presignedUrl,
       proxyUrl,
-      filename: filename || `${cleanReg}_${label || 'security'}.${ext}`,
-      label: label || 'Security & Condition Photo',
-      category: category || 'SECURITY',
+      filename: filename || `${cleanReg}_${label || 'photo'}.${ext}`,
+      label: label || 'Vehicle Photo',
+      category: category || 'PHOTO',
       notes: notes || '',
       registrationNo: (registrationNo || cleanReg).trim().toUpperCase(),
       jobCardId: jobCardId ? String(jobCardId) : null,
+      jobNumber: jobNumber ? String(jobNumber) : null,
+      jobCreatedAt: jobCreatedAt ? String(jobCreatedAt) : null,
       size: buffer.length,
       mimeType,
       uploadedAt: new Date().toISOString(),
       uploadedBy: uploadedBy || (req as any).user?.name || 'Staff',
     };
 
-    // If jobCardId is supplied, append to walkAroundData.securityPhotos
+    // If jobCardId is supplied, lookup and attach exact jobNumber & jobCreatedAt
     if (jobCardId) {
       try {
         const job = await prisma.jobCard.findUnique({ where: { id: String(jobCardId) } });
         if (job) {
+          (photoRecord as any).jobNumber = job.jobNumber || job.id.slice(0, 8).toUpperCase();
+          (photoRecord as any).jobCreatedAt = job.createdAt.toISOString();
           const walk = (job.walkAroundData && typeof job.walkAroundData === 'object'
             ? (job.walkAroundData as Record<string, any>)
             : {}) as Record<string, any>;

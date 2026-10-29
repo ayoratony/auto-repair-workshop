@@ -4922,6 +4922,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 baseUrl: _baseUrl,
                                 registrationNo: reg,
                                 jobCardId: job['id']?.toString(),
+                                jobNumber: job['jobNumber']?.toString(),
+                                jobCreatedAt: job['createdAt'] != null ? _formatDate(job['createdAt']) : null,
                               );
                               if (uploaded != null) {
                                 setSheet(() {
