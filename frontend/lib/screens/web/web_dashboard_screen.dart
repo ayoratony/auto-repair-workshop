@@ -4363,15 +4363,29 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     return DataRow(
       cells: [
         DataCell(Text(id, style: const TextStyle(fontWeight: FontWeight.bold))),
-        DataCell(Text(customer)),
         DataCell(
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(vehicle),
-              const SizedBox(width: 6),
-              _buildFuelBadge(fuelType),
-            ],
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Text(customer, overflow: TextOverflow.ellipsis),
+          ),
+        ),
+        DataCell(
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    vehicle,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                _buildFuelBadge(fuelType),
+              ],
+            ),
           ),
         ),
         DataCell(
@@ -5495,20 +5509,29 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         _buildCategoryBadge(cat),
                       ),
                       DataCell(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                                const SizedBox(width: 6),
-                                _buildFuelBadge((v['fuelType'] ?? 'Petrol').toString()),
-                              ],
-                            ),
-                            Text('${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                          ],
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      '${v['make'] ?? ''} ${v['model'] ?? ''}',
+                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  _buildFuelBadge((v['fuelType'] ?? 'Petrol').toString()),
+                                ],
+                              ),
+                              Text('${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                            ],
+                          ),
                         ),
                       ),
                       DataCell(
@@ -6055,31 +6078,32 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     final clean = fuelType.trim();
     Color bg = const Color(0xFFEFF6FF);
     Color fg = const Color(0xFF1D4ED8);
-    String icon = '⛽';
+    IconData icon = Icons.local_gas_station_rounded;
     if (clean.toLowerCase() == 'diesel') {
       bg = const Color(0xFFFEF3C7);
       fg = const Color(0xFFB45309);
-      icon = '🛢️';
+      icon = Icons.oil_barrel_rounded;
     } else if (clean.toLowerCase() == 'hybrid') {
       bg = const Color(0xFFECFDF5);
       fg = const Color(0xFF047857);
-      icon = '⚡';
+      icon = Icons.bolt_rounded;
     } else if (clean.toLowerCase() == 'electric') {
       bg = const Color(0xFFF3E8FF);
       fg = const Color(0xFF7E22CE);
-      icon = '🔌';
+      icon = Icons.power_rounded;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: fg.withOpacity(0.35)),
+        border: Border.all(color: fg.withValues(alpha: 0.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(icon, style: const TextStyle(fontSize: 10)),
+          Icon(icon, size: 11, color: fg),
           const SizedBox(width: 3),
           Text(clean.toUpperCase(), style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: fg)),
         ],
