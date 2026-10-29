@@ -1225,7 +1225,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   void _onMobilePlateChanged(String text) {
     _regLookupTimer?.cancel();
     final query = text.trim();
-    if (query.length < 3) {
+    final compact = query.replaceAll(RegExp(r'[\s\-_]'), '');
+    if (compact.length < 5) {
       if (_foundVehicleData != null) {
         setState(() => _foundVehicleData = null);
       }
@@ -1240,7 +1241,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         );
         if (res.statusCode == 200 && mounted) {
           final data = json.decode(res.body);
-          if (data['found'] == true) {
+          if (data['found'] == true && data['exact'] == true) {
             final v = data['vehicle'];
             final c = data['customer'];
             setState(() {
@@ -4896,11 +4897,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.shield_outlined, size: 17, color: Color(0xFF1E3A8A)),
+                          const Icon(Icons.directions_car, size: 17, color: Color(0xFF1E3A8A)),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Security & Condition Photos (${sheetPhotos.length}) \u2022 Neon S3',
+                              'Vehicle Photos (${sheetPhotos.length})',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
                             ),
                           ),

@@ -1972,28 +1972,21 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
     const compactPlate = cleanPlate.replace(/[\s\-_]/g, '');
     const tenant = await getActiveTenant();
 
-    // Build flexible search terms: full input, stripped spaces, prefix and number
-    const searchTerms = new Set<string>();
-    searchTerms.add(cleanPlate);
-    searchTerms.add(compactPlate);
-    if (compactPlate.length >= 3) {
-      searchTerms.add(compactPlate.substring(0, 3));
+    // Require full registration plate (e.g. KAD 556L -> at least 5 alphanumeric characters)
+    // Prevents premature matching when typing prefixes like "KAD"
+    if (compactPlate.length < 5) {
+      return res.json({ found: false, exact: false, matches: [] });
     }
-    if (compactPlate.length >= 4) {
-      searchTerms.add(compactPlate.substring(compactPlate.length - 4));
-    }
-
-    const orConditions = Array.from(searchTerms)
-      .filter((t) => t.length >= 2)
-      .map((term) => ({
-        registrationNo: { contains: term, mode: 'insensitive' as const },
-      }));
 
     // Search vehicles under active workshop tenant matching the plate
     const vehicles = await prisma.vehicle.findMany({
       where: {
         customer: { tenantId: tenant.id },
-        OR: orConditions.length > 0 ? orConditions : [{ registrationNo: { contains: cleanPlate, mode: 'insensitive' } }],
+        OR: [
+          { registrationNo: { equals: cleanPlate, mode: 'insensitive' } },
+          { registrationNo: { contains: cleanPlate, mode: 'insensitive' } },
+          { registrationNo: { contains: compactPlate, mode: 'insensitive' } },
+        ],
       },
       include: {
         customer: true,
@@ -2010,31 +2003,37 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
       take: 20,
     });
 
-    // Try finding exact sanitized match first (ignoring spaces, hyphens, case)
-    let matchedVehicle = vehicles.find(
+    // Check for exact sanitized match (ignoring spaces, hyphens, and case)
+    const exactMatch = vehicles.find(
       (v) => v.registrationNo.replace(/[\s\-_]/g, '').toUpperCase() === compactPlate
     );
 
-    // Fallback to substring match or first found
-    if (!matchedVehicle && vehicles.length > 0) {
-      matchedVehicle = vehicles.find((v) =>
-        v.registrationNo.replace(/[\s\-_]/g, '').toUpperCase().includes(compactPlate)
-      ) || vehicles[0];
+    // If no exact match on the full plate, return found: false so form is not prematurely filled
+    if (!exactMatch) {
+      return res.json({
+        found: false,
+        exact: false,
+        matches: vehicles.map((v) => ({
+          id: v.id,
+          registrationNo: v.registrationNo,
+          make: v.make,
+          model: v.model,
+          year: v.year,
+          customerName: v.customer.name,
+        })),
+      });
     }
 
-    if (!matchedVehicle) {
-      return res.json({ found: false, matches: [] });
-    }
-
-    const latestJob = matchedVehicle.jobCards[0] || null;
+    const latestJob = exactMatch.jobCards[0] || null;
     const totalJobsCount = await prisma.jobCard.count({
-      where: { vehicleId: matchedVehicle.id },
+      where: { vehicleId: exactMatch.id },
     });
 
     return res.json({
       found: true,
-      vehicle: matchedVehicle,
-      customer: matchedVehicle.customer,
+      exact: true,
+      vehicle: exactMatch,
+      customer: exactMatch.customer,
       latestJob,
       totalJobsCount,
       matches: vehicles.map((v) => ({

@@ -695,7 +695,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             void onRegPlateChanged(String text) {
               regLookupTimer?.cancel();
               final query = text.trim();
-              if (query.length < 3) {
+              final compact = query.replaceAll(RegExp(r'[\s\-_]'), '');
+              // Require full registration plate (e.g. KAD 556L -> at least 5 alphanumeric characters)
+              if (compact.length < 5) {
                 if (lookupMatch != null) {
                   setModalState(() => lookupMatch = null);
                 }
@@ -710,7 +712,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   );
                   if (res.statusCode == 200) {
                     final data = json.decode(res.body);
-                    if (data['found'] == true) {
+                    if (data['found'] == true && data['exact'] == true) {
                       final v = data['vehicle'];
                       final c = data['customer'];
                       if (c != null && c['id'] != null) {
@@ -761,10 +763,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     }
                   }
                 } catch (_) {}
-                setModalState(() {
-                  lookupMatch = null;
-                  isLookingUp = false;
-                });
+                if (ctx.mounted) {
+                  setModalState(() {
+                    lookupMatch = null;
+                    isLookingUp = false;
+                  });
+                }
               });
             }
 
@@ -1583,11 +1587,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Vehicle Condition & Security Photos (Neon S3)',
+                                        'Vehicle Photos',
                                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
                                       ),
                                       Text(
-                                        'Stored securely in Neon S3 bucket for intake condition proof & dispute prevention',
+                                        'Intake and inspection photos for this vehicle',
                                         style: TextStyle(fontSize: 11, color: Colors.grey),
                                       ),
                                     ],
@@ -1601,7 +1605,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                   ),
                                   icon: const Icon(Icons.add_a_photo_outlined, size: 16),
-                                  label: const Text('Add Security Photo', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  label: const Text('Add Vehicle Photo', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                   onPressed: () async {
                                     if (regCtrl.text.trim().isEmpty) {
                                       ScaffoldMessenger.of(context).showSnackBar(
@@ -2403,10 +2407,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.shield_outlined, size: 16, color: photos.isNotEmpty ? const Color(0xFF1E3A8A) : Colors.grey),
+                                  Icon(Icons.directions_car, size: 16, color: photos.isNotEmpty ? const Color(0xFF1E3A8A) : Colors.grey),
                                   const SizedBox(width: 6),
                                   Text(
-                                    'Vehicle Security & Condition Photos (${photos.length}) \u2022 Neon S3',
+                                    'Vehicle Photos (${photos.length})',
                                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
                                   ),
                                   const Spacer(),
@@ -8424,7 +8428,7 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                             _buildStatItem('Total Spend', _formatKes(s['totalSpend'] ?? 0), Icons.receipt_long, const Color(0xFF16A34A)),
                             _buildStatItem('Recorded Odo', '${s['currentOdometer'] ?? v['lastOdometer'] ?? 0} km', Icons.speed, const Color(0xFFD97706)),
                             _buildStatItem('Replaced Parts', '${parts.length}', Icons.settings, const Color(0xFF7C3AED)),
-                            _buildStatItem('Security Photos', '${securityPhotos.length}', Icons.shield_outlined, const Color(0xFF0D9488)),
+                            _buildStatItem('Vehicle Photos', '${securityPhotos.length}', Icons.photo_library_outlined, const Color(0xFF0D9488)),
                             _buildStatItem('Next Due', s['nextServiceMileage'] != null ? '${s['nextServiceMileage']} km' : 'TBA', Icons.event_available, const Color(0xFF475569)),
                           ],
                         ),
@@ -8442,7 +8446,7 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                           const SizedBox(width: 8),
                           _buildTabBtn('📈 Mileage Log (${mileageTimeline.length})', 3),
                           const SizedBox(width: 8),
-                          _buildTabBtn('📷 Security Photos (${securityPhotos.length})', 4),
+                          _buildTabBtn('📷 Vehicle Photos (${securityPhotos.length})', 4),
                         ],
                       ),
                       const Divider(height: 16),
@@ -8669,22 +8673,22 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.shield_outlined, size: 48, color: Colors.blueGrey.shade300),
+            Icon(Icons.photo_library_outlined, size: 48, color: Colors.blueGrey.shade300),
             const SizedBox(height: 10),
             const Text(
-              'No Security or Intake Photos Archived Yet',
+              'No Vehicle Photos Archived Yet',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
             ),
             const SizedBox(height: 4),
             const Text(
-              'Photos taken during job card walk-around or intake are permanently archived here via Neon S3.',
+              'Photos taken during job card intake or service are permanently archived here.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
               icon: const Icon(Icons.add_a_photo_outlined, size: 16),
-              label: const Text('Upload Vehicle Photo to Neon S3', style: TextStyle(fontWeight: FontWeight.bold)),
+              label: const Text('Upload Vehicle Photo', style: TextStyle(fontWeight: FontWeight.bold)),
               onPressed: () async {
                 final uploaded = await VehiclePhotoService.pickAndUploadPhoto(
                   context: context,
@@ -8708,7 +8712,7 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'Permanent Security & Condition Archive (${photos.length} photos) \u2022 Neon S3',
+              'Vehicle Photos (${photos.length})',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
             ),
             ElevatedButton.icon(

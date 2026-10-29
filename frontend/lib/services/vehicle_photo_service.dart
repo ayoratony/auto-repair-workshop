@@ -8,7 +8,7 @@ import 'platform_launcher.dart';
 
 class VehiclePhotoService {
   static const List<String> presetLabels = [
-    '📷 Front View (Security)',
+    '📷 Front View',
     '📷 Rear Bumper & Plate',
     '📷 Left Side Profile',
     '📷 Right Side Profile',
@@ -17,11 +17,11 @@ class VehiclePhotoService {
     '⚠️ Existing Scratch / Dent',
     '🔧 Engine Bay / Mechanical',
     '✅ Release Condition Proof',
-    '📁 General Condition Photo',
+    '📁 General Photo',
   ];
 
-  /// Prompts user to pick an image file, choose a security tag & notes,
-  /// and uploads it to Neon S3 (car-pics bucket).
+  /// Prompts user to pick an image file, choose a tag & notes,
+  /// and uploads it as a vehicle photo.
   static Future<Map<String, dynamic>?> pickAndUploadPhoto({
     required BuildContext context,
     required String baseUrl,
@@ -30,12 +30,13 @@ class VehiclePhotoService {
     String? defaultLabel,
   }) async {
     try {
-      final PlatformFile? file = await FilePicker.pickFile(
+      final List<PlatformFile> files = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
       );
 
-      if (file == null) return null;
+      if (files.isEmpty) return null;
+      final PlatformFile file = files.first;
       final Uint8List bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
         if (context.mounted) {
@@ -48,7 +49,7 @@ class VehiclePhotoService {
 
       // Show Tag & Details Confirmation Dialog before uploading
       String selectedLabel = defaultLabel ?? presetLabels.first;
-      String category = selectedLabel.contains('Scratch') ? 'DAMAGE' : 'SECURITY';
+      String category = selectedLabel.contains('Scratch') ? 'DAMAGE' : (selectedLabel.contains('Release') ? 'RELEASE' : 'PHOTO');
       final notesCtrl = TextEditingController();
       bool confirmed = false;
 
@@ -63,11 +64,11 @@ class VehiclePhotoService {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(color: const Color(0xFF1E3A8A).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.shield_outlined, color: Color(0xFF1E3A8A)),
+                      child: const Icon(Icons.directions_car, color: Color(0xFF1E3A8A)),
                     ),
                     const SizedBox(width: 10),
                     const Expanded(
-                      child: Text('Vehicle Security Photo (Neon S3)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      child: Text('Vehicle Photo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -92,7 +93,7 @@ class VehiclePhotoService {
                           ),
                         ),
                         const SizedBox(height: 14),
-                        const Text('Photo Category & Security Tag *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const Text('Photo Category *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                         const SizedBox(height: 6),
                         DropdownButtonFormField<String>(
                           value: selectedLabel,
@@ -105,7 +106,7 @@ class VehiclePhotoService {
                             if (v != null) {
                               setDlg(() {
                                 selectedLabel = v;
-                                category = v.contains('Scratch') ? 'DAMAGE' : (v.contains('Release') ? 'RELEASE' : 'SECURITY');
+                                category = v.contains('Scratch') ? 'DAMAGE' : (v.contains('Release') ? 'RELEASE' : 'PHOTO');
                               });
                             }
                           },
@@ -114,7 +115,7 @@ class VehiclePhotoService {
                         TextField(
                           controller: notesCtrl,
                           decoration: const InputDecoration(
-                            labelText: 'Condition Notes / Specific Details (Optional)',
+                            labelText: 'Notes / Specific Details (Optional)',
                             hintText: 'e.g. Minor paint scratch near left front door',
                             border: OutlineInputBorder(),
                           ),
@@ -122,7 +123,7 @@ class VehiclePhotoService {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'File: ${file.name} (${(bytes.lengthInBytes / 1024).toStringAsFixed(1)} KB) \u2022 Target: Neon S3',
+                          'File: ${file.name} (${(bytes.lengthInBytes / 1024).toStringAsFixed(1)} KB)',
                           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                         ),
                       ],
@@ -138,7 +139,7 @@ class VehiclePhotoService {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     icon: const Icon(Icons.cloud_upload_outlined, size: 16),
-                    label: const Text('Upload to Neon S3', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text('Upload Photo', style: TextStyle(fontWeight: FontWeight.bold)),
                     onPressed: () => Navigator.pop(dlgCtx, true),
                   ),
                 ],
@@ -158,7 +159,7 @@ class VehiclePhotoService {
               children: [
                 SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
                 SizedBox(width: 12),
-                Text('Uploading vehicle security photo to Neon S3...'),
+                Text('Uploading vehicle photo...'),
               ],
             ),
           ),
@@ -191,7 +192,7 @@ class VehiclePhotoService {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: Colors.green,
-              content: Text('✓ Vehicle security photo stored securely on Neon S3.'),
+              content: Text('✓ Vehicle photo uploaded successfully.'),
             ),
           );
         }
@@ -222,7 +223,7 @@ class VehiclePhotoService {
     VoidCallback? onDelete,
   }) {
     final key = photo['key']?.toString() ?? '';
-    final label = photo['label']?.toString() ?? 'Security Photo';
+    final label = photo['label']?.toString() ?? 'Vehicle Photo';
     final notes = photo['notes']?.toString() ?? '';
     final uploadedAt = photo['uploadedAt']?.toString() ?? '';
     final uploadedBy = photo['uploadedBy']?.toString() ?? '';
@@ -327,7 +328,7 @@ class VehiclePhotoService {
                       borderRadius: BorderRadius.circular(4),
                       border: Border.all(color: const Color(0xFFA7F3D0)),
                     ),
-                    child: const Text('☁️ Neon S3 Object Storage', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
+                    child: const Text('📷 Vehicle Photo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
                   ),
                   const SizedBox(width: 8),
                   if (uploadedAt.isNotEmpty)
@@ -339,7 +340,7 @@ class VehiclePhotoService {
                   if (directUrl.isNotEmpty)
                     TextButton.icon(
                       icon: const Icon(Icons.open_in_new, size: 14),
-                      label: const Text('Open Direct S3 URL', style: TextStyle(fontSize: 11.5)),
+                      label: const Text('View Full Image', style: TextStyle(fontSize: 11.5)),
                       onPressed: () => PlatformLauncher.openUrl(directUrl),
                     ),
                   if (onDelete != null)
@@ -350,8 +351,8 @@ class VehiclePhotoService {
                         final ok = await showDialog<bool>(
                           context: ctx,
                           builder: (delCtx) => AlertDialog(
-                            title: const Text('Delete Security Photo?'),
-                            content: const Text('Are you sure you want to permanently delete this photo from Neon S3?'),
+                            title: const Text('Delete Photo?'),
+                            content: const Text('Are you sure you want to permanently delete this photo?'),
                             actions: [
                               TextButton(onPressed: () => Navigator.pop(delCtx, false), child: const Text('Cancel')),
                               ElevatedButton(
@@ -384,7 +385,7 @@ class VehiclePhotoService {
         children: [
           Icon(Icons.broken_image_outlined, size: 48, color: Colors.white54),
           SizedBox(height: 8),
-          Text('Failed to load image from Neon S3', style: TextStyle(color: Colors.white70)),
+          Text('Failed to load image', style: TextStyle(color: Colors.white70)),
         ],
       ),
     );
@@ -413,7 +414,7 @@ class VehiclePhotoService {
     double height = 120,
   }) {
     final key = photo['key']?.toString() ?? '';
-    final label = photo['label']?.toString() ?? 'Security Photo';
+    final label = photo['label']?.toString() ?? 'Vehicle Photo';
     final streamUrl = key.isNotEmpty ? '$baseUrl/storage/file?key=${Uri.encodeComponent(key)}' : (photo['url']?.toString() ?? '');
     final isDamage = (photo['category'] ?? '').toString().toUpperCase() == 'DAMAGE';
 
@@ -481,15 +482,6 @@ class VehiclePhotoService {
                       ),
                     ),
                   ),
-                Positioned(
-                  bottom: 2,
-                  left: 2,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
-                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.65), borderRadius: BorderRadius.circular(4)),
-                    child: const Text('Neon S3', style: TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                ),
               ],
             ),
             // Caption & Label
