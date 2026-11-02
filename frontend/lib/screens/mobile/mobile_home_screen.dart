@@ -1525,6 +1525,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
   void _showVehiclesSheet([String initialQuery = '']) {
     String categoryFilter = 'ALL';
+    String quickFilter = 'ALL'; // 'ALL', 'IN_WORKSHOP', 'MULTI_VISIT'
+    String sortBy = 'RECENT'; // 'RECENT', 'PLATE_AZ', 'MOST_VISITS', 'HIGHEST_ODO'
     String searchQuery = initialQuery.trim();
     final searchCtrl = TextEditingController(text: searchQuery);
     List<dynamic> vehicles = [];
@@ -1550,6 +1552,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             'customer': c,
             'lastOdometer': j['odometer'] ?? v['lastOdometer'] ?? 0,
             'lastServiceDate': j['createdAt'] ?? v['lastServiceDate'],
+            'latestJobStatus': j['status'],
+            'latestWorkRequested': j['workRequested'],
             'jobCardsCount': 1,
           };
         } else {
@@ -1607,6 +1611,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             if (categoryFilter != 'ALL' && (v['category'] ?? 'PERSONAL') != categoryFilter) {
               return false;
             }
+            if (quickFilter == 'IN_WORKSHOP') {
+              final st = (v['latestJobStatus'] ?? '').toString().toUpperCase();
+              if (st.isEmpty || st == 'COMPLETED' || st == 'CANCELLED') return false;
+            } else if (quickFilter == 'MULTI_VISIT') {
+              final visits = (v['jobCardsCount'] as num?)?.toInt() ?? 0;
+              if (visits <= 1) return false;
+            }
             if (searchQuery.isNotEmpty) {
               final q = searchQuery.toLowerCase();
               final reg = (v['registrationNo'] ?? '').toString().toLowerCase();
@@ -1616,12 +1627,31 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               final driver = (v['assignedDriver'] ?? '').toString().toLowerCase();
               final cust = (v['customer']?['name'] ?? '').toString().toLowerCase();
               final phone = (v['customer']?['phone'] ?? '').toString().toLowerCase();
-              if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q) && !phone.contains(q)) {
+              final vin = (v['vinNumber'] ?? '').toString().toLowerCase();
+              if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q) && !phone.contains(q) && !vin.contains(q)) {
                 return false;
               }
             }
             return true;
           }).toList();
+
+          filtered.sort((a, b) {
+            if (sortBy == 'PLATE_AZ') {
+              return (a['registrationNo'] ?? '').toString().compareTo((b['registrationNo'] ?? '').toString());
+            } else if (sortBy == 'MOST_VISITS') {
+              final vA = (a['jobCardsCount'] as num?)?.toInt() ?? 0;
+              final vB = (b['jobCardsCount'] as num?)?.toInt() ?? 0;
+              return vB.compareTo(vA);
+            } else if (sortBy == 'HIGHEST_ODO') {
+              final oA = (a['lastOdometer'] as num?)?.toInt() ?? 0;
+              final oB = (b['lastOdometer'] as num?)?.toInt() ?? 0;
+              return oB.compareTo(oA);
+            } else {
+              final dA = DateTime.tryParse((a['lastServiceDate'] ?? a['updatedAt'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+              final dB = DateTime.tryParse((b['lastServiceDate'] ?? b['updatedAt'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+              return dB.compareTo(dA);
+            }
+          });
 
           return DraggableScrollableSheet(
             expand: false,
@@ -1637,12 +1667,24 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          '🔍 Vehicle Service History & Fleet Search',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+                          '🔍 Vehicle History & Fleet Registry (${filtered.length})',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
                           overflow: TextOverflow.ellipsis,
                         ),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Sort Vehicles',
+                        icon: const Icon(Icons.sort, size: 20, color: Color(0xFF1E3A8A)),
+                        initialValue: sortBy,
+                        onSelected: (val) => setSheetState(() => sortBy = val),
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'RECENT', child: Text('🕒 Recently Serviced')),
+                          PopupMenuItem(value: 'PLATE_AZ', child: Text('🔤 Plate (A → Z)')),
+                          PopupMenuItem(value: 'MOST_VISITS', child: Text('🏆 Most Visits')),
+                          PopupMenuItem(value: 'HIGHEST_ODO', child: Text('🛣️ Highest Mileage')),
+                        ],
                       ),
                       IconButton(icon: const Icon(Icons.refresh, size: 20), onPressed: () => setSheetState(() { isLoading = true; fetchVehicles(); })),
                     ],
@@ -1652,7 +1694,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   child: TextField(
                     controller: searchCtrl,
-                    autofocus: initialQuery.isEmpty,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF1E3A8A)),
                       suffixIcon: searchQuery.isNotEmpty
@@ -1664,7 +1705,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                               },
                             )
                           : null,
-                      hintText: 'Search Plate (e.g. KDA 123A), Make, Model, Customer, Driver...',
+                      hintText: 'Search Plate (e.g. KDJ 382W), Make, Model, Customer, VIN...',
                       hintStyle: const TextStyle(fontSize: 12.5),
                       isDense: true,
                       filled: true,
@@ -1675,13 +1716,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     onChanged: (val) => setSheetState(() => searchQuery = val),
                   ),
                 ),
-                // Category Pills
+                // Category & Quick Operational Filter Pills
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                   child: Row(
                     children: [
                       _buildMobileFilterChip('All (${vehicles.length})', 'ALL', categoryFilter, (k) => setSheetState(() => categoryFilter = k)),
+                      const SizedBox(width: 6),
+                      _buildMobileFilterChip('🔧 In Workshop', 'IN_WORKSHOP', quickFilter, (k) => setSheetState(() => quickFilter = quickFilter == 'IN_WORKSHOP' ? 'ALL' : 'IN_WORKSHOP')),
+                      const SizedBox(width: 6),
+                      _buildMobileFilterChip('🔁 Repeat Visits', 'MULTI_VISIT', quickFilter, (k) => setSheetState(() => quickFilter = quickFilter == 'MULTI_VISIT' ? 'ALL' : 'MULTI_VISIT')),
                       const SizedBox(width: 6),
                       _buildMobileFilterChip('Personal', 'PERSONAL', categoryFilter, (k) => setSheetState(() => categoryFilter = k)),
                       const SizedBox(width: 6),
@@ -1706,6 +1751,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 final v = filtered[i];
                                 final cust = v['customer'] ?? {};
                                 final visitsCount = v['jobCardsCount'] ?? (v['jobCards'] is List ? (v['jobCards'] as List).length : 0);
+                                final latestSt = (v['latestJobStatus'] ?? '').toString();
+                                final latestWork = (v['latestWorkRequested'] ?? '').toString();
+                                final pmsScore = (v['latestPmsScore'] as num?)?.toDouble();
                                 return Card(
                                   margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                                   shape: RoundedRectangleBorder(
@@ -1730,7 +1778,9 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                       children: [
                                         Expanded(
                                           child: Text(
-                                            '${v['make'] ?? ''} ${v['model'] ?? ''}',
+                                            '${v['make'] ?? ''} ${v['model'] ?? ''}'.trim().isEmpty
+                                                ? 'Vehicle'
+                                                : '${v['make'] ?? ''} ${v['model'] ?? ''}'.trim(),
                                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
                                             overflow: TextOverflow.ellipsis,
                                           ),
@@ -1747,6 +1797,51 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                         if ((v['assignedDriver'] ?? '').toString().isNotEmpty || (v['fleetUnitNumber'] ?? '').toString().isNotEmpty)
                                           Text('Driver: ${v['assignedDriver'] ?? '-'}  \u2022  Unit: ${v['fleetUnitNumber'] ?? '-'}',
                                               style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700)),
+                                        if (latestSt.isNotEmpty || pmsScore != null || latestWork.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Wrap(
+                                            spacing: 6,
+                                            runSpacing: 4,
+                                            crossAxisAlignment: WrapCrossAlignment.center,
+                                            children: [
+                                              if (latestSt.isNotEmpty)
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFFEFF6FF),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                  ),
+                                                  child: Text(
+                                                    _prettyStatus(latestSt),
+                                                    style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)),
+                                                  ),
+                                                ),
+                                              if (pmsScore != null)
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                                  decoration: BoxDecoration(
+                                                    color: pmsScore >= 80 ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                  ),
+                                                  child: Text(
+                                                    'PMS ${pmsScore.toStringAsFixed(0)}%',
+                                                    style: TextStyle(
+                                                      fontSize: 9.5,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: pmsScore >= 80 ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                                                    ),
+                                                  ),
+                                                ),
+                                              if (latestWork.isNotEmpty)
+                                                Text(
+                                                  latestWork,
+                                                  style: const TextStyle(fontSize: 10.5, color: Colors.black54),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                            ],
+                                          ),
+                                        ],
                                       ],
                                     ),
                                     trailing: Container(

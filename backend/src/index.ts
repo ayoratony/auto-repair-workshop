@@ -3029,12 +3029,26 @@ app.get('/api/vehicles', async (req: Request, res: Response) => {
         where: whereClause,
         include: {
           customer: true,
+          jobCards: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              id: true,
+              jobNumber: true,
+              status: true,
+              workRequested: true,
+              technician: true,
+              odometer: true,
+              createdAt: true,
+              walkAroundData: true,
+            },
+          },
           _count: {
             select: { jobCards: true },
           },
         },
         orderBy: [{ lastServiceDate: 'desc' }, { updatedAt: 'desc' }],
-        take: Math.min(200, Math.max(1, parseInt(String(limit), 10) || 100)),
+        take: Math.min(500, Math.max(1, parseInt(String(limit), 10) || 200)),
         skip: Math.max(0, parseInt(String(offset), 10) || 0),
       }),
       prisma.vehicle.count({ where: { customer: { tenantId: tenant.id }, category: 'PERSONAL' } }),
@@ -3052,10 +3066,29 @@ app.get('/api/vehicles', async (req: Request, res: Response) => {
         school: schoolCount,
         organization: orgCount,
       },
-      vehicles: vehicles.map((v) => ({
-        ...v,
-        jobCardsCount: v._count.jobCards,
-      })),
+      vehicles: vehicles.map((v) => {
+        const latestJob = v.jobCards[0] || null;
+        const wad = latestJob?.walkAroundData && typeof latestJob.walkAroundData === 'object'
+          ? (latestJob.walkAroundData as Record<string, any>)
+          : null;
+        const pms = wad?.pmsChecklist && typeof wad.pmsChecklist === 'object'
+          ? (wad.pmsChecklist as Record<string, any>)
+          : null;
+        const recs = Array.isArray(wad?.recommendations) ? wad.recommendations : [];
+        const pendingRecsCount = recs.filter((r: any) => String(r?.status || 'PENDING').toUpperCase() !== 'APPROVED').length;
+        return {
+          ...v,
+          jobCardsCount: v._count.jobCards,
+          lastOdometer: v.lastOdometer || latestJob?.odometer || 0,
+          lastServiceDate: v.lastServiceDate || latestJob?.createdAt || null,
+          latestJobStatus: latestJob?.status || null,
+          latestJobNumber: latestJob?.jobNumber || null,
+          latestWorkRequested: latestJob?.workRequested || null,
+          latestTechnician: latestJob?.technician || null,
+          latestPmsScore: pms?.healthPercentage != null ? Number(pms.healthPercentage) : (pms?.healthScore != null ? Number(pms.healthScore) : null),
+          pendingRecsCount,
+        };
+      }),
     });
   } catch (error) {
     console.error('List vehicles error:', error);

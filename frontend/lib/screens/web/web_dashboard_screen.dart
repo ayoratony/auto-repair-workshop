@@ -185,8 +185,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   List<dynamic> _vehicles = [];
   Map<String, dynamic> _vehicleCounts = {'all': 0, 'personal': 0, 'government': 0, 'school': 0, 'organization': 0};
   String _vehicleCategoryFilter = 'ALL';
-  String _vehicleViewMode = 'grouped'; // 'grouped' or 'table'
+  String _vehicleViewMode = 'table'; // 'table', 'cards', or 'grouped'
   String _vehicleSearchQuery = '';
+  String _vehicleSortBy = 'RECENT'; // 'RECENT', 'PLATE_AZ', 'MOST_VISITS', 'HIGHEST_ODO', 'CUSTOMER_AZ'
+  String _vehicleMakeFilter = 'ALL';
+  String _vehicleFuelFilter = 'ALL';
+  String _vehicleQuickFilter = 'ALL'; // 'ALL', 'IN_WORKSHOP', 'MULTI_VISIT', 'NEEDS_ATTENTION'
+  int _vehicleCurrentPage = 0;
+  int _vehiclePageSize = 15;
+  final TextEditingController _vehicleSearchController = TextEditingController();
   List<dynamic> _employees = [];
   List<dynamic> _appointments = [];
   List<dynamic> _expenses = [];
@@ -276,6 +283,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   void dispose() {
     _searchController.dispose();
     _topSearchController.dispose();
+    _vehicleSearchController.dispose();
     _syncSubscription?.cancel();
     SyncService.instance.removeListener(_onSyncUpdate);
     super.dispose();
@@ -7044,12 +7052,60 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   }
 
   // ==========================================
-  // VEHICLES & FLEET MANAGEMENT SECTION
+  // VEHICLES & FLEET MANAGEMENT SECTION (SCALABLE ENTERPRISE REGISTRY)
   // ==========================================
   Widget _buildVehiclesSection() {
+    // Extract unique makes & fuel types across all registered vehicles for instant facet filtering
+    final Set<String> availableMakes = {'ALL'};
+    final Set<String> availableFuels = {'ALL'};
+    int activeInWorkshopCount = 0;
+    int multiVisitCount = 0;
+    int needsAttentionCount = 0;
+
+    for (final raw in _vehicles) {
+      if (raw is! Map) continue;
+      final mk = (raw['make'] ?? '').toString().trim();
+      if (mk.isNotEmpty) availableMakes.add(mk.toUpperCase());
+      final fl = (raw['fuelType'] ?? 'Petrol').toString().trim();
+      if (fl.isNotEmpty) availableFuels.add(fl);
+      final st = (raw['latestJobStatus'] ?? '').toString().toUpperCase();
+      if (st.isNotEmpty && st != 'COMPLETED' && st != 'CANCELLED') {
+        activeInWorkshopCount++;
+      }
+      final visits = (raw['jobCardsCount'] as num?)?.toInt() ?? 0;
+      if (visits > 1) multiVisitCount++;
+      final pmsScore = (raw['latestPmsScore'] as num?)?.toDouble();
+      final pendingRecs = (raw['pendingRecsCount'] as num?)?.toInt() ?? 0;
+      if ((pmsScore != null && pmsScore < 80) || pendingRecs > 0 || st == 'AWAITING_APPROVAL') {
+        needsAttentionCount++;
+      }
+    }
+
     final filteredVehicles = _vehicles.where((v) {
       if (_vehicleCategoryFilter != 'ALL' && (v['category'] ?? 'PERSONAL') != _vehicleCategoryFilter) {
         return false;
+      }
+      if (_vehicleMakeFilter != 'ALL') {
+        final mk = (v['make'] ?? '').toString().trim().toUpperCase();
+        if (mk != _vehicleMakeFilter) return false;
+      }
+      if (_vehicleFuelFilter != 'ALL') {
+        final fl = (v['fuelType'] ?? 'Petrol').toString().trim().toLowerCase();
+        if (fl != _vehicleFuelFilter.toLowerCase()) return false;
+      }
+      if (_vehicleQuickFilter == 'IN_WORKSHOP') {
+        final st = (v['latestJobStatus'] ?? '').toString().toUpperCase();
+        if (st.isEmpty || st == 'COMPLETED' || st == 'CANCELLED') return false;
+      } else if (_vehicleQuickFilter == 'MULTI_VISIT') {
+        final visits = (v['jobCardsCount'] as num?)?.toInt() ?? 0;
+        if (visits <= 1) return false;
+      } else if (_vehicleQuickFilter == 'NEEDS_ATTENTION') {
+        final pmsScore = (v['latestPmsScore'] as num?)?.toDouble();
+        final pendingRecs = (v['pendingRecsCount'] as num?)?.toInt() ?? 0;
+        final st = (v['latestJobStatus'] ?? '').toString().toUpperCase();
+        if (!((pmsScore != null && pmsScore < 80) || pendingRecs > 0 || st == 'AWAITING_APPROVAL')) {
+          return false;
+        }
       }
       if (_vehicleSearchQuery.isNotEmpty) {
         final q = _vehicleSearchQuery.toLowerCase();
@@ -7058,13 +7114,56 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         final model = (v['model'] ?? '').toString().toLowerCase();
         final unit = (v['fleetUnitNumber'] ?? '').toString().toLowerCase();
         final driver = (v['assignedDriver'] ?? '').toString().toLowerCase();
+        final vin = (v['vinNumber'] ?? '').toString().toLowerCase();
         final cust = (v['customer']?['name'] ?? '').toString().toLowerCase();
-        if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q)) {
+        final phone = (v['customer']?['phone'] ?? '').toString().toLowerCase();
+        final work = (v['latestWorkRequested'] ?? '').toString().toLowerCase();
+        if (!reg.contains(q) &&
+            !make.contains(q) &&
+            !model.contains(q) &&
+            !unit.contains(q) &&
+            !driver.contains(q) &&
+            !vin.contains(q) &&
+            !cust.contains(q) &&
+            !phone.contains(q) &&
+            !work.contains(q)) {
           return false;
         }
       }
       return true;
     }).toList();
+
+    // Sort vehicles according to selected sort option
+    filteredVehicles.sort((a, b) {
+      if (_vehicleSortBy == 'PLATE_AZ') {
+        return (a['registrationNo'] ?? '').toString().compareTo((b['registrationNo'] ?? '').toString());
+      } else if (_vehicleSortBy == 'MOST_VISITS') {
+        final vA = (a['jobCardsCount'] as num?)?.toInt() ?? 0;
+        final vB = (b['jobCardsCount'] as num?)?.toInt() ?? 0;
+        return vB.compareTo(vA);
+      } else if (_vehicleSortBy == 'HIGHEST_ODO') {
+        final oA = (a['lastOdometer'] as num?)?.toInt() ?? 0;
+        final oB = (b['lastOdometer'] as num?)?.toInt() ?? 0;
+        return oB.compareTo(oA);
+      } else if (_vehicleSortBy == 'CUSTOMER_AZ') {
+        final cA = (a['customer']?['name'] ?? '').toString().toLowerCase();
+        final cB = (b['customer']?['name'] ?? '').toString().toLowerCase();
+        return cA.compareTo(cB);
+      } else {
+        // RECENT (Last Service Date or Updated At)
+        final dA = DateTime.tryParse((a['lastServiceDate'] ?? a['updatedAt'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final dB = DateTime.tryParse((b['lastServiceDate'] ?? b['updatedAt'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return dB.compareTo(dA);
+      }
+    });
+
+    // Pagination calculation
+    final totalFiltered = filteredVehicles.length;
+    final totalPages = (totalFiltered / _vehiclePageSize).ceil().clamp(1, 9999);
+    final safePage = _vehicleCurrentPage.clamp(0, totalPages - 1);
+    final startIdx = (safePage * _vehiclePageSize).clamp(0, totalFiltered);
+    final endIdx = (startIdx + _vehiclePageSize).clamp(0, totalFiltered);
+    final pagedVehicles = filteredVehicles.sublist(startIdx, endIdx);
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -7073,24 +7172,51 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 12,
             children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('🔍 Vehicle Service History, Digital Passports & Fleet Registry', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '🔍 Vehicle Service History, Digital Passports & Fleet Registry',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFBFDBFE)),
+                        ),
+                        child: Text(
+                          '${_vehicles.length} Registered Vehicles',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF1D4ED8)),
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 4),
-                  Text('Search any vehicle by Registration Plate, Make/Model, Owner, or Fleet Unit to inspect its complete repair timeline, PMS health, and parts history.',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                  Text(
+                    'Enterprise fleet command center — search, filter, sort, and inspect full 5-tab Digital Service Passports for thousands of vehicles.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
                 ],
               ),
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   OutlinedButton.icon(
                     onPressed: _refreshAllData,
                     icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Refresh Fleets'),
+                    label: const Text('Refresh Registry'),
                     style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF1E293B)),
                   ),
                   const SizedBox(width: 10),
@@ -7105,68 +7231,134 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             ],
           ),
           const SizedBox(height: 16),
+
           // High-Visibility Vehicle History Search Bar Banner
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 colors: [Color(0xFF0F172A), Color(0xFF1E3A8A)],
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
               ),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(color: const Color(0xFF1E3A8A).withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4)),
+              ],
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.manage_search_rounded, color: Colors.amber.shade400, size: 28),
-                const SizedBox(width: 12),
-                const Expanded(
-                  flex: 2,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Search Vehicle Service History & Digital Passport',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade400.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade400),
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Click "📜 Service History" on any vehicle below to open its 5-tab Digital Service Passport',
-                        style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                      child: Icon(Icons.manage_search_rounded, color: Colors.amber.shade400, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Instant Vehicle History & Digital Service Passport Lookup',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.5),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Search across Registration Plate, Make, Model, VIN, Customer Name, Phone, Driver, or Fleet Unit #',
+                            style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 3,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: TextField(
+                          controller: _vehicleSearchController,
+                          onChanged: (val) => setState(() {
+                            _vehicleSearchQuery = val;
+                            _vehicleCurrentPage = 0;
+                          }),
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.search, color: Color(0xFF1E3A8A)),
+                            hintText: 'Type Plate (e.g. KDJ 382W), Make (Toyota), Customer, Phone, or VIN...',
+                            hintStyle: const TextStyle(fontSize: 13),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            suffixIcon: _vehicleSearchQuery.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear, size: 18),
+                                    onPressed: () {
+                                      _vehicleSearchController.clear();
+                                      setState(() {
+                                        _vehicleSearchQuery = '';
+                                        _vehicleCurrentPage = 0;
+                                      });
+                                    },
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 3,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextField(
-                      onChanged: (val) => setState(() => _vehicleSearchQuery = val),
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.search, color: Color(0xFF1E3A8A)),
-                        hintText: 'Type Registration No (e.g. KDA 123A), Make, Model, Customer Name, Driver, or Unit #...',
-                        hintStyle: const TextStyle(fontSize: 13),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        suffixIcon: _vehicleSearchQuery.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear, size: 18),
-                                onPressed: () => setState(() => _vehicleSearchQuery = ''),
-                              )
-                            : null,
+                const SizedBox(height: 10),
+                // Quick Operational Status Filter Pills inside the banner
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text('Quick Filters:', style: TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600)),
+                    _buildBannerQuickChip('All Vehicles (${_vehicles.length})', 'ALL', Icons.directions_car),
+                    _buildBannerQuickChip('🔧 Currently in Workshop ($activeInWorkshopCount)', 'IN_WORKSHOP', Icons.build_circle_outlined),
+                    _buildBannerQuickChip('🔁 Repeat / Multi-Visit ($multiVisitCount)', 'MULTI_VISIT', Icons.repeat),
+                    _buildBannerQuickChip('⚠️ Pending Approval / Defects ($needsAttentionCount)', 'NEEDS_ATTENTION', Icons.warning_amber_rounded),
+                    if (_vehicleCategoryFilter != 'ALL' ||
+                        _vehicleMakeFilter != 'ALL' ||
+                        _vehicleFuelFilter != 'ALL' ||
+                        _vehicleQuickFilter != 'ALL' ||
+                        _vehicleSearchQuery.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () {
+                          _vehicleSearchController.clear();
+                          setState(() {
+                            _vehicleCategoryFilter = 'ALL';
+                            _vehicleMakeFilter = 'ALL';
+                            _vehicleFuelFilter = 'ALL';
+                            _vehicleQuickFilter = 'ALL';
+                            _vehicleSearchQuery = '';
+                            _vehicleCurrentPage = 0;
+                          });
+                        },
+                        icon: const Icon(Icons.filter_alt_off, size: 14, color: Colors.amber),
+                        label: const Text('Reset All Filters', style: TextStyle(color: Colors.amber, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
                       ),
-                    ),
-                  ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
 
           // 5 KPI Category Summary Cards
           Wrap(
@@ -7180,83 +7372,154 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               _buildFleetKpiCard('Corporate & NGOs', '${_vehicleCounts['organization'] ?? 0}', Icons.business, const Color(0xFF7C3AED), 'Company & NGO logistics', 'ORGANIZATION'),
             ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
 
-          // Category Filter Pills & Search Bar
-          Row(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFleetFilterChip('All Fleets (${_vehicleCounts['all'] ?? _vehicles.length})', 'ALL'),
-                      const SizedBox(width: 8),
-                      _buildFleetFilterChip('🚗 Personal (${_vehicleCounts['personal'] ?? 0})', 'PERSONAL'),
-                      const SizedBox(width: 8),
-                      _buildFleetFilterChip('🏛️ Government (${_vehicleCounts['government'] ?? 0})', 'GOVERNMENT'),
-                      const SizedBox(width: 8),
-                      _buildFleetFilterChip('🏫 Schools (${_vehicleCounts['school'] ?? 0})', 'SCHOOL'),
-                      const SizedBox(width: 8),
-                      _buildFleetFilterChip('🏢 Organizations (${_vehicleCounts['organization'] ?? 0})', 'ORGANIZATION'),
-                    ],
-                  ),
+          // Advanced Multi-Facet Filter, Sort & View Mode Toolbar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 10,
+              children: [
+                // Left side: Make dropdown, Fuel dropdown, Sort dropdown
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    // Make filter
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: availableMakes.contains(_vehicleMakeFilter) ? _vehicleMakeFilter : 'ALL',
+                          isDense: true,
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF1E293B), fontWeight: FontWeight.w600),
+                          items: availableMakes.map((mk) {
+                            return DropdownMenuItem(
+                              value: mk,
+                              child: Text(mk == 'ALL' ? '🚗 All Makes (${availableMakes.length - 1})' : 'Make: $mk'),
+                            );
+                          }).toList(),
+                          onChanged: (val) => setState(() {
+                            _vehicleMakeFilter = val ?? 'ALL';
+                            _vehicleCurrentPage = 0;
+                          }),
+                        ),
+                      ),
+                    ),
+                    // Fuel filter
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: availableFuels.contains(_vehicleFuelFilter) ? _vehicleFuelFilter : 'ALL',
+                          isDense: true,
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF1E293B), fontWeight: FontWeight.w600),
+                          items: availableFuels.map((fl) {
+                            return DropdownMenuItem(
+                              value: fl,
+                              child: Text(fl == 'ALL' ? '⛽ All Fuel Types' : 'Fuel: $fl'),
+                            );
+                          }).toList(),
+                          onChanged: (val) => setState(() {
+                            _vehicleFuelFilter = val ?? 'ALL';
+                            _vehicleCurrentPage = 0;
+                          }),
+                        ),
+                      ),
+                    ),
+                    // Sort By
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _vehicleSortBy,
+                          isDense: true,
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF1E293B), fontWeight: FontWeight.w600),
+                          items: const [
+                            DropdownMenuItem(value: 'RECENT', child: Text('🕒 Sort: Recently Serviced')),
+                            DropdownMenuItem(value: 'PLATE_AZ', child: Text('🔤 Sort: Plate (A → Z)')),
+                            DropdownMenuItem(value: 'MOST_VISITS', child: Text('🏆 Sort: Most Visits')),
+                            DropdownMenuItem(value: 'HIGHEST_ODO', child: Text('🛣️ Sort: Highest Mileage')),
+                            DropdownMenuItem(value: 'CUSTOMER_AZ', child: Text('👤 Sort: Owner Name (A → Z)')),
+                          ],
+                          onChanged: (val) => setState(() {
+                            _vehicleSortBy = val ?? 'RECENT';
+                            _vehicleCurrentPage = 0;
+                          }),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 16),
-              SizedBox(
-                width: 280,
-                child: TextField(
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    hintText: 'Search plate, model, driver...',
-                    hintStyle: const TextStyle(fontSize: 13),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  onChanged: (val) => setState(() => _vehicleSearchQuery = val),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
 
-          // View Mode Switcher & Summary Info
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _vehicleViewMode == 'grouped'
-                    ? 'Owner & Fleet Groups View (Household & Corporate Accounts)'
-                    : 'All Registered Vehicles Table (${filteredVehicles.length})',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF334155)),
-              ),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(
-                    value: 'grouped',
-                    icon: Icon(Icons.group_work, size: 15),
-                    label: Text('Group by Owner / Fleets', style: TextStyle(fontSize: 12)),
-                  ),
-                  ButtonSegment(
-                    value: 'table',
-                    icon: Icon(Icons.table_rows, size: 15),
-                    label: Text('All Vehicles Table', style: TextStyle(fontSize: 12)),
-                  ),
-                ],
-                selected: {_vehicleViewMode},
-                onSelectionChanged: (val) => setState(() => _vehicleViewMode = val.first),
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                // Right side: 3-Mode View Switcher (Table | Grid Cards | Owner Groups)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      totalFiltered == 0
+                          ? '0 vehicles'
+                          : 'Showing ${startIdx + 1}–$endIdx of $totalFiltered',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF475569)),
+                    ),
+                    const SizedBox(width: 12),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'table',
+                          icon: Icon(Icons.table_rows, size: 15),
+                          label: Text('Compact Table', style: TextStyle(fontSize: 12)),
+                        ),
+                        ButtonSegment(
+                          value: 'cards',
+                          icon: Icon(Icons.grid_view_rounded, size: 15),
+                          label: Text('Passport Cards', style: TextStyle(fontSize: 12)),
+                        ),
+                        ButtonSegment(
+                          value: 'grouped',
+                          icon: Icon(Icons.group_work, size: 15),
+                          label: Text('Owner / Fleet Groups', style: TextStyle(fontSize: 12)),
+                        ),
+                      ],
+                      selected: {_vehicleViewMode},
+                      onSelectionChanged: (val) => setState(() => _vehicleViewMode = val.first),
+                      style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 14),
 
-          // Data Table or Grouped View
+          // Data Table, Passport Cards Grid, or Grouped View
           if (filteredVehicles.isEmpty)
             Container(
               padding: const EdgeInsets.all(40),
@@ -7265,49 +7528,56 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 children: [
                   Icon(Icons.directions_car_outlined, size: 48, color: Colors.grey.shade400),
                   const SizedBox(height: 12),
-                  Text('No vehicles found for the selected category.', style: TextStyle(fontSize: 15, color: Colors.grey.shade600)),
+                  Text('No vehicles match your current search or filter criteria.', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
                   const SizedBox(height: 6),
-                  const Text('Vehicles are automatically registered when creating a receiving memo or job card.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const Text('Try clearing the search query or clicking "Reset All Filters" above.', style: TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
             )
           else if (_vehicleViewMode == 'grouped')
             _buildGroupedVehiclesView(filteredVehicles)
+          else if (_vehicleViewMode == 'cards')
+            _buildVehicleCardsGridView(pagedVehicles)
           else
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
                 headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
-                dataRowMaxHeight: 64,
+                dataRowMaxHeight: 68,
                 columns: const [
                   DataColumn(label: Text('Registration Plate', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Fleet Category', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Vehicle Specs', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Driver / Unit #', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Client / Organization', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Mileage & Usage', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Last Service & Visits', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Actions & Digital Passport', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Vehicle & Fuel', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Owner & Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Driver / Fleet Unit', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Odometer & Usage', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Latest Workshop Status & PMS', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Last Visit & Count', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Quick Actions & History', style: TextStyle(fontWeight: FontWeight.bold))),
                 ],
-                rows: filteredVehicles.map((v) {
+                rows: pagedVehicles.map((v) {
                   final cat = (v['category'] ?? 'PERSONAL').toString();
                   final cust = v['customer'] ?? {};
                   final visits = v['jobCardsCount'] ?? 0;
-                  final regNo = v['registrationNo'] ?? '-';
+                  final regNo = (v['registrationNo'] ?? '-').toString();
                   final lastOdo = v['lastOdometer'] ?? 0;
                   final daily = v['avgDailyMileage'];
+                  final latestSt = (v['latestJobStatus'] ?? '').toString();
+                  final latestJobNo = (v['latestJobNumber'] ?? '').toString();
+                  final latestWork = (v['latestWorkRequested'] ?? '').toString();
+                  final pmsScore = (v['latestPmsScore'] as num?)?.toDouble();
+                  final pendingRecs = (v['pendingRecsCount'] as num?)?.toInt() ?? 0;
 
                   return DataRow(
                     cells: [
                       DataCell(
-                        _buildPlatePill(regNo),
-                      ),
-                      DataCell(
-                        _buildCategoryBadge(cat),
+                        InkWell(
+                          onTap: () => _showVehicleHistoryDialog(v['id'].toString(), initialVehicle: Map<String, dynamic>.from(v)),
+                          child: _buildPlatePill(regNo),
+                        ),
                       ),
                       DataCell(
                         ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 240),
+                          constraints: const BoxConstraints(maxWidth: 220),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -7317,8 +7587,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 children: [
                                   Flexible(
                                     child: Text(
-                                      '${v['make'] ?? ''} ${v['model'] ?? ''}',
-                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                      '${v['make'] ?? ''} ${v['model'] ?? ''}'.trim().isEmpty
+                                          ? 'Vehicle'
+                                          : '${v['make'] ?? ''} ${v['model'] ?? ''}'.trim(),
+                                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF0F172A)),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
@@ -7326,7 +7598,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   _buildFuelBadge((v['fuelType'] ?? 'Petrol').toString()),
                                 ],
                               ),
-                              Text('${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                              Text(
+                                '${v['year'] ?? '-'} \u2022 ${(v['bodyType'] ?? 'sedan').toString().toUpperCase()}${(v['vinNumber'] ?? '').toString().isNotEmpty ? " \u2022 VIN: ${v['vinNumber']}" : ""}',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ],
                           ),
                         ),
@@ -7336,12 +7612,32 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(cust['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+                                const SizedBox(width: 6),
+                                _buildCategoryBadge(cat),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(cust['phone'] ?? '-', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      DataCell(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
                             if ((v['fleetUnitNumber'] ?? '').toString().isNotEmpty)
                               Text('Unit: ${v['fleetUnitNumber']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E3A8A))),
-                            Text(v['assignedDriver'] != null && v['assignedDriver'].toString().isNotEmpty
-                                ? v['assignedDriver']
-                                : 'No driver assigned',
-                                style: const TextStyle(fontSize: 12)),
+                            Text(
+                              v['assignedDriver'] != null && v['assignedDriver'].toString().isNotEmpty
+                                  ? v['assignedDriver'].toString()
+                                  : 'Owner Driven',
+                              style: const TextStyle(fontSize: 12),
+                            ),
                             if ((v['driverPhone'] ?? '').toString().isNotEmpty)
                               Text('${v['driverPhone']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
                           ],
@@ -7352,27 +7648,86 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(cust['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                            Text(cust['phone'] ?? '-', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                          ],
-                        ),
-                      ),
-                      DataCell(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
                             if (lastOdo != null && lastOdo > 0)
-                              Text('$lastOdo km', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))
+                              Text('$lastOdo km', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5, color: Color(0xFF0F172A)))
                             else
                               Text('Not Recorded', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11, color: Colors.grey.shade500)),
                             if (lastOdo != null && lastOdo > 0 && visits > 1 && daily != null && daily > 0)
                               Text('~$daily km/day', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600))
-                            else if (lastOdo != null && lastOdo > 0)
-                              Text('1st Visit Baseline', style: TextStyle(fontSize: 10, color: Colors.blueGrey.shade400))
+                            else if (v['nextServiceMileage'] != null)
+                              Text('Next due: ${v['nextServiceMileage']} km', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF2563EB)))
                             else
-                              Text('Awaiting intake', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
+                              Text('Baseline logged', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
                           ],
+                        ),
+                      ),
+                      DataCell(
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 210),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (latestSt.isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: _statusColor(latestSt).withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        _statusLabel(latestSt),
+                                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: _statusColor(latestSt)),
+                                      ),
+                                    )
+                                  else
+                                    Text('No active job', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                                  if (pmsScore != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: pmsScore >= 80 ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'PMS ${pmsScore.toStringAsFixed(0)}%',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          color: pmsScore >= 80 ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                                        ),
+                                      ),
+                                    ),
+                                  if (pendingRecs > 0)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEE2E2),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        '$pendingRecs Finding${pendingRecs > 1 ? "s" : ""}',
+                                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFB91C1C)),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (latestWork.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  '${latestJobNo.isNotEmpty ? "$latestJobNo: " : ""}$latestWork',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                       DataCell(
@@ -7380,11 +7735,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(_formatDateShort(v['lastServiceDate']), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                            Text(_formatDateShort(v['lastServiceDate'] ?? v['updatedAt']), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 2),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
-                              child: Text('$visits visits', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade800)),
+                              child: Text('$visits visit${visits != 1 ? "s" : ""}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade800)),
                             ),
                           ],
                         ),
@@ -7396,15 +7752,33 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             ElevatedButton.icon(
                               onPressed: () => _showVehicleHistoryDialog(v['id'].toString(), initialVehicle: Map<String, dynamic>.from(v)),
                               icon: const Icon(Icons.history_edu, size: 15),
-                              label: const Text('Digital Passport', style: TextStyle(fontSize: 12)),
+                              label: const Text('📜 Service History', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF1E3A8A),
+                                backgroundColor: const Color(0xFF0F172A),
                                 foregroundColor: Colors.white,
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                               ),
                             ),
                             const SizedBox(width: 6),
+                            Tooltip(
+                              message: 'Create New Job Card / Service Intake for $regNo',
+                              child: OutlinedButton.icon(
+                                onPressed: () => _showJobCardDialog(existingJob: {
+                                  'customer': cust,
+                                  'customerId': cust['id'],
+                                  'vehicle': v,
+                                }),
+                                icon: const Icon(Icons.add_circle_outline, size: 14),
+                                label: const Text('New Job', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF2563EB),
+                                  side: const BorderSide(color: Color(0xFF93C5FD)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
                             if ((v['driverPhone'] ?? cust['phone'] ?? '').toString().isNotEmpty)
                               IconButton(
                                 tooltip: 'WhatsApp Fleet Service Update',
@@ -7423,8 +7797,279 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 }).toList(),
               ),
             ),
+
+          // Pagination Footer Bar (for Table & Cards views when scaling to hundreds/thousands of vehicles)
+          if (_vehicleViewMode != 'grouped' && totalFiltered > 0) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Rows per page:', style: TextStyle(fontSize: 12, color: Color(0xFF475569))),
+                      const SizedBox(width: 8),
+                      DropdownButton<int>(
+                        value: _vehiclePageSize,
+                        isDense: true,
+                        underline: const SizedBox.shrink(),
+                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                        items: const [
+                          DropdownMenuItem(value: 15, child: Text('15 vehicles')),
+                          DropdownMenuItem(value: 30, child: Text('30 vehicles')),
+                          DropdownMenuItem(value: 50, child: Text('50 vehicles')),
+                          DropdownMenuItem(value: 100, child: Text('100 vehicles')),
+                        ],
+                        onChanged: (val) => setState(() {
+                          _vehiclePageSize = val ?? 15;
+                          _vehicleCurrentPage = 0;
+                        }),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Showing ${startIdx + 1}–$endIdx of $totalFiltered vehicles (Page ${safePage + 1} of $totalPages)',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'First Page',
+                        icon: const Icon(Icons.first_page, size: 18),
+                        onPressed: safePage > 0 ? () => setState(() => _vehicleCurrentPage = 0) : null,
+                      ),
+                      IconButton(
+                        tooltip: 'Previous Page',
+                        icon: const Icon(Icons.chevron_left, size: 18),
+                        onPressed: safePage > 0 ? () => setState(() => _vehicleCurrentPage = safePage - 1) : null,
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E3A8A),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${safePage + 1} / $totalPages',
+                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Next Page',
+                        icon: const Icon(Icons.chevron_right, size: 18),
+                        onPressed: safePage < totalPages - 1 ? () => setState(() => _vehicleCurrentPage = safePage + 1) : null,
+                      ),
+                      IconButton(
+                        tooltip: 'Last Page',
+                        icon: const Icon(Icons.last_page, size: 18),
+                        onPressed: safePage < totalPages - 1 ? () => setState(() => _vehicleCurrentPage = totalPages - 1) : null,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildBannerQuickChip(String label, String key, IconData icon) {
+    final isSelected = _vehicleQuickFilter == key;
+    return InkWell(
+      onTap: () => setState(() {
+        _vehicleQuickFilter = key;
+        _vehicleCurrentPage = 0;
+      }),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.amber.shade400 : Colors.white.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isSelected ? Colors.amber.shade400 : Colors.white24),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.bold,
+            color: isSelected ? const Color(0xFF0F172A) : Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVehicleCardsGridView(List<dynamic> vehicles) {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 16,
+      children: vehicles.map((raw) {
+        final v = Map<String, dynamic>.from(raw as Map);
+        final cust = v['customer'] is Map ? Map<String, dynamic>.from(v['customer']) : <String, dynamic>{};
+        final regNo = (v['registrationNo'] ?? '-').toString();
+        final make = (v['make'] ?? '').toString();
+        final model = (v['model'] ?? '').toString();
+        final cat = (v['category'] ?? 'PERSONAL').toString();
+        final fuel = (v['fuelType'] ?? 'Petrol').toString();
+        final odo = v['lastOdometer'] ?? 0;
+        final visits = v['jobCardsCount'] ?? 0;
+        final latestSt = (v['latestJobStatus'] ?? '').toString();
+        final latestWork = (v['latestWorkRequested'] ?? '').toString();
+        final pmsScore = (v['latestPmsScore'] as num?)?.toDouble();
+
+        return Container(
+          width: 340,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 2)),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildPlatePill(regNo),
+                  _buildCategoryBadge(cat),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$make $model'.trim().isEmpty ? 'Registered Vehicle' : '$make $model'.trim(),
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  _buildFuelBadge(fuel),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.person_outline, size: 14, color: Color(0xFF64748B)),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '${cust['name'] ?? 'Unknown'} (${cust['phone'] ?? '-'})',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Odo: ${odo > 0 ? "$odo km" : "Not logged"}', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                        Text('$visits Visit${visits != 1 ? "s" : ""} \u2022 ${_formatDateShort(v['lastServiceDate'] ?? v['updatedAt'])}',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      ],
+                    ),
+                    if (latestSt.isNotEmpty || pmsScore != null) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (latestSt.isNotEmpty)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _statusColor(latestSt).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(_statusLabel(latestSt), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _statusColor(latestSt))),
+                            ),
+                          if (pmsScore != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: pmsScore >= 80 ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text('PMS ${pmsScore.toStringAsFixed(0)}%',
+                                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: pmsScore >= 80 ? const Color(0xFF15803D) : const Color(0xFFB45309))),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (latestWork.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text('Last: $latestWork', style: const TextStyle(fontSize: 11, color: Color(0xFF475569)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showVehicleHistoryDialog(v['id'].toString(), initialVehicle: v),
+                      icon: const Icon(Icons.history_edu, size: 15),
+                      label: const Text('📜 Service History', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F172A),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _showJobCardDialog(existingJob: {
+                      'customer': cust,
+                      'customerId': cust['id'],
+                      'vehicle': v,
+                    }),
+                    icon: const Icon(Icons.add, size: 14),
+                    label: const Text('New Job', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF2563EB),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 
