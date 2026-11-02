@@ -2301,6 +2301,9 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
           orderBy: { createdAt: 'desc' },
           take: 3,
           include: {
+            stockMovements: {
+              include: { part: true },
+            },
             estimates: {
               include: { invoice: true, lineItems: true },
             },
@@ -2331,7 +2334,63 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
       });
     }
 
-    const latestJob = exactMatch.jobCards[0] || null;
+    const now = new Date();
+    const recentJobsSummary = exactMatch.jobCards.map((jc) => {
+      const wad = (jc.walkAroundData && typeof jc.walkAroundData === 'object') ? (jc.walkAroundData as any) : {};
+      const pms = wad.pmsChecklist || null;
+      const replacedParts: Array<{ name: string; quantity: number; price?: number }> = [];
+
+      for (const est of jc.estimates || []) {
+        for (const item of est.lineItems || []) {
+          if ((item.itemType || 'PART').toUpperCase() !== 'LABOUR' && item.description) {
+            replacedParts.push({
+              name: item.description,
+              quantity: item.quantity || 1,
+              price: item.total || 0,
+            });
+          }
+        }
+      }
+
+      for (const sm of (jc as any).stockMovements || []) {
+        if (sm.type === 'ISSUED' && sm.part) {
+          replacedParts.push({
+            name: `${sm.part.description} (${sm.part.partNumber})`,
+            quantity: Math.abs(sm.quantity) || 1,
+            price: (sm.unitPrice || sm.part.unitPrice || 0) * Math.abs(sm.quantity || 1),
+          });
+        }
+      }
+
+      const jcDate = new Date(jc.createdAt);
+      const diffMs = Math.max(0, now.getTime() - jcDate.getTime());
+      const daysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      return {
+        id: jc.id,
+        jobNumber: jc.jobNumber || 'N/A',
+        createdAt: jc.createdAt,
+        daysAgo,
+        status: jc.status,
+        priority: jc.priority,
+        odometer: jc.odometer,
+        workRequested: jc.workRequested || 'General Service',
+        technician: jc.technician || 'Unassigned',
+        bayNumber: jc.bayNumber || '',
+        fuelLevel: jc.fuelLevel || '',
+        pmsHealthScore: pms?.healthPercentage ?? pms?.healthScore ?? null,
+        pmsTemplateTitle: pms?.templateTitle || pms?.templateName || null,
+        pmsStatus: pms?.status || null,
+        ngCount: pms?.ngCount ?? (Array.isArray(pms?.defects) ? pms.defects.length : 0),
+        cautionCount: pms?.cautionCount ?? 0,
+        defects: Array.isArray(pms?.defects) ? pms.defects : [],
+        partsFitted: replacedParts,
+        totalSpend: (jc.estimates || []).reduce((acc: number, e: any) => acc + (e.invoice?.amountPaid || e.total || 0), 0),
+      };
+    });
+
+    const latestJobSummary = recentJobsSummary[0] || null;
+    const unresolvedDefects = latestJobSummary?.defects || [];
     const totalJobsCount = await prisma.jobCard.count({
       where: { vehicleId: exactMatch.id },
     });
@@ -2341,7 +2400,10 @@ app.get('/api/vehicles/lookup', async (req: Request, res: Response) => {
       exact: true,
       vehicle: exactMatch,
       customer: exactMatch.customer,
-      latestJob,
+      latestJob: exactMatch.jobCards[0] || null,
+      latestJobSummary,
+      recentJobsSummary,
+      unresolvedDefects,
       totalJobsCount,
       matches: vehicles.map((v) => ({
         id: v.id,
@@ -2476,6 +2538,9 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
         customer: true,
         jobCards: {
           include: {
+            stockMovements: {
+              include: { part: true },
+            },
             estimates: {
               include: {
                 lineItems: true,
@@ -2500,6 +2565,7 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
       price: number;
       date: Date;
       jobNumber: string;
+      source: string;
     }> = [];
 
     const diagnosticHistory: Array<{
@@ -2510,7 +2576,24 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
       notes?: string;
     }> = [];
 
-    const odometerTimeline: Array<{
+    const pmsHistory: Array<{
+      date: Date;
+      jobNumber: string;
+      jobCardId: string;
+      templateTitle: string;
+      healthScore: number;
+      status: string;
+      selectedInterval: string;
+      ngCount: number;
+      cautionCount: number;
+      defects: any[];
+      battery: any;
+      tyres: any;
+      technicianComments: string;
+      technicianName: string;
+    }> = [];
+
+    const rawOdometerTimeline: Array<{
       date: Date;
       odometer: number;
       jobNumber: string;
@@ -2532,7 +2615,7 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
 
     for (const jc of vehicle.jobCards) {
       if (jc.odometer) {
-        odometerTimeline.push({
+        rawOdometerTimeline.push({
           date: jc.createdAt,
           odometer: jc.odometer,
           jobNumber: jc.jobNumber || 'N/A',
@@ -2550,6 +2633,27 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
             notes: wad.mechanicNotes || wad.generalNotes || '',
           });
         }
+
+        const pms = wad.pmsChecklist;
+        if (pms && typeof pms === 'object') {
+          pmsHistory.push({
+            date: jc.createdAt,
+            jobNumber: jc.jobNumber || jc.id.slice(0, 8).toUpperCase(),
+            jobCardId: jc.id,
+            templateTitle: pms.templateTitle || pms.templateName || 'PMS Diagnostic Check Sheet',
+            healthScore: (pms.healthPercentage != null) ? Number(pms.healthPercentage) : (pms.healthScore != null ? Number(pms.healthScore) : 100),
+            status: pms.status || 'SUBMITTED',
+            selectedInterval: pms.selectedInterval || pms.serviceInterval || 'Standard',
+            ngCount: pms.ngCount != null ? Number(pms.ngCount) : (Array.isArray(pms.defects) ? pms.defects.length : 0),
+            cautionCount: pms.cautionCount != null ? Number(pms.cautionCount) : 0,
+            defects: Array.isArray(pms.defects) ? pms.defects : [],
+            battery: pms.battery || null,
+            tyres: pms.tyres || null,
+            technicianComments: pms.technicianComments || '',
+            technicianName: pms.technicianName || jc.technician || '',
+          });
+        }
+
         if (Array.isArray(wad.securityPhotos)) {
           for (const sp of wad.securityPhotos) {
             securityPhotos.push({
@@ -2558,6 +2662,19 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
               jobCardId: jc.id,
             });
           }
+        }
+      }
+
+      for (const sm of (jc as any).stockMovements || []) {
+        if (sm.type === 'ISSUED' && sm.part) {
+          partsReplaced.push({
+            partName: `${sm.part.description} (${sm.part.partNumber})`,
+            quantity: Math.abs(sm.quantity) || 1,
+            price: (sm.unitPrice || sm.part.unitPrice || 0) * Math.abs(sm.quantity || 1),
+            date: sm.createdAt || jc.createdAt,
+            jobNumber: jc.jobNumber || 'N/A',
+            source: 'STORE_ISSUANCE',
+          });
         }
       }
 
@@ -2576,11 +2693,28 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
               price: item.total,
               date: jc.createdAt,
               jobNumber: jc.jobNumber || 'N/A',
+              source: 'INVOICED',
             });
           }
         }
       }
     }
+
+    // Enrich odometer timeline with distance and days deltas between visits
+    const odometerTimeline = rawOdometerTimeline.map((item, idx) => {
+      const olderEntry = rawOdometerTimeline[idx + 1];
+      const kmDelta = olderEntry ? (item.odometer - olderEntry.odometer) : null;
+      const daysDelta = olderEntry
+        ? Math.max(1, Math.round((new Date(item.date).getTime() - new Date(olderEntry.date).getTime()) / (1000 * 3600 * 24)))
+        : null;
+      const kmPerDay = (kmDelta != null && daysDelta != null && daysDelta > 0) ? Math.round(kmDelta / daysDelta) : null;
+      return {
+        ...item,
+        kmDelta,
+        daysDelta,
+        kmPerDay,
+      };
+    });
 
     res.json({
       vehicle,
@@ -2589,15 +2723,21 @@ app.get('/api/vehicles/:id/history', async (req: Request, res: Response) => {
       summary: {
         totalVisits: vehicle.jobCards.length,
         totalSpend,
-        currentOdometer: vehicle.lastOdometer || (odometerTimeline[0]?.odometer ?? 0),
+        currentOdometer: vehicle.lastOdometer || (rawOdometerTimeline[0]?.odometer ?? 0),
         lastServiceDate: vehicle.lastServiceDate || vehicle.jobCards[0]?.createdAt || null,
         nextServiceMileage: vehicle.nextServiceMileage,
         nextServiceDate: vehicle.nextServiceDate,
         totalSecurityPhotos: securityPhotos.length,
+        latestPmsHealthScore: pmsHistory[0]?.healthScore ?? null,
+        latestPmsTitle: pmsHistory[0]?.templateTitle ?? null,
+        totalPartsInstalled: partsReplaced.reduce((acc, p) => acc + (p.quantity || 1), 0),
+        lifetimeDefectsFound: diagnosticHistory.reduce((acc, d) => acc + (d.defects?.length || 0), 0) + pmsHistory.reduce((acc, p) => acc + (p.ngCount || 0), 0),
+        unresolvedDefects: pmsHistory[0]?.defects || [],
       },
       odometerTimeline,
       partsReplaced,
       diagnosticHistory,
+      pmsHistory,
       securityPhotos,
     });
   } catch (error) {

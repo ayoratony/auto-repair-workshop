@@ -2207,6 +2207,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     }
   }
 
+  String _formatDateShort(dynamic isoString) {
+    if (isoString == null) return '-';
+    try {
+      final dt = DateTime.parse(isoString.toString()).toLocal();
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+    } catch (_) {
+      return isoString.toString();
+    }
+  }
+
   void _openCreateEstimateModal({String? initialJobCardId}) {
     showModalBottomSheet(
       context: context,
@@ -5762,55 +5773,197 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             onChanged: _onMobilePlateChanged,
           ),
 
-          // Found in Workshop Registry Card
+          // Found in Workshop Registry Card - Advanced Intelligence Dossier
           if (_foundVehicleData != null) ...[
             const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0FDF4),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF86EFAC)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
+            Builder(builder: (mCtx) {
+              final v = _foundVehicleData!['vehicle'] is Map ? (_foundVehicleData!['vehicle'] as Map) : {};
+              final c = _foundVehicleData!['customer'] is Map ? (_foundVehicleData!['customer'] as Map) : {};
+              final latest = _foundVehicleData!['latestJobSummary'] is Map
+                  ? (_foundVehicleData!['latestJobSummary'] as Map)
+                  : (_foundVehicleData!['latestJob'] is Map ? (_foundVehicleData!['latestJob'] as Map) : {});
+              final unresolved = (_foundVehicleData!['unresolvedDefects'] as List<dynamic>?) ?? [];
+              final partsFitted = (latest['partsFitted'] as List<dynamic>?) ?? [];
+              final prevScore = (latest['pmsHealthScore'] as num?)?.toDouble();
+              final lastOdo = (latest['odometer'] ?? v['lastOdometer'] ?? 0) as num;
+              final lastDate = latest['createdAt'] ?? v['lastServiceDate'];
+              final daysAgo = latest['daysAgo'];
+              final totalVisits = (_foundVehicleData!['totalJobsCount'] as num?)?.toInt() ?? 1;
+
+              final currOdo = int.tryParse(_odometerController.text.trim());
+              int? delta;
+              if (currOdo != null && lastOdo > 0) {
+                delta = currOdo - lastOdo.toInt();
+              }
+
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF94A3B8), width: 1.2),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F172A),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: Colors.amber.shade400, width: 1.2),
+                          ),
+                          child: Text(
+                            (v['registrationNo'] ?? 'VEHICLE').toString().toUpperCase(),
+                            style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 12, letterSpacing: 0.8),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${v['make'] ?? ''} ${v['model'] ?? ''}'.trim(),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        _buildMobileCategoryBadge(v['category'] ?? 'PERSONAL'),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Owner: ${c['name'] ?? '-'} (${c['phone'] ?? '-'}) \u2022 $totalVisits Workshop Visit${totalVisits > 1 ? "s" : ""}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    ),
+                    const Divider(height: 14),
+
+                    // Last Service intelligence
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.event_available, size: 13, color: Color(0xFF475569)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Last: ${_formatDateShort(lastDate)}${daysAgo != null ? " ($daysAgo d ago)" : ""}',
+                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                              ),
+                              const Spacer(),
+                              Text(
+                                'Prev Odo: ${lastOdo > 0 ? "$lastOdo km" : "-"}',
+                                style: const TextStyle(fontSize: 11.5, color: Color(0xFF334155)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Work: ${latest['workRequested'] ?? 'General Service'}${latest['technician'] != null ? " \u2022 Tech: ${latest['technician']}" : ""}',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF475569)),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (partsFitted.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Fitted: ${partsFitted.map((p) => p is Map ? (p['name'] ?? p.toString()) : p.toString()).take(4).join(', ')}',
+                              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF1E3A8A)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    // Live Odometer Delta
+                    if (currOdo != null && lastOdo > 0) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: delta! > 0
+                              ? const Color(0xFFF0FDF4)
+                              : (delta! < 0 ? const Color(0xFFFEF2F2) : const Color(0xFFF8FAFC)),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: delta! > 0
+                                ? const Color(0xFF86EFAC)
+                                : (delta! < 0 ? const Color(0xFFFCA5A5) : const Color(0xFFCBD5E1)),
+                          ),
+                        ),
                         child: Text(
-                          '${_foundVehicleData!['vehicle']?['registrationNo']} (${_foundVehicleData!['vehicle']?['make']} ${_foundVehicleData!['vehicle']?['model']})',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF14532D)),
+                          delta! > 0
+                              ? '📈 +$delta km driven since last visit${daysAgo != null && daysAgo > 0 ? " (avg ${(delta! / daysAgo).toStringAsFixed(0)} km/d)" : ""}'
+                              : (delta! < 0
+                                  ? '⚠️ Current odo ($currOdo km) is LESS than last visit ($lastOdo km)!'
+                                  : 'Odometer matches last visit ($currOdo km)'),
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: delta! > 0
+                                ? const Color(0xFF15803D)
+                                : (delta! < 0 ? const Color(0xFFB91C1C) : Colors.grey.shade700),
+                          ),
                         ),
                       ),
-                      _buildMobileCategoryBadge(_foundVehicleData!['vehicle']?['category'] ?? 'PERSONAL'),
                     ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Owner: ${_foundVehicleData!['customer']?['name']} \u2022 Visits: ${_foundVehicleData!['totalJobsCount']} \u2022 Last Odo: ${_foundVehicleData!['vehicle']?['lastOdometer'] ?? '-'} km',
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF15803D)),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton.icon(
-                        onPressed: () {
-                          if (_foundVehicleData!['vehicle']?['id'] != null) {
-                            _showMobileVehiclePassport(_foundVehicleData!['vehicle']['id'].toString());
-                          }
-                        },
-                        icon: const Icon(Icons.history_edu, size: 15, color: Color(0xFF15803D)),
-                        label: const Text('View Service Passport', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
+
+                    // Unresolved Defect Alert
+                    if (unresolved.isNotEmpty || (latest['ngCount'] as num? ?? 0) > 0 || prevScore != null) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.assignment_late_outlined, size: 14, color: Color(0xFFD97706)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                unresolved.isNotEmpty
+                                    ? 'Previous Findings: ${unresolved.map((d) => d is Map ? (d['issue'] ?? d['system'] ?? d.toString()) : d.toString()).take(2).join(", ")}'
+                                    : 'Prior PMS Health was ${prevScore?.toStringAsFixed(0)}%. Confirm if customer wants items checked.',
+                                style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF92400E)),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  ),
-                ],
-              ),
-            ),
+
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () {
+                            if (v['id'] != null) {
+                              _showMobileVehiclePassport(v['id'].toString());
+                            }
+                          },
+                          icon: const Icon(Icons.history_edu, size: 14, color: Color(0xFF1E3A8A)),
+                          label: const Text('View Full Service Passport', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A))),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
           ],
           const SizedBox(height: 12),
 
@@ -6013,6 +6166,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ? 'Previous: ${_foundVehicleData!['vehicle']['lastOdometer']} km'
                   : null,
             ),
+            onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
           Row(
@@ -6358,7 +6512,8 @@ class _MobileVehiclePassportSheetState extends State<_MobileVehiclePassportSheet
   bool _isLoading = true;
   Map<String, dynamic>? _historyData;
   String? _error;
-  int _activeTab = 0; // 0: Timeline, 1: Parts, 2: Diagnostics
+  int _activeTab = 0; // 0: Visits, 1: Parts, 2: Diagnostics & PMS, 3: Mileage, 4: Photos
+  String _partsFilterQuery = '';
 
   @override
   void initState() {
@@ -6424,6 +6579,7 @@ Owner: ${c['name'] ?? '-'}
 ${v['assignedDriver'] != null && v['assignedDriver'].toString().isNotEmpty ? 'Assigned Driver: ${v['assignedDriver']}\n' : ''}Odometer: ${s['currentOdometer'] ?? v['lastOdometer'] ?? '-'} km
 Total Visits: ${s['totalVisits'] ?? 0}
 Lifetime Spend: ${_formatKes(s['totalSpend'] ?? 0)}
+Latest PMS Health Score: ${s['latestPmsHealthScore'] != null ? "${s['latestPmsHealthScore']}%" : "100%"}
 Last Service: ${_formatDateShort(s['lastServiceDate'] ?? v['lastServiceDate'])}
 Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']} km' : 'TBA'}''';
 
@@ -6440,6 +6596,12 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
     final jobs = (_historyData?['jobCards'] as List<dynamic>?) ?? [];
     final parts = (_historyData?['partsReplaced'] as List<dynamic>?) ?? [];
     final diagnostics = (_historyData?['diagnosticHistory'] as List<dynamic>?) ?? [];
+    final pmsList = (_historyData?['pmsHistory'] as List<dynamic>?) ?? [];
+    final mileageTimeline = (_historyData?['odometerTimeline'] as List<dynamic>?) ?? [];
+    final securityPhotos = (_historyData?['securityPhotos'] as List<dynamic>?) ?? [];
+
+    final double? latestPmsScore = (s['latestPmsHealthScore'] as num?)?.toDouble() ??
+        (pmsList.isNotEmpty ? (pmsList[0]['healthScore'] as num?)?.toDouble() : null);
 
     return DraggableScrollableSheet(
       expand: false,
@@ -6460,19 +6622,19 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
+                        color: const Color(0xFF0F172A),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFF0F172A), width: 1.5),
+                        border: Border.all(color: Colors.amber.shade400, width: 1.2),
                       ),
                       child: Text(
                         (v['registrationNo'] ?? 'PASSPORT').toString().toUpperCase(),
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: Color(0xFF0F172A)),
+                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.white, letterSpacing: 0.8),
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text('${v['make'] ?? ''} ${v['model'] ?? ''}'.trim(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   ],
                 ),
                 IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
@@ -6483,10 +6645,10 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Text('Owner: ${c['name'] ?? '-'}', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                Text('Owner: ${c['name'] ?? '-'}', style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700)),
                 if ((v['assignedDriver'] ?? '').toString().isNotEmpty) ...[
                   const Text(' \u2022 '),
-                  Text('Driver: ${v['assignedDriver']}', style: TextStyle(fontSize: 12, color: Colors.blueGrey.shade700, fontWeight: FontWeight.bold)),
+                  Text('Driver: ${v['assignedDriver']}', style: TextStyle(fontSize: 11.5, color: Colors.blueGrey.shade700, fontWeight: FontWeight.bold)),
                 ],
               ],
             ),
@@ -6503,9 +6665,9 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                         controller: scroll,
                         padding: const EdgeInsets.all(14),
                         children: [
-                          // KPI Strip
+                          // KPI Strip (5 Badges)
                           Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: const Color(0xFFF8FAFC),
                               borderRadius: BorderRadius.circular(10),
@@ -6517,88 +6679,343 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
                                 _statBadge('Visits', '${s['totalVisits'] ?? jobs.length}', const Color(0xFF2563EB)),
                                 _statBadge('Total Spend', _formatKes(s['totalSpend'] ?? 0), const Color(0xFF16A34A)),
                                 _statBadge('Odometer', '${s['currentOdometer'] ?? v['lastOdometer'] ?? 0} km', const Color(0xFFD97706)),
-                                _statBadge('Parts Fitted', '${parts.length}', const Color(0xFF7C3AED)),
+                                _statBadge('Parts Fitted', '${s['totalPartsInstalled'] ?? parts.length}', const Color(0xFF7C3AED)),
+                                _statBadge(
+                                  'PMS Health',
+                                  latestPmsScore != null ? '${latestPmsScore.toStringAsFixed(0)}%' : '100%',
+                                  (latestPmsScore == null || latestPmsScore >= 80)
+                                      ? const Color(0xFF16A34A)
+                                      : (latestPmsScore >= 60 ? const Color(0xFFD97706) : const Color(0xFFDC2626)),
+                                ),
                               ],
                             ),
                           ),
                           const SizedBox(height: 12),
 
-                          // Tab Buttons
-                          Row(
-                            children: [
-                              _tabPill('📋 Job Cards (${jobs.length})', 0),
-                              const SizedBox(width: 6),
-                              _tabPill('⚙️ Parts (${parts.length})', 1),
-                              const SizedBox(width: 6),
-                              _tabPill('🔍 OBD (${diagnostics.length})', 2),
-                            ],
+                          // Tab Buttons (5 Tabs)
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _tabPill('📋 Visits (${jobs.length})', 0),
+                                const SizedBox(width: 6),
+                                _tabPill('⚙️ Parts (${parts.length})', 1),
+                                const SizedBox(width: 6),
+                                _tabPill('🔍 Diagnostics & PMS (${pmsList.length + diagnostics.length})', 2),
+                                const SizedBox(width: 6),
+                                _tabPill('📈 Mileage (${mileageTimeline.length})', 3),
+                                const SizedBox(width: 6),
+                                _tabPill('📷 Photos (${securityPhotos.length})', 4),
+                              ],
+                            ),
                           ),
-                          const Divider(height: 20),
+                          const Divider(height: 18),
 
                           if (_activeTab == 0) ...[
                             if (jobs.isEmpty)
                               const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No job cards recorded yet.')))
                             else
-                              ...jobs.map((j) => Card(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    child: ListTile(
-                                      title: Text('${j['jobNumber'] ?? 'JC-'} \u2022 ${j['workRequested'] ?? 'Service'}',
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                      subtitle: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text('Tech: ${j['technician'] ?? '-'} \u2022 Odometer: ${j['odometer'] ?? '-'} km'),
-                                          Text('Date: ${_formatDateShort(j['createdAt'])} \u2022 Status: ${j['status'] ?? '-'}',
-                                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                                        ],
-                                      ),
-                                    ),
-                                  )),
-                          ] else if (_activeTab == 1) ...[
-                            if (parts.isEmpty)
-                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No parts replaced on this vehicle yet.')))
-                            else
-                              ...parts.map((p) => Card(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    child: ListTile(
-                                      leading: const Icon(Icons.settings, color: Color(0xFF2563EB)),
-                                      title: Text(p['partName'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                      subtitle: Text('Installed on ${_formatDateShort(p['date'])} \u2022 Job: ${p['jobNumber'] ?? '-'}'),
-                                      trailing: Text(_formatKes(p['price'] ?? 0), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
-                                    ),
-                                  )),
-                          ] else ...[
-                            if (diagnostics.isEmpty)
-                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No diagnostic or OBD fault codes recorded.')))
-                            else
-                              ...diagnostics.map((d) {
-                                final defects = (d['defects'] as List<dynamic>?) ?? [];
+                              ...jobs.asMap().entries.map((entry) {
+                                final i = entry.key;
+                                final j = entry.value;
+                                final ests = (j['estimates'] as List<dynamic>?) ?? [];
+                                final wad = j['walkAroundData'] is Map ? (j['walkAroundData'] as Map) : {};
+                                final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
+                                final pmsScore = (pmsRaw?['healthPercentage'] as num?)?.toDouble() ?? (pmsRaw?['healthScore'] as num?)?.toDouble();
+                                final ngCount = (pmsRaw?['ngCount'] as num?)?.toInt() ?? (pmsRaw?['defects'] is List ? (pmsRaw!['defects'] as List).length : 0);
+
+                                final partsOnThisJob = <String>[];
+                                for (final e in ests) {
+                                  for (final item in (e['lineItems'] as List<dynamic>? ?? [])) {
+                                    if ((item['itemType'] ?? 'PART').toString().toUpperCase() != 'LABOUR' && item['description'] != null) {
+                                      partsOnThisJob.add('${item['description']}${item['quantity'] != null && item['quantity'] > 1 ? " (x${item['quantity']})" : ""}');
+                                    }
+                                  }
+                                }
+                                for (final sm in (j['stockMovements'] as List<dynamic>? ?? [])) {
+                                  if (sm['type'] == 'ISSUED' && sm['part'] != null) {
+                                    partsOnThisJob.add('${sm['part']['description']}${sm['quantity'] != null && sm['quantity'] > 1 ? " (x${sm['quantity']})" : ""}');
+                                  }
+                                }
+
+                                final olderJob = (i + 1 < jobs.length) ? jobs[i + 1] : null;
+                                final currOdo = (j['odometer'] as num?)?.toInt();
+                                final olderOdo = (olderJob?['odometer'] as num?)?.toInt();
+                                int? kmDriven;
+                                if (currOdo != null && olderOdo != null && currOdo >= olderOdo) {
+                                  kmDriven = currOdo - olderOdo;
+                                }
+
                                 return Card(
-                                  margin: const EdgeInsets.only(bottom: 8),
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade200)),
                                   child: Padding(
                                     padding: const EdgeInsets.all(12),
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('Job: ${d['jobNumber'] ?? '-'} \u2022 ${_formatDateShort(d['date'])}',
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E3A8A))),
-                                        if ((d['obdCodes'] ?? '').toString().isNotEmpty) ...[
-                                          const SizedBox(height: 4),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Text('${j['jobNumber'] ?? 'JC-'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E3A8A))),
+                                                const SizedBox(width: 6),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                                  decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
+                                                  child: Text(j['status'] ?? 'IN_PROGRESS', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+                                                ),
+                                              ],
+                                            ),
+                                            Text(_formatDateShort(j['createdAt']), style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text('Work: ${j['workRequested'] ?? 'General Service'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          'Tech: ${j['technician'] ?? '-'} \u2022 Odo: ${currOdo != null && currOdo > 0 ? "$currOdo km" : "-"}${kmDriven != null ? " (+$kmDriven km)" : ""}',
+                                          style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                                        ),
+                                        if (pmsRaw != null) ...[
+                                          const SizedBox(height: 6),
                                           Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                            decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(4)),
-                                            child: Text('OBD Codes: ${d['obdCodes']}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: ngCount > 0 ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(color: ngCount > 0 ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC)),
+                                            ),
+                                            child: Text(
+                                              'PMS Health: ${pmsScore != null ? "${pmsScore.toStringAsFixed(0)}%" : "Recorded"}${ngCount > 0 ? " \u2022 ⚠️ $ngCount Defect${ngCount > 1 ? "s" : ""}" : " \u2022 All Systems Healthy"}',
+                                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: ngCount > 0 ? const Color(0xFF991B1B) : const Color(0xFF166534)),
+                                            ),
                                           ),
                                         ],
-                                        if (defects.isNotEmpty) ...[
+                                        if (partsOnThisJob.isNotEmpty) ...[
                                           const SizedBox(height: 4),
-                                          Text('Issues: ${defects.join(', ')}', style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+                                          Text(
+                                            'Parts: ${partsOnThisJob.take(3).join(', ')}${partsOnThisJob.length > 3 ? " +${partsOnThisJob.length - 3} more" : ""}',
+                                            style: const TextStyle(fontSize: 10.5, color: Color(0xFF1E3A8A)),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ],
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.end,
+                                          children: [
+                                            OutlinedButton.icon(
+                                              style: OutlinedButton.styleFrom(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                minimumSize: Size.zero,
+                                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                              ),
+                                              icon: const Icon(Icons.print_outlined, size: 13),
+                                              label: const Text('Job Card', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                              onPressed: () {
+                                                InvoicePdfService.showJobCardPreviewModal(
+                                                  context: context,
+                                                  workshopSettings: const {},
+                                                  job: j,
+                                                );
+                                              },
+                                            ),
+                                            if (pmsRaw != null) ...[
+                                              const SizedBox(width: 6),
+                                              OutlinedButton.icon(
+                                                style: OutlinedButton.styleFrom(
+                                                  foregroundColor: const Color(0xFF15803D),
+                                                  side: const BorderSide(color: Color(0xFF86EFAC)),
+                                                  backgroundColor: const Color(0xFFF0FDF4),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                ),
+                                                icon: const Icon(Icons.assignment_turned_in, size: 13, color: Color(0xFF15803D)),
+                                                label: const Text('PMS Report', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
+                                                onPressed: () {
+                                                  try {
+                                                    final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                                                    PmsPdfService.showPdfPreviewModal(
+                                                      context: context,
+                                                      workshopSettings: const {},
+                                                      job: j,
+                                                      checksheet: checksheetObj,
+                                                    );
+                                                  } catch (e) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cannot render PMS: $e'), backgroundColor: Colors.red));
+                                                  }
+                                                },
+                                              ),
+                                            ],
+                                          ],
+                                        ),
                                       ],
                                     ),
                                   ),
                                 );
                               }),
+                          ] else if (_activeTab == 1) ...[
+                            if (parts.isEmpty)
+                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No parts replaced on this vehicle yet.')))
+                            else ...[
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: SizedBox(
+                                  height: 36,
+                                  child: TextField(
+                                    decoration: InputDecoration(
+                                      hintText: 'Filter parts...',
+                                      prefixIcon: const Icon(Icons.search, size: 16),
+                                      contentPadding: EdgeInsets.zero,
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                                    ),
+                                    onChanged: (v) => setState(() => _partsFilterQuery = v.trim().toLowerCase()),
+                                  ),
+                                ),
+                              ),
+                              ...parts.where((p) => _partsFilterQuery.isEmpty || (p['partName'] ?? '').toString().toLowerCase().contains(_partsFilterQuery)).map((p) => Card(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    child: ListTile(
+                                      leading: const Icon(Icons.settings, color: Color(0xFF2563EB), size: 20),
+                                      title: Text(p['partName'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                      subtitle: Text('${p['quantity'] ?? 1}x \u2022 Installed ${_formatDateShort(p['date'])} \u2022 Job: ${p['jobNumber'] ?? '-'}', style: const TextStyle(fontSize: 11)),
+                                      trailing: Text(_formatKes(p['price'] ?? 0), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF16A34A), fontSize: 12)),
+                                    ),
+                                  )),
+                            ],
+                          ] else if (_activeTab == 2) ...[
+                            if (pmsList.isEmpty && diagnostics.isEmpty)
+                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No diagnostic or PMS records recorded.')))
+                            else ...[
+                              if (pmsList.isNotEmpty) ...[
+                                const Text('PMS Check Sheets', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                                const SizedBox(height: 6),
+                                ...pmsList.map((p) {
+                                  final pMap = Map<String, dynamic>.from(p is Map ? p : {});
+                                  final health = (pMap['healthScore'] as num?)?.toDouble() ?? 100.0;
+                                  final defects = (pMap['defects'] as List<dynamic>?) ?? [];
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(10),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text(pMap['templateTitle'] ?? 'PMS Inspection', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: (health >= 85 ? Colors.green : (health >= 65 ? Colors.orange : Colors.red)).withValues(alpha: 0.15),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: Text('${health.toStringAsFixed(0)}% Health', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: health >= 85 ? Colors.green.shade800 : Colors.red.shade800)),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text('Job #${pMap['jobNumber']} \u2022 ${_formatDateShort(pMap['date'])} \u2022 Tech: ${pMap['technicianName'] ?? "-"}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                          if (defects.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text('Defects: ${defects.map((d) => d is Map ? (d['issue'] ?? d['system'] ?? d.toString()) : d.toString()).join(", ")}', style: const TextStyle(fontSize: 10.5, color: Color(0xFFB91C1C))),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                              if (diagnostics.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                const Text('OBD-II Fault Scans', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                                const SizedBox(height: 6),
+                                ...diagnostics.map((d) {
+                                  final defects = (d['defects'] as List<dynamic>?) ?? [];
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(10),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Job: ${d['jobNumber'] ?? '-'} \u2022 ${_formatDateShort(d['date'])}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF1E3A8A))),
+                                          if ((d['obdCodes'] ?? '').toString().isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(4)),
+                                              child: Text('OBD Codes: ${d['obdCodes']}', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                                            ),
+                                          ],
+                                          if (defects.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text('Issues: ${defects.join(', ')}', style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ],
+                          ] else if (_activeTab == 3) ...[
+                            if (mileageTimeline.isEmpty)
+                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No mileage records found.')))
+                            else
+                              ...mileageTimeline.map((entry) {
+                                final odo = entry['odometer'];
+                                final kmDelta = entry['kmDelta'] as num?;
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  child: ListTile(
+                                    leading: const Icon(Icons.speed, color: Color(0xFF2563EB)),
+                                    title: Text('$odo km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                    subtitle: Text('${_formatDateShort(entry['date'])} \u2022 Job: ${entry['jobNumber']}'),
+                                    trailing: kmDelta != null
+                                        ? Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: kmDelta >= 0 ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              kmDelta >= 0 ? '+$kmDelta km' : '$kmDelta km',
+                                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: kmDelta >= 0 ? const Color(0xFF15803D) : const Color(0xFFDC2626)),
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                );
+                              }),
+                          ] else ...[
+                            if (securityPhotos.isEmpty)
+                              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No vehicle photos archived yet.')))
+                            else
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: securityPhotos.map((p) {
+                                  final pMap = Map<String, dynamic>.from(p is Map ? p : {});
+                                  return VehiclePhotoService.buildPhotoCard(
+                                    photo: pMap,
+                                    baseUrl: widget.baseUrl,
+                                    width: 100,
+                                    height: 90,
+                                    onTap: () {
+                                      VehiclePhotoService.showFullPhotoDialog(
+                                        context: context,
+                                        baseUrl: widget.baseUrl,
+                                        photo: pMap,
+                                      );
+                                    },
+                                  );
+                                }).toList(),
+                              ),
                           ],
 
                           const SizedBox(height: 16),
@@ -6619,30 +7036,28 @@ Next Service Due: ${s['nextServiceMileage'] != null ? '${s['nextServiceMileage']
   Widget _statBadge(String label, String val, Color color) {
     return Column(
       children: [
-        Text(val, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+        Text(val, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: color)),
         const SizedBox(height: 2),
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+        Text(label, style: TextStyle(fontSize: 9.5, color: Colors.grey.shade600)),
       ],
     );
   }
 
   Widget _tabPill(String title, int idx) {
     final isSel = _activeTab == idx;
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _activeTab = idx),
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: isSel ? const Color(0xFF1E3A8A) : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            title,
-            style: TextStyle(fontSize: 11, fontWeight: isSel ? FontWeight.bold : FontWeight.w500, color: isSel ? Colors.white : Colors.black87),
-          ),
+    return InkWell(
+      onTap: () => setState(() => _activeTab = idx),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSel ? const Color(0xFF1E3A8A) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(fontSize: 11, fontWeight: isSel ? FontWeight.bold : FontWeight.w500, color: isSel ? Colors.white : Colors.black87),
         ),
       ),
     );
