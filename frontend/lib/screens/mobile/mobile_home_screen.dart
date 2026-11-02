@@ -1529,6 +1529,35 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     final searchCtrl = TextEditingController(text: searchQuery);
     List<dynamic> vehicles = [];
     bool isLoading = true;
+    bool hasFetched = false;
+
+    List<Map<String, dynamic>> deriveFromJobs() {
+      final Map<String, Map<String, dynamic>> byVeh = {};
+      for (final j in _jobs) {
+        if (j is! Map) continue;
+        final v = j['vehicle'] is Map ? Map<String, dynamic>.from(j['vehicle']) : <String, dynamic>{};
+        final c = j['customer'] is Map ? Map<String, dynamic>.from(j['customer']) : <String, dynamic>{};
+        final key = (v['id'] ?? v['registrationNo'] ?? j['id']).toString();
+        if (key.isEmpty) continue;
+        if (!byVeh.containsKey(key)) {
+          byVeh[key] = {
+            ...v,
+            'id': v['id'] ?? j['vehicleId'] ?? key,
+            'registrationNo': v['registrationNo'] ?? '-',
+            'make': v['make'] ?? '',
+            'model': v['model'] ?? '',
+            'category': v['category'] ?? c['category'] ?? 'PERSONAL',
+            'customer': c,
+            'lastOdometer': j['odometer'] ?? v['lastOdometer'] ?? 0,
+            'lastServiceDate': j['createdAt'] ?? v['lastServiceDate'],
+            'jobCardsCount': 1,
+          };
+        } else {
+          byVeh[key]!['jobCardsCount'] = (byVeh[key]!['jobCardsCount'] as int? ?? 1) + 1;
+        }
+      }
+      return byVeh.values.toList();
+    }
 
     showModalBottomSheet(
       context: context,
@@ -1544,19 +1573,33 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               );
               if (res.statusCode == 200 && mounted) {
                 final data = json.decode(res.body);
-                setSheetState(() {
-                  vehicles = data is Map ? (data['vehicles'] ?? []) : (data is List ? data : []);
-                  isLoading = false;
-                });
+                final fetched = data is Map ? (data['vehicles'] ?? []) : (data is List ? data : []);
+                if (ctx.mounted) {
+                  setSheetState(() {
+                    vehicles = (fetched is List && fetched.isNotEmpty) ? fetched : deriveFromJobs();
+                    isLoading = false;
+                  });
+                }
               } else {
-                setSheetState(() => isLoading = false);
+                if (ctx.mounted) {
+                  setSheetState(() {
+                    vehicles = deriveFromJobs();
+                    isLoading = false;
+                  });
+                }
               }
             } catch (_) {
-              if (mounted) setSheetState(() => isLoading = false);
+              if (ctx.mounted) {
+                setSheetState(() {
+                  vehicles = deriveFromJobs();
+                  isLoading = false;
+                });
+              }
             }
           }
 
-          if (isLoading && vehicles.isEmpty) {
+          if (!hasFetched) {
+            hasFetched = true;
             fetchVehicles();
           }
 

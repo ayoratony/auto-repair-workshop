@@ -310,7 +310,21 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         if (responses[7].statusCode == 200) _workshopSettings = json.decode(responses[7].body);
         if (responses[8].statusCode == 200) _appointments = json.decode(responses[8].body);
         if (responses[9].statusCode == 200) _expenses = json.decode(responses[9].body);
-        if (responses[10].statusCode == 200) _vehicles = json.decode(responses[10].body);
+        if (responses.length > 10 && responses[10].statusCode == 200) {
+          final vData = json.decode(responses[10].body);
+          if (vData is Map) {
+            _vehicles = vData['vehicles'] ?? [];
+            if (vData['counts'] is Map) {
+              _vehicleCounts = Map<String, dynamic>.from(vData['counts']);
+            }
+          } else if (vData is List) {
+            _vehicles = vData;
+          }
+        }
+        // Fallback: if _vehicles is still empty, derive vehicle records from _jobs
+        if (_vehicles.isEmpty && _jobs.isNotEmpty) {
+          _vehicles = _deriveVehiclesFromJobs(_jobs);
+        }
       });
     } catch (_) {}
   }
@@ -356,6 +370,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             _vehicles = vData;
           }
         }
+        if (_vehicles.isEmpty && _jobs.isNotEmpty) {
+          _vehicles = _deriveVehiclesFromJobs(_jobs);
+        }
         _isLoading = false;
       });
 
@@ -386,6 +403,34 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  List<Map<String, dynamic>> _deriveVehiclesFromJobs(List<dynamic> jobsList) {
+    final Map<String, Map<String, dynamic>> byVehicle = {};
+    for (final j in jobsList) {
+      if (j is! Map) continue;
+      final v = j['vehicle'] is Map ? Map<String, dynamic>.from(j['vehicle']) : <String, dynamic>{};
+      final c = j['customer'] is Map ? Map<String, dynamic>.from(j['customer']) : <String, dynamic>{};
+      final key = (v['id'] ?? v['registrationNo'] ?? j['id']).toString();
+      if (key.isEmpty) continue;
+      if (!byVehicle.containsKey(key)) {
+        byVehicle[key] = {
+          ...v,
+          'id': v['id'] ?? j['vehicleId'] ?? key,
+          'registrationNo': v['registrationNo'] ?? '-',
+          'make': v['make'] ?? '',
+          'model': v['model'] ?? '',
+          'category': v['category'] ?? c['category'] ?? 'PERSONAL',
+          'customer': c,
+          'lastOdometer': j['odometer'] ?? v['lastOdometer'] ?? 0,
+          'lastServiceDate': j['createdAt'] ?? v['lastServiceDate'],
+          'jobCardsCount': 1,
+        };
+      } else {
+        byVehicle[key]!['jobCardsCount'] = (byVehicle[key]!['jobCardsCount'] as int? ?? 1) + 1;
+      }
+    }
+    return byVehicle.values.toList();
   }
 
   void _launchWhatsAppMessage(String rawPhone, String message) {
