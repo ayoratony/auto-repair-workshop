@@ -2936,6 +2936,88 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
               const SizedBox(height: 10),
 
+              // CLOSED-LOOP 5-STAGE LIFECYCLE BANNER
+              Builder(builder: (_) {
+                final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                final repairAuth = wad['repairAuthorization'] is Map ? (wad['repairAuthorization'] as Map) : null;
+                final wf = wad['workflowState'] is Map ? (wad['workflowState'] as Map) : null;
+                final recs = (wad['recommendations'] is List)
+                    ? (wad['recommendations'] as List).whereType<Map>().toList()
+                    : <Map>[];
+                final approvedRecs = recs.where((r) => (r['status'] ?? '').toString().toUpperCase() == 'APPROVED').toList();
+                final completedRecs = approvedRecs.where((r) => r['repairCompleted'] == true).toList();
+                final isAuthorized = repairAuth?['isAuthorized'] == true || approvedRecs.isNotEmpty;
+
+                Color bannerBg = const Color(0xFFF0F9FF);
+                Color bannerBorder = const Color(0xFFBAE6FD);
+                Color bannerText = const Color(0xFF0369A1);
+                IconData bannerIcon = Icons.manage_search_rounded;
+                String bannerLabel = 'Step 1: Dispatched to Mechanic • Awaiting Assessment & PMS';
+
+                if (status == 'AWAITING_APPROVAL' || wf?['stage'] == 'AWAITING_ADVISOR_APPROVAL') {
+                  bannerBg = const Color(0xFFFFFBEB);
+                  bannerBorder = const Color(0xFFFCD34D);
+                  bannerText = const Color(0xFFB45309);
+                  bannerIcon = Icons.assignment_returned_outlined;
+                  bannerLabel = 'Step 2: Mechanic Assessment Ready (${recs.length} finding${recs.length == 1 ? '' : 's'}) • Advisor to Print & Confirm with Customer';
+                } else if (status == 'IN_PROGRESS' && isAuthorized) {
+                  bannerBg = const Color(0xFFECFDF5);
+                  bannerBorder = const Color(0xFF34D399);
+                  bannerText = const Color(0xFF047857);
+                  bannerIcon = Icons.verified_rounded;
+                  final progressStr = approvedRecs.isNotEmpty
+                      ? ' (${completedRecs.length}/${approvedRecs.length} Approved Repairs Done)'
+                      : '';
+                  bannerLabel = '✅ CUSTOMER APPROVED FOR REPAIR • START WORK$progressStr';
+                } else if (status == 'IN_PROGRESS') {
+                  bannerBg = const Color(0xFFEFF6FF);
+                  bannerBorder = const Color(0xFF93C5FD);
+                  bannerText = const Color(0xFF1D4ED8);
+                  bannerIcon = Icons.handyman_outlined;
+                  bannerLabel = 'Step 3: Active Service & Repair in Progress';
+                } else if (status == 'QUALITY_CHECK' || wf?['stage'] == 'REPAIRS_COMPLETED_QC') {
+                  bannerBg = const Color(0xFFF5F3FF);
+                  bannerBorder = const Color(0xFFC4B5FD);
+                  bannerText = const Color(0xFF6D28D9);
+                  bannerIcon = Icons.fact_check_outlined;
+                  bannerLabel = '🏁 Step 4: Mechanic Completed Repairs • Ready for Advisor QC';
+                } else if (status == 'READY' || status == 'COMPLETED') {
+                  bannerBg = const Color(0xFFF0FDF4);
+                  bannerBorder = const Color(0xFF86EFAC);
+                  bannerText = const Color(0xFF15803D);
+                  bannerIcon = Icons.check_circle_outline;
+                  bannerLabel = status == 'READY'
+                      ? 'Step 5: QC Passed • Ready for Customer Handover'
+                      : '✓ Cycle Complete • Vehicle Handed Over to Customer';
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: bannerBg,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: bannerBorder, width: isAuthorized && status == 'IN_PROGRESS' ? 1.5 : 1.0),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(bannerIcon, size: 15, color: bannerText),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          bannerLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: bannerText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+
               // ROW 3: 7-STAGE WORKFLOW PROGRESS STEPPER
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4642,6 +4724,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     List<Map<String, dynamic>> sheetPhotos = (walk['securityPhotos'] is List)
         ? (walk['securityPhotos'] as List).whereType<Map>().map((p) => Map<String, dynamic>.from(p)).toList()
         : <Map<String, dynamic>>[];
+    final advisorInstructionsCtrl = TextEditingController(
+      text: (walk['repairAuthorization'] is Map
+              ? walk['repairAuthorization']['advisorInstructions']?.toString()
+              : null) ??
+          '',
+    );
     bool saving = false;
 
     showModalBottomSheet(
@@ -4673,6 +4761,662 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     style: const TextStyle(color: Colors.black54)),
                 const SizedBox(height: 4),
                 Text('Work requested: ${job['workRequested'] ?? '-'}'),
+                const SizedBox(height: 12),
+
+                // =============================================================
+                // 5-STAGE CLOSED-LOOP WORKSHOP LIFECYCLE COMMAND CENTER
+                // =============================================================
+                Builder(builder: (_) {
+                  final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                  final repairAuth = wad['repairAuthorization'] is Map ? (wad['repairAuthorization'] as Map) : null;
+                  final wf = wad['workflowState'] is Map ? (wad['workflowState'] as Map) : null;
+                  final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
+                  final recs = (wad['recommendations'] is List)
+                      ? (wad['recommendations'] as List).whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
+                      : <Map<String, dynamic>>[];
+                  final approvedRecs = recs.where((r) => (r['status'] ?? '').toString().toUpperCase() == 'APPROVED').toList();
+                  final declinedRecs = recs.where((r) => (r['status'] ?? '').toString().toUpperCase() == 'DECLINED').toList();
+                  final completedRecs = approvedRecs.where((r) => r['repairCompleted'] == true).toList();
+                  final isAuthorized = repairAuth?['isAuthorized'] == true || approvedRecs.isNotEmpty;
+                  final isMechView = techMode || AuthService.instance.isMechanic;
+
+                  int activeLoopStep = 2; // 1=Intake, 2=Tech Assessment, 3=Advisor/Customer Approval, 4=Authorized Repair, 5=QC/Handover
+                  if (status == 'BOOKED' || status == 'INSPECTION') {
+                    activeLoopStep = 2;
+                  } else if (status == 'AWAITING_APPROVAL') {
+                    activeLoopStep = 3;
+                  } else if (status == 'IN_PROGRESS' || status == 'WAITING') {
+                    activeLoopStep = 4;
+                  } else if (status == 'QUALITY_CHECK' || status == 'READY' || status == 'COMPLETED') {
+                    activeLoopStep = 5;
+                  }
+
+                  final loopSteps = [
+                    {'num': 1, 'label': 'Intake'},
+                    {'num': 2, 'label': 'Assessment'},
+                    {'num': 3, 'label': 'Approval'},
+                    {'num': 4, 'label': 'Repair'},
+                    {'num': 5, 'label': 'QC/Ready'},
+                  ];
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Visual 5-Step Closed-Loop Stepper
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.sync_alt_rounded, size: 14, color: Color(0xFF0F4C81)),
+                                const SizedBox(width: 5),
+                                const Expanded(
+                                  child: Text(
+                                    'Closed-Loop Service Cycle',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: activeLoopStep == 4 && isAuthorized
+                                        ? const Color(0xFFDCFCE7)
+                                        : (activeLoopStep == 3 ? const Color(0xFFFEF3C7) : const Color(0xFFE0F2FE)),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    activeLoopStep == 2
+                                        ? 'Mechanic: Assess & Recommend'
+                                        : activeLoopStep == 3
+                                            ? 'Advisor: Print & Confirm Customer'
+                                            : activeLoopStep == 4
+                                                ? (isAuthorized ? '✅ Approved for Repair' : 'Active Repair')
+                                                : 'QC & Handover',
+                                    style: TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: activeLoopStep == 4 && isAuthorized
+                                          ? const Color(0xFF15803D)
+                                          : (activeLoopStep == 3 ? const Color(0xFFB45309) : const Color(0xFF0369A1)),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: List.generate(loopSteps.length, (i) {
+                                final sNum = loopSteps[i]['num'] as int;
+                                final sLabel = loopSteps[i]['label'] as String;
+                                final isDone = sNum < activeLoopStep || status == 'COMPLETED';
+                                final isCurrent = sNum == activeLoopStep && status != 'COMPLETED';
+                                final stepColor = isDone
+                                    ? const Color(0xFF16A34A)
+                                    : (isCurrent ? const Color(0xFF2563EB) : Colors.grey.shade400);
+
+                                return Expanded(
+                                  child: Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Container(
+                                              height: 2,
+                                              color: i == 0
+                                                  ? Colors.transparent
+                                                  : (sNum <= activeLoopStep ? const Color(0xFF16A34A) : Colors.grey.shade300),
+                                            ),
+                                          ),
+                                          Container(
+                                            width: 20,
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              color: isDone
+                                                  ? const Color(0xFF16A34A)
+                                                  : (isCurrent ? const Color(0xFF2563EB) : Colors.white),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(color: stepColor, width: 1.5),
+                                            ),
+                                            child: Center(
+                                              child: isDone
+                                                  ? const Icon(Icons.check, size: 12, color: Colors.white)
+                                                  : Text(
+                                                      '$sNum',
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: isCurrent ? Colors.white : Colors.grey.shade600,
+                                                      ),
+                                                    ),
+                                            ),
+                                          ),
+                                          Expanded(
+                                            child: Container(
+                                              height: 2,
+                                              color: i == loopSteps.length - 1
+                                                  ? Colors.transparent
+                                                  : (sNum < activeLoopStep ? const Color(0xFF16A34A) : Colors.grey.shade300),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        sLabel,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 9.5,
+                                          fontWeight: isCurrent || isDone ? FontWeight.w800 : FontWeight.w500,
+                                          color: isCurrent
+                                              ? const Color(0xFF1E3A8A)
+                                              : (isDone ? const Color(0xFF15803D) : Colors.grey.shade600),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // -------------------------------------------------------------
+                      // STAGE 4 CARD (MECHANIC / ALL): AUTHORIZED REPAIR WORK ORDER
+                      // Shown when Customer has approved repair or job is IN_PROGRESS with approved recs
+                      // -------------------------------------------------------------
+                      if (isAuthorized || (status == 'IN_PROGRESS' && recs.isNotEmpty)) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF10B981), width: 1.6),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF059669),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.verified_rounded, size: 18, color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          '✅ CUSTOMER APPROVED FOR REPAIR • WORK ORDER',
+                                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: Color(0xFF065F46)),
+                                        ),
+                                        Text(
+                                          'Authorized by ${repairAuth?['authorizedBy'] ?? 'Service Advisor'} • ${repairAuth?['customerApprovalMethod'] ?? 'Customer Confirmed'}',
+                                          style: const TextStyle(fontSize: 10.5, color: Color(0xFF047857), fontWeight: FontWeight.w600),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (approvedRecs.isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFF34D399)),
+                                      ),
+                                      child: Text(
+                                        '${completedRecs.length}/${approvedRecs.length} Done',
+                                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: Color(0xFF047857)),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (repairAuth?['advisorInstructions'] != null &&
+                                  repairAuth!['advisorInstructions'].toString().trim().isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: const Color(0xFF6EE7B7)),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(Icons.campaign_outlined, size: 16, color: Color(0xFF047857)),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Advisor Instructions: "${repairAuth['advisorInstructions']}"',
+                                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF064E3B)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Authorized Repair Scope (Check off items as you complete them):',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF065F46)),
+                              ),
+                              const SizedBox(height: 6),
+                              // Primary Requested Service
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFA7F3D0)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.build_circle, size: 16, color: Color(0xFF059669)),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Primary Service: ${job['workRequested'] ?? 'General Service'}',
+                                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Approved Recommendations Checklist
+                              ...approvedRecs.map((rec) {
+                                final isDone = rec['repairCompleted'] == true;
+                                final recId = rec['id']?.toString() ?? '';
+                                return InkWell(
+                                  onTap: () async {
+                                    final nextVal = !isDone;
+                                    setSheet(() {
+                                      rec['repairCompleted'] = nextVal;
+                                    });
+                                    try {
+                                      final res = await http.put(
+                                        Uri.parse('$_baseUrl/jobs/${job['id']}/recommendations/$recId'),
+                                        headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                        body: json.encode({'repairCompleted': nextVal}),
+                                      );
+                                      if (res.statusCode == 200) {
+                                        final data = json.decode(res.body);
+                                        if (data['job'] is Map) {
+                                          setSheet(() {
+                                            job['walkAroundData'] = data['job']['walkAroundData'];
+                                          });
+                                        }
+                                        _fetchJobs();
+                                      }
+                                    } catch (_) {}
+                                  },
+                                  child: Container(
+                                    margin: const EdgeInsets.only(bottom: 6),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: isDone ? const Color(0xFFD1FAE5) : Colors.white,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: isDone ? const Color(0xFF059669) : const Color(0xFF6EE7B7),
+                                        width: isDone ? 1.4 : 1.0,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(
+                                          isDone ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
+                                          size: 19,
+                                          color: const Color(0xFF059669),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                '[${rec['system'] ?? 'Repair'}] ${rec['issue'] ?? ''}',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: const Color(0xFF064E3B),
+                                                  decoration: isDone ? TextDecoration.lineThrough : null,
+                                                ),
+                                              ),
+                                              Text(
+                                                'Action: ${rec['recommendation'] ?? ''}',
+                                                style: const TextStyle(fontSize: 11, color: Color(0xFF047857)),
+                                              ),
+                                              if (rec['partsNeeded'] != null && rec['partsNeeded'].toString().isNotEmpty)
+                                                Text(
+                                                  'Parts: ${rec['partsNeeded']}',
+                                                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF065F46)),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: isDone ? const Color(0xFF059669) : const Color(0xFFECFDF5),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            isDone ? '✓ DONE' : 'APPROVED',
+                                            style: TextStyle(
+                                              fontSize: 9.5,
+                                              fontWeight: FontWeight.w900,
+                                              color: isDone ? Colors.white : const Color(0xFF047857),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
+                              // Declined Recommendations Warning (Do Not Perform)
+                              if (declinedRecs.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFEF2F2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: const Color(0xFFFCA5A5)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        '⛔ DECLINED BY CUSTOMER — DO NOT PERFORM:',
+                                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: Color(0xFF991B1B)),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      ...declinedRecs.map((d) => Text(
+                                            '• [${d['system'] ?? 'General'}] ${d['issue'] ?? ''} (${d['recommendation'] ?? ''})',
+                                            style: const TextStyle(fontSize: 11, color: Color(0xFFB91C1C)),
+                                          )),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              if (status != 'QUALITY_CHECK' && status != 'READY' && status != 'COMPLETED') ...[
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF047857),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 11),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    icon: const Icon(Icons.flag_circle_rounded, size: 18),
+                                    label: const FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        '🏁 All Approved Repairs Complete — Send to Quality Check (QC)',
+                                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                                      ),
+                                    ),
+                                    onPressed: () async {
+                                      setSheet(() => saving = true);
+                                      try {
+                                        final h = double.tryParse(hoursCtrl.text.trim());
+                                        final res = await http.post(
+                                          Uri.parse('$_baseUrl/jobs/${job['id']}/complete-repairs'),
+                                          headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                          body: json.encode({
+                                            'completionNotes': notesCtrl.text.trim(),
+                                            if (h != null) 'actualHours': h,
+                                          }),
+                                        );
+                                        if (res.statusCode == 200) {
+                                          final data = json.decode(res.body);
+                                          if (data['job'] is Map) {
+                                            job.addAll(Map<String, dynamic>.from(data['job']));
+                                            status = 'QUALITY_CHECK';
+                                          }
+                                          _toast('🏁 Repairs marked complete & sent to Quality Check!', color: Colors.green.shade700);
+                                          _fetchJobs();
+                                        }
+                                      } catch (e) {
+                                        _toast('Failed to complete repairs: $e', color: Colors.red);
+                                      } finally {
+                                        if (ctx.mounted) setSheet(() => saving = false);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // -------------------------------------------------------------
+                      // STAGE 3 CARD (SERVICE ADVISOR / ADMIN):
+                      // PRINT ASSESSMENT, INFORM CUSTOMER & AUTHORIZE REPAIR
+                      // -------------------------------------------------------------
+                      if (!isMechView &&
+                          (status == 'AWAITING_APPROVAL' ||
+                              (recs.isNotEmpty && !isAuthorized && status != 'COMPLETED'))) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFD97706),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.assignment_returned_outlined, size: 18, color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          '📋 ADVISOR: CUSTOMER APPROVAL & REPAIR DISPATCH',
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF92400E)),
+                                        ),
+                                        Text(
+                                          'Mechanic ${wf?['assessmentSubmittedBy'] ?? job['technician'] ?? ''} submitted ${recs.length} finding(s). Print/Share with customer, mark approved items, and dispatch back to Mechanic.',
+                                          style: const TextStyle(fontSize: 10.5, color: Color(0xFFB45309)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              // Step A: Print & Inform Customer Buttons
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  if (pmsRaw != null)
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: const Color(0xFF15803D),
+                                        side: const BorderSide(color: Color(0xFF16A34A)),
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      icon: const Icon(Icons.print_outlined, size: 14),
+                                      label: const Text('1. Print PMS Report', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                      onPressed: () {
+                                        try {
+                                          final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                                          PmsPdfService.showPdfPreviewModal(
+                                            context: ctx,
+                                            workshopSettings: _workshopSettings,
+                                            job: job,
+                                            checksheet: checksheetObj,
+                                          );
+                                        } catch (_) {}
+                                      },
+                                    ),
+                                  OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: Colors.white,
+                                      foregroundColor: const Color(0xFF1D4ED8),
+                                      side: const BorderSide(color: Color(0xFF3B82F6)),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: const Icon(Icons.description_outlined, size: 14),
+                                    label: const Text('Print Job Card', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                    onPressed: () => InvoicePdfService.showJobCardPreviewModal(
+                                      context: ctx,
+                                      workshopSettings: _workshopSettings,
+                                      job: job,
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFDCFCE7),
+                                      foregroundColor: const Color(0xFF166534),
+                                      side: const BorderSide(color: Color(0xFF22C55E)),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: const Icon(Icons.chat, size: 14, color: Color(0xFF15803D)),
+                                    label: const Text('2. WhatsApp Full Assessment to Customer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                    onPressed: () {
+                                      final custPhone = job['customer']?['phone']?.toString() ?? '';
+                                      final custName = job['customer']?['name']?.toString() ?? 'Customer';
+                                      final regNo = job['vehicle']?['registrationNo']?.toString() ?? 'Vehicle';
+                                      final makeModel = '${job['vehicle']?['make'] ?? ''} ${job['vehicle']?['model'] ?? ''}'.trim();
+                                      final buf = StringBuffer();
+                                      buf.writeln('Hello $custName, our technician has completed the diagnostic assessment on your $makeModel ($regNo) at ${_workshopSettings['name'] ?? 'our workshop'}.');
+                                      buf.writeln('\n*Primary Service:* ${job['workRequested'] ?? 'General Service'}');
+                                      if (recs.isNotEmpty) {
+                                        buf.writeln('\n*Technician Findings & Recommendations:*');
+                                        double grandTotal = 0;
+                                        for (var i = 0; i < recs.length; i++) {
+                                          final r = recs[i];
+                                          final tot = ((r['estimatedLabour'] as num?)?.toDouble() ?? 0) + ((r['estimatedParts'] as num?)?.toDouble() ?? 0);
+                                          grandTotal += tot;
+                                          buf.writeln('${i + 1}. *[${r['system'] ?? 'General'}]* ${r['issue']}');
+                                          buf.writeln('   • Fix: ${r['recommendation']}');
+                                          if (tot > 0) buf.writeln('   • Est. Cost: KES ${tot.toStringAsFixed(0)}');
+                                        }
+                                        if (grandTotal > 0) {
+                                          buf.writeln('\n*Total Estimated Additional Repairs:* KES ${grandTotal.toStringAsFixed(0)}');
+                                        }
+                                      }
+                                      buf.writeln('\nPlease reply to confirm approval so our mechanic can proceed with the repair work.');
+                                      _launchWhatsAppMessage(custPhone, buf.toString());
+                                    },
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: advisorInstructionsCtrl,
+                                decoration: const InputDecoration(
+                                  labelText: 'Advisor Instructions to Mechanic (e.g. Approved items / special notes)',
+                                  isDense: true,
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.note_alt_outlined, size: 18),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF15803D),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                                  label: const FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      '✅ 3. Customer Approved — Send Back to Mechanic for Repair',
+                                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5),
+                                    ),
+                                  ),
+                                  onPressed: () async {
+                                    setSheet(() => saving = true);
+                                    try {
+                                      final res = await http.post(
+                                        Uri.parse('$_baseUrl/jobs/${job['id']}/authorize-repair'),
+                                        headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                        body: json.encode({
+                                          'approveAll': true,
+                                          'advisorInstructions': advisorInstructionsCtrl.text.trim(),
+                                          'customerApprovalMethod': 'Advisor Confirmed with Customer',
+                                          if (assigned.isNotEmpty && assigned != 'Unassigned') 'technician': assigned,
+                                        }),
+                                      );
+                                      if (res.statusCode == 200) {
+                                        final data = json.decode(res.body);
+                                        if (data['job'] is Map) {
+                                          setSheet(() {
+                                            job.addAll(Map<String, dynamic>.from(data['job']));
+                                            walk.addAll(Map<String, dynamic>.from(data['job']['walkAroundData'] ?? {}));
+                                            status = 'IN_PROGRESS';
+                                          });
+                                        }
+                                        _toast('✅ Repair Authorized! Mechanic notified that Job is Approved for Work.', color: Colors.green.shade800);
+                                        _fetchJobs();
+                                      }
+                                    } catch (e) {
+                                      _toast('Failed to authorize repair: $e', color: Colors.red);
+                                    } finally {
+                                      if (ctx.mounted) setSheet(() => saving = false);
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                }),
+
                 const SizedBox(height: 14),
                 const Text('Repair Stage', style: TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
@@ -5398,22 +6142,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
-                              children: [
-                                Icon(Icons.lightbulb, color: recs.isNotEmpty ? const Color(0xFFB45309) : const Color(0xFF0F4C81), size: 18),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Technician Findings & Recommendations (${recs.length})',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: recs.isNotEmpty ? const Color(0xFF78350F) : const Color(0xFF0F4C81),
-                                  ),
+                            Icon(Icons.lightbulb, color: recs.isNotEmpty ? const Color(0xFFB45309) : const Color(0xFF0F4C81), size: 18),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Technician Findings & Recommendations (${recs.length})',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: recs.isNotEmpty ? const Color(0xFF78350F) : const Color(0xFF0F4C81),
                                 ),
-                              ],
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
+                            const SizedBox(width: 6),
                             ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF0F4C81),
@@ -5437,10 +6180,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         ] else ...[
                           const SizedBox(height: 10),
                           ...recs.map((rec) {
+                            final recId = (rec['id'] ?? '').toString();
                             final sys = (rec['system'] ?? 'General').toString();
                             final issue = (rec['issue'] ?? '').toString();
                             final fix = (rec['recommendation'] ?? '').toString();
                             final urgency = (rec['urgency'] ?? 'RECOMMENDED').toString();
+                            final recStatus = (rec['status'] ?? 'PENDING').toString().toUpperCase();
+                            final repairDone = rec['repairCompleted'] == true;
                             final tech = (rec['technicianName'] ?? 'Tech').toString();
                             final partsPrice = (rec['estimatedParts'] as num?)?.toDouble() ?? 0.0;
                             final labourPrice = (rec['estimatedLabour'] as num?)?.toDouble() ?? 0.0;
@@ -5449,18 +6195,38 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                             final isCritical = urgency == 'CRITICAL';
                             final badgeColor = isCritical ? Colors.red : (urgency == 'ADVISORY' ? Colors.blue : Colors.orange.shade800);
 
+                            Color stBg = const Color(0xFFFEF3C7);
+                            Color stText = const Color(0xFFB45309);
+                            String stLabel = '⏳ PENDING APPROVAL';
+                            if (recStatus == 'APPROVED') {
+                              stBg = const Color(0xFFDCFCE7);
+                              stText = const Color(0xFF15803D);
+                              stLabel = repairDone ? '🛠️ REPAIR COMPLETED' : '✅ CUSTOMER APPROVED';
+                            } else if (recStatus == 'DECLINED') {
+                              stBg = const Color(0xFFFEE2E2);
+                              stText = const Color(0xFFB91C1C);
+                              stLabel = '⛔ DECLINED';
+                            }
+
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.amber.shade300),
+                                border: Border.all(
+                                  color: recStatus == 'APPROVED'
+                                      ? const Color(0xFF86EFAC)
+                                      : (recStatus == 'DECLINED' ? const Color(0xFFFCA5A5) : Colors.amber.shade300),
+                                ),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -5474,7 +6240,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                           style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: badgeColor),
                                         ),
                                       ),
-                                      const Spacer(),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: stBg,
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          stLabel,
+                                          style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: stText),
+                                        ),
+                                      ),
                                       Text('By $tech', style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600)),
                                     ],
                                   ),
@@ -5484,20 +6260,89 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                   if (rec['partsNeeded'] != null && rec['partsNeeded'].toString().isNotEmpty)
                                     Text('Parts: ${rec['partsNeeded']}', style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700)),
                                   const SizedBox(height: 4),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        'Labour: KES ${labourPrice.toStringAsFixed(0)} | Parts: KES ${partsPrice.toStringAsFixed(0)} (Total: KES ${total.toStringAsFixed(0)})',
-                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
-                                      ),
-                                    ],
+                                  Text(
+                                    'Labour: KES ${labourPrice.toStringAsFixed(0)} | Parts: KES ${partsPrice.toStringAsFixed(0)} (Total: KES ${total.toStringAsFixed(0)})',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
                                   ),
                                   const SizedBox(height: 6),
                                   Wrap(
-                                    spacing: 8,
-                                    runSpacing: 4,
+                                    spacing: 6,
+                                    runSpacing: 6,
                                     children: [
+                                      if (!techMode && !AuthService.instance.isMechanic && recId.isNotEmpty) ...[
+                                        InkWell(
+                                          onTap: () async {
+                                            try {
+                                              final res = await http.put(
+                                                Uri.parse('$_baseUrl/jobs/${job['id']}/recommendations/$recId'),
+                                                headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                                body: json.encode({'status': 'APPROVED'}),
+                                              );
+                                              if (res.statusCode == 200) {
+                                                final data = json.decode(res.body);
+                                                if (data['job'] is Map) {
+                                                  setSheet(() {
+                                                    job['walkAroundData'] = data['job']['walkAroundData'];
+                                                  });
+                                                }
+                                                _fetchJobs();
+                                              }
+                                            } catch (_) {}
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: recStatus == 'APPROVED' ? const Color(0xFF15803D) : const Color(0xFFDCFCE7),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(color: const Color(0xFF16A34A)),
+                                            ),
+                                            child: Text(
+                                              recStatus == 'APPROVED' ? '✓ Approved' : 'Approve',
+                                              style: TextStyle(
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: recStatus == 'APPROVED' ? Colors.white : const Color(0xFF15803D),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        InkWell(
+                                          onTap: () async {
+                                            try {
+                                              final res = await http.put(
+                                                Uri.parse('$_baseUrl/jobs/${job['id']}/recommendations/$recId'),
+                                                headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                                body: json.encode({'status': 'DECLINED'}),
+                                              );
+                                              if (res.statusCode == 200) {
+                                                final data = json.decode(res.body);
+                                                if (data['job'] is Map) {
+                                                  setSheet(() {
+                                                    job['walkAroundData'] = data['job']['walkAroundData'];
+                                                  });
+                                                }
+                                                _fetchJobs();
+                                              }
+                                            } catch (_) {}
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: recStatus == 'DECLINED' ? const Color(0xFFB91C1C) : const Color(0xFFFEE2E2),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(color: const Color(0xFFEF4444)),
+                                            ),
+                                            child: Text(
+                                              recStatus == 'DECLINED' ? '✕ Declined' : 'Decline',
+                                              style: TextStyle(
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: recStatus == 'DECLINED' ? Colors.white : const Color(0xFFB91C1C),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                       OutlinedButton.icon(
                                         style: OutlinedButton.styleFrom(
                                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -5517,27 +6362,86 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                           _launchWhatsAppMessage(custPhone, msg);
                                         },
                                       ),
-                                      OutlinedButton.icon(
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                          minimumSize: Size.zero,
-                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                          foregroundColor: const Color(0xFF2563EB),
-                                          side: const BorderSide(color: Color(0xFF2563EB)),
+                                      if (!techMode && !AuthService.instance.isMechanic)
+                                        OutlinedButton.icon(
+                                          style: OutlinedButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            minimumSize: Size.zero,
+                                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            foregroundColor: const Color(0xFF2563EB),
+                                            side: const BorderSide(color: Color(0xFF2563EB)),
+                                          ),
+                                          icon: const Icon(Icons.request_quote_outlined, size: 13),
+                                          label: const Text('Open Quote Form', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                          onPressed: () {
+                                            Navigator.pop(ctx);
+                                            _openCreateEstimateModal(initialJobCardId: job['id']);
+                                          },
                                         ),
-                                        icon: const Icon(Icons.request_quote_outlined, size: 13),
-                                        label: const Text('Open Quote Form', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
-                                        onPressed: () {
-                                          Navigator.pop(ctx);
-                                          _openCreateEstimateModal(initialJobCardId: job['id']);
-                                        },
-                                      ),
                                     ],
                                   ),
                                 ],
                               ),
                             );
                           }),
+                        ],
+                        // Mechanic 1-Click Submit Assessment & Recommendations to Service Advisor
+                        if (status == 'BOOKED' || status == 'INSPECTION') ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFD97706),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              icon: const Icon(Icons.send_rounded, size: 16),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  '📤 Submit Assessment & Recommendations to Service Advisor',
+                                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                                ),
+                              ),
+                              onPressed: () async {
+                                setSheet(() => saving = true);
+                                try {
+                                  final h = double.tryParse(hoursCtrl.text.trim());
+                                  final res = await http.post(
+                                    Uri.parse('$_baseUrl/jobs/${job['id']}/submit-assessment'),
+                                    headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                    body: json.encode({
+                                      'technicianName': _techName.isNotEmpty ? _techName : (job['technician'] ?? 'Technician'),
+                                      'assessmentNotes': notesCtrl.text.trim(),
+                                      'diagnosticChecklist': sheetDiag,
+                                      'obdCodes': obdCtrl.text.trim(),
+                                      'inspectionResults': results,
+                                      'techNotes': notesCtrl.text.trim(),
+                                      if (h != null) 'actualHours': h,
+                                    }),
+                                  );
+                                  if (res.statusCode == 200) {
+                                    final data = json.decode(res.body);
+                                    if (data['job'] is Map) {
+                                      setSheet(() {
+                                        job.addAll(Map<String, dynamic>.from(data['job']));
+                                        walk.addAll(Map<String, dynamic>.from(data['job']['walkAroundData'] ?? {}));
+                                        status = 'AWAITING_APPROVAL';
+                                      });
+                                    }
+                                    _toast('📤 Assessment & Recommendations sent to Service Advisor!', color: Colors.orange.shade800);
+                                    _fetchJobs();
+                                  }
+                                } catch (e) {
+                                  _toast('Failed to submit assessment: $e', color: Colors.red);
+                                } finally {
+                                  if (ctx.mounted) setSheet(() => saving = false);
+                                }
+                              },
+                            ),
+                          ),
                         ],
                       ],
                     ),

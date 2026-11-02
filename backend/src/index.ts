@@ -766,6 +766,28 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
       }
 
       const jobNumber = await generateJobNumber();
+      const hasAssignedTech = Boolean(technician && String(technician).trim() && String(technician).trim().toLowerCase() !== 'unassigned');
+      const initialStatus: JobStatus =
+        status && status !== 'BOOKED'
+          ? (status as JobStatus)
+          : hasAssignedTech
+          ? ('INSPECTION' as JobStatus)
+          : ((status as JobStatus) || ('INSPECTION' as JobStatus));
+
+      const baseWalkAround =
+        walkAroundData && typeof walkAroundData === 'object'
+          ? (walkAroundData as Record<string, any>)
+          : {};
+
+      const initialWalkAround = {
+        ...baseWalkAround,
+        workflowState: {
+          ...(baseWalkAround.workflowState || {}),
+          stage: 'DISPATCHED_FOR_ASSESSMENT',
+          dispatchedAt: new Date().toISOString(),
+          dispatchedBy: (req.headers['x-user-name'] as string) || 'Service Advisor',
+        },
+      };
 
       return prisma.jobCard.create({
         data: {
@@ -778,7 +800,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
           bayNumber: bayNumber || 'Bay 1',
           priority: priority || 'Medium',
           dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 2 * 86400000),
-          status: (status as JobStatus) || 'IN_PROGRESS',
+          status: initialStatus,
           odometer: odometer ? Number(odometer) : null,
           fuelType: fuelType || vehicle.fuelType || 'Petrol',
           fuelLevel: fuelLevel || null,
@@ -788,7 +810,7 @@ app.post('/api/jobs', async (req: Request, res: Response) => {
           warrantyNotes: warrantyNotes || null,
           nextServiceMileage: nextServiceMileage ? Number(nextServiceMileage) : null,
           nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null,
-          walkAroundData: walkAroundData || undefined,
+          walkAroundData: initialWalkAround,
         },
         include: {
           customer: true,
@@ -1171,7 +1193,18 @@ app.put('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Respon
   try {
     const id = String(req.params.id);
     const recId = String(req.params.recId);
-    const { status, estimatedLabour, estimatedParts, issue, recommendation, urgency, partsNeeded } = req.body;
+    const {
+      status,
+      estimatedLabour,
+      estimatedParts,
+      issue,
+      recommendation,
+      urgency,
+      partsNeeded,
+      repairCompleted,
+      advisorNotes,
+    } = req.body;
+    const actorName = (req.headers['x-user-name'] as string) || 'Workshop Staff';
 
     const existing = await prisma.jobCard.findUnique({
       where: { id },
@@ -1196,6 +1229,9 @@ app.put('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Respon
       return res.status(404).json({ error: 'Recommendation not found' });
     }
 
+    const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
+    const nowIso = new Date().toISOString();
+
     const updatedRec = {
       ...existingRecs[recIndex],
       ...(issue !== undefined ? { issue: issue.trim() } : {}),
@@ -1204,8 +1240,18 @@ app.put('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Respon
       ...(estimatedLabour !== undefined ? { estimatedLabour: Number(estimatedLabour) || 0 } : {}),
       ...(estimatedParts !== undefined ? { estimatedParts: Number(estimatedParts) || 0 } : {}),
       ...(partsNeeded !== undefined ? { partsNeeded: (partsNeeded || '').trim() } : {}),
-      ...(status !== undefined ? { status: String(status).toUpperCase() } : {}),
-      updatedAt: new Date().toISOString(),
+      ...(advisorNotes !== undefined ? { advisorNotes: String(advisorNotes).trim() } : {}),
+      ...(normalizedStatus !== undefined ? { status: normalizedStatus } : {}),
+      ...(normalizedStatus === 'APPROVED' ? { approvedAt: nowIso, approvedBy: actorName } : {}),
+      ...(normalizedStatus === 'DECLINED' ? { declinedAt: nowIso, declinedBy: actorName } : {}),
+      ...(repairCompleted !== undefined
+        ? {
+            repairCompleted: Boolean(repairCompleted),
+            repairCompletedAt: repairCompleted ? nowIso : null,
+            repairCompletedBy: repairCompleted ? actorName : null,
+          }
+        : {}),
+      updatedAt: nowIso,
     };
     updatedRec.totalEstimated = (Number(updatedRec.estimatedLabour) || 0) + (Number(updatedRec.estimatedParts) || 0);
 
@@ -1229,9 +1275,9 @@ app.put('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Respon
     recordSyncEvent({
       type: 'RECOMMENDATION_UPDATED',
       entityId: existing.id,
-      actorName: (req.headers['x-user-name'] as string) || 'Admin',
+      actorName,
       actorRole: (req.headers['x-user-role'] as string) || 'ADMIN',
-      message: `Recommendation on ${existing.vehicle.registrationNo} updated: status=${updatedRec.status}`,
+      message: `Recommendation on ${existing.vehicle.registrationNo} updated: status=${updatedRec.status}${repairCompleted !== undefined ? `, repairCompleted=${Boolean(repairCompleted)}` : ''}`,
       metadata: {
         jobId: existing.id,
         recommendation: updatedRec,
@@ -1453,6 +1499,21 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
       newStatus = 'AWAITING_APPROVAL';
     }
 
+    const existingWorkflow =
+      currentWalkAround.workflowState && typeof currentWalkAround.workflowState === 'object'
+        ? (currentWalkAround.workflowState as Record<string, any>)
+        : {};
+
+    const updatedWorkflowState = submitToAdvisor
+      ? {
+          ...existingWorkflow,
+          stage: 'AWAITING_ADVISOR_APPROVAL',
+          assessmentSubmittedAt: new Date().toISOString(),
+          assessmentSubmittedBy: tech,
+          pmsCompleted: true,
+        }
+      : existingWorkflow;
+
     const updatedJob = await prisma.jobCard.update({
       where: { id },
       data: {
@@ -1463,6 +1524,7 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
           ...currentWalkAround,
           pmsChecklist: checklist,
           recommendations: updatedRecs,
+          workflowState: updatedWorkflowState,
         },
       },
       include: {
@@ -1590,6 +1652,423 @@ app.post('/api/jobs/:id/pms-unlock', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error unlocking PMS checklist:', error);
     res.status(500).json({ error: error.message || 'Failed to unlock PMS checklist' });
+  }
+});
+
+// =============================================================
+// CLOSED-LOOP 5-STAGE WORKSHOP LIFECYCLE ENDPOINTS
+// Stage 1: Intake -> Stage 2: Mechanic Assessment -> Stage 3: Advisor & Customer Approval -> Stage 4: Authorized Repair -> Stage 5: QC
+// =============================================================
+
+// Stage 2 -> Stage 3: Mechanic submits assessment & recommendations to Service Advisor
+app.post('/api/jobs/:id/submit-assessment', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const {
+      technicianName,
+      assessmentNotes,
+      diagnosticChecklist,
+      obdCodes,
+      inspectionResults,
+      techNotes,
+      actualHours,
+    } = req.body;
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const tech =
+      technicianName ||
+      (req.headers['x-user-name'] as string) ||
+      existing.technician ||
+      'Technician';
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? { ...(existing.walkAroundData as Record<string, any>) }
+        : {};
+
+    const existingWorkflow =
+      currentWalkAround.workflowState && typeof currentWalkAround.workflowState === 'object'
+        ? (currentWalkAround.workflowState as Record<string, any>)
+        : {};
+
+    const recs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations
+      : [];
+
+    const nowIso = new Date().toISOString();
+
+    const updatedWalkAround: Record<string, any> = {
+      ...currentWalkAround,
+      ...(diagnosticChecklist ? { diagnosticChecklist } : {}),
+      ...(obdCodes !== undefined ? { obdCodes } : {}),
+      ...(inspectionResults ? { inspectionResults } : {}),
+      ...(techNotes !== undefined ? { techNotes } : {}),
+      workflowState: {
+        ...existingWorkflow,
+        stage: 'AWAITING_ADVISOR_APPROVAL',
+        assessmentSubmittedAt: nowIso,
+        assessmentSubmittedBy: tech,
+        assessmentNotes: (assessmentNotes || techNotes || '').toString().trim(),
+        recommendationsCount: recs.length,
+      },
+    };
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        status: 'AWAITING_APPROVAL' as JobStatus,
+        technician: existing.technician || tech,
+        ...(actualHours !== undefined && actualHours !== null
+          ? { actualHours: Number(actualHours) }
+          : {}),
+        walkAroundData: updatedWalkAround,
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    await createJobCardAuditLog({
+      jobCardId: updatedJob.id,
+      actorName: tech,
+      actorRole: (req.headers['x-user-role'] as string) || 'MECHANIC',
+      action: 'ASSESSMENT_SUBMITTED_TO_ADVISOR',
+      details: `Mechanic ${tech} completed vehicle assessment & submitted ${recs.length} recommendation(s) to Service Advisor for customer review & approval.${assessmentNotes ? ` Notes: ${assessmentNotes}` : ''}`,
+      diff: {
+        previousStatus: existing.status,
+        newStatus: 'AWAITING_APPROVAL',
+        recommendationsCount: recs.length,
+      },
+    });
+
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: updatedJob.id,
+      actorName: tech,
+      actorRole: (req.headers['x-user-role'] as string) || 'MECHANIC',
+      message: `Assessment ready for ${existing.vehicle.registrationNo} (${recs.length} recommendation${recs.length === 1 ? '' : 's'}) — Sent by ${tech} to Service Advisor for Customer Approval.`,
+      metadata: {
+        jobId: updatedJob.id,
+        jobNumber: updatedJob.jobNumber,
+        status: 'AWAITING_APPROVAL',
+        stage: 'AWAITING_ADVISOR_APPROVAL',
+        recommendationsCount: recs.length,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Assessment & recommendations submitted to Service Advisor.',
+      job: updatedJob,
+    });
+  } catch (error: any) {
+    console.error('Submit assessment error:', error);
+    res.status(500).json({ error: error.message || 'Failed to submit assessment' });
+  }
+});
+
+// Stage 3 -> Stage 4: Service Advisor confirms Customer Approval & dispatches back to Mechanic for Repair
+app.post('/api/jobs/:id/authorize-repair', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const {
+      approvedRecIds,
+      declinedRecIds,
+      approveAll = false,
+      advisorInstructions = '',
+      customerApprovalMethod = 'Customer Confirmed',
+      technician,
+    } = req.body;
+
+    const actorName = (req.headers['x-user-name'] as string) || 'Service Advisor';
+    const actorRole = (req.headers['x-user-role'] as string) || 'ADVISOR';
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? { ...(existing.walkAroundData as Record<string, any>) }
+        : {};
+
+    const existingWorkflow =
+      currentWalkAround.workflowState && typeof currentWalkAround.workflowState === 'object'
+        ? (currentWalkAround.workflowState as Record<string, any>)
+        : {};
+
+    const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations.map((r: any) => ({ ...r }))
+      : [];
+
+    const nowIso = new Date().toISOString();
+    const approvedSet = Array.isArray(approvedRecIds) ? new Set(approvedRecIds.map(String)) : null;
+    const declinedSet = Array.isArray(declinedRecIds) ? new Set(declinedRecIds.map(String)) : null;
+
+    let approvedCount = 0;
+    let declinedCount = 0;
+    let approvedTotal = 0;
+
+    const updatedRecs = existingRecs.map((rec: any) => {
+      const recId = String(rec.id || '');
+      let nextStatus = String(rec.status || 'PENDING').toUpperCase();
+
+      if (declinedSet && declinedSet.has(recId)) {
+        nextStatus = 'DECLINED';
+      } else if (approvedSet && approvedSet.has(recId)) {
+        nextStatus = 'APPROVED';
+      } else if (approveAll && nextStatus !== 'DECLINED') {
+        nextStatus = 'APPROVED';
+      } else if (!approvedSet && !declinedSet && nextStatus === 'PENDING') {
+        // Default: if advisor clicks "Approve & Dispatch" without explicit arrays, approve any pending items
+        nextStatus = 'APPROVED';
+      }
+
+      const itemTotal =
+        (Number(rec.estimatedLabour) || 0) + (Number(rec.estimatedParts) || 0);
+
+      if (nextStatus === 'APPROVED') {
+        approvedCount++;
+        approvedTotal += itemTotal;
+        return {
+          ...rec,
+          status: 'APPROVED',
+          approvedAt: rec.approvedAt || nowIso,
+          approvedBy: rec.approvedBy || actorName,
+          repairCompleted: Boolean(rec.repairCompleted),
+          updatedAt: nowIso,
+        };
+      } else if (nextStatus === 'DECLINED') {
+        declinedCount++;
+        return {
+          ...rec,
+          status: 'DECLINED',
+          declinedAt: rec.declinedAt || nowIso,
+          declinedBy: rec.declinedBy || actorName,
+          repairCompleted: false,
+          updatedAt: nowIso,
+        };
+      }
+      return rec;
+    });
+
+    const repairAuthorization = {
+      isAuthorized: true,
+      authorizedAt: nowIso,
+      authorizedBy: actorName,
+      authorizedRole: actorRole,
+      advisorInstructions: String(advisorInstructions || '').trim(),
+      customerApprovalMethod: String(customerApprovalMethod || 'Customer Confirmed').trim(),
+      approvedCount,
+      declinedCount,
+      approvedTotal,
+    };
+
+    const updatedWalkAround: Record<string, any> = {
+      ...currentWalkAround,
+      recommendations: updatedRecs,
+      repairAuthorization,
+      workflowState: {
+        ...existingWorkflow,
+        stage: 'APPROVED_FOR_REPAIR',
+        repairAuthorizedAt: nowIso,
+        repairAuthorizedBy: actorName,
+        advisorInstructions: String(advisorInstructions || '').trim(),
+        approvedCount,
+        declinedCount,
+      },
+    };
+
+    const assignedTech =
+      technician !== undefined && String(technician).trim() !== ''
+        ? String(technician).trim()
+        : existing.technician;
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        status: 'IN_PROGRESS' as JobStatus,
+        ...(assignedTech ? { technician: assignedTech } : {}),
+        walkAroundData: updatedWalkAround,
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    await createJobCardAuditLog({
+      jobCardId: updatedJob.id,
+      actorName,
+      actorRole,
+      action: 'REPAIR_AUTHORIZED_BY_ADVISOR',
+      details: `Customer approval confirmed by ${actorName} (${customerApprovalMethod}). Dispatched to Mechanic (${updatedJob.technician || 'Assigned Tech'}) for repair: ${approvedCount} approved item(s) (KES ${approvedTotal.toLocaleString()}), ${declinedCount} declined.${advisorInstructions ? ` Instructions: "${advisorInstructions}"` : ''}`,
+      diff: {
+        previousStatus: existing.status,
+        newStatus: 'IN_PROGRESS',
+        repairAuthorization,
+      },
+    });
+
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: updatedJob.id,
+      actorName,
+      actorRole,
+      message: `✅ JOB APPROVED FOR WORK: ${existing.vehicle.registrationNo} (${updatedJob.jobNumber}) authorized by ${actorName}. ${approvedCount} repair item(s) approved for Mechanic ${updatedJob.technician || ''}.`,
+      metadata: {
+        jobId: updatedJob.id,
+        jobNumber: updatedJob.jobNumber,
+        status: 'IN_PROGRESS',
+        stage: 'APPROVED_FOR_REPAIR',
+        technician: updatedJob.technician,
+        approvedCount,
+        declinedCount,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Customer approval recorded & job dispatched to mechanic for repair.',
+      job: updatedJob,
+      repairAuthorization,
+    });
+  } catch (error: any) {
+    console.error('Authorize repair error:', error);
+    res.status(500).json({ error: error.message || 'Failed to authorize repair' });
+  }
+});
+
+// Stage 4 -> Stage 5: Mechanic marks all approved repairs complete & sends to Quality Check (QC)
+app.post('/api/jobs/:id/complete-repairs', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { completionNotes = '', actualHours } = req.body;
+    const actorName = (req.headers['x-user-name'] as string) || 'Technician';
+    const actorRole = (req.headers['x-user-role'] as string) || 'MECHANIC';
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const tech = existing.technician || actorName;
+    const nowIso = new Date().toISOString();
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? { ...(existing.walkAroundData as Record<string, any>) }
+        : {};
+
+    const existingWorkflow =
+      currentWalkAround.workflowState && typeof currentWalkAround.workflowState === 'object'
+        ? (currentWalkAround.workflowState as Record<string, any>)
+        : {};
+
+    const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations.map((r: any) => ({ ...r }))
+      : [];
+
+    let completedCount = 0;
+    const updatedRecs = existingRecs.map((rec: any) => {
+      if (String(rec.status || '').toUpperCase() === 'APPROVED') {
+        completedCount++;
+        return {
+          ...rec,
+          repairCompleted: true,
+          repairCompletedAt: rec.repairCompletedAt || nowIso,
+          repairCompletedBy: rec.repairCompletedBy || tech,
+          updatedAt: nowIso,
+        };
+      }
+      return rec;
+    });
+
+    const updatedWalkAround: Record<string, any> = {
+      ...currentWalkAround,
+      recommendations: updatedRecs,
+      workflowState: {
+        ...existingWorkflow,
+        stage: 'REPAIRS_COMPLETED_QC',
+        repairsCompletedAt: nowIso,
+        repairsCompletedBy: tech,
+        completionNotes: String(completionNotes || '').trim(),
+        completedRepairsCount: completedCount,
+      },
+    };
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        status: 'QUALITY_CHECK' as JobStatus,
+        ...(actualHours !== undefined && actualHours !== null
+          ? { actualHours: Number(actualHours) }
+          : {}),
+        walkAroundData: updatedWalkAround,
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    await createJobCardAuditLog({
+      jobCardId: updatedJob.id,
+      actorName: tech,
+      actorRole,
+      action: 'REPAIRS_COMPLETED_BY_MECHANIC',
+      details: `Mechanic ${tech} completed all authorized repair work (${completedCount} approved item(s)) and submitted vehicle for Quality Check (QC).${completionNotes ? ` Notes: "${completionNotes}"` : ''}`,
+      diff: {
+        previousStatus: existing.status,
+        newStatus: 'QUALITY_CHECK',
+        completedRepairsCount: completedCount,
+      },
+    });
+
+    recordSyncEvent({
+      type: 'JOB_UPDATED',
+      entityId: updatedJob.id,
+      actorName: tech,
+      actorRole,
+      message: `🏁 Repairs completed on ${existing.vehicle.registrationNo} by ${tech} — Ready for Quality Check & Service Advisor Handover.`,
+      metadata: {
+        jobId: updatedJob.id,
+        jobNumber: updatedJob.jobNumber,
+        status: 'QUALITY_CHECK',
+        stage: 'REPAIRS_COMPLETED_QC',
+        completedRepairsCount: completedCount,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Approved repairs marked complete & sent to Quality Check.',
+      job: updatedJob,
+    });
+  } catch (error: any) {
+    console.error('Complete repairs error:', error);
+    res.status(500).json({ error: error.message || 'Failed to complete repairs' });
   }
 });
 
