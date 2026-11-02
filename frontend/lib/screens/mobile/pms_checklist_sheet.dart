@@ -509,66 +509,73 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: Colors.green.shade400),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.check_circle, size: 12, color: Color(0xFF4ADE80)),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '${_checksheet.okCount} OK',
-                                  style: const TextStyle(fontSize: 11, color: Color(0xFF86EFAC), fontWeight: FontWeight.bold),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.green.shade400),
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: Colors.amber.shade400),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.warning_amber_rounded, size: 12, color: Color(0xFFFBBF24)),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '${_checksheet.cautionCount} C',
-                                  style: const TextStyle(fontSize: 11, color: Color(0xFFFDE68A), fontWeight: FontWeight.bold),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.check_circle, size: 12, color: Color(0xFF4ADE80)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${_checksheet.okCount} OK',
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF86EFAC), fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withValues(alpha: 0.25),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: Colors.red.shade400),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.cancel, size: 12, color: Color(0xFFF87171)),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '${_checksheet.ngCount} NG',
-                                  style: const TextStyle(fontSize: 11, color: Color(0xFFFCA5A5), fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.amber.shade400),
                                 ),
-                              ],
-                            ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.warning_amber_rounded, size: 12, color: Color(0xFFFBBF24)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${_checksheet.cautionCount} C',
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFFFDE68A), fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withValues(alpha: 0.25),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.red.shade400),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.cancel, size: 12, color: Color(0xFFF87171)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${_checksheet.ngCount} NG',
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFFFCA5A5), fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       Text(
                         'Health: ${_checksheet.healthPercentage.toStringAsFixed(0)}%',
                         style: TextStyle(
@@ -598,13 +605,30 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                           child: DropdownButtonHideUnderline(
                             child: DropdownButton<String>(
                               value: _checksheet.templateCode,
+                              isExpanded: true,
+                              isDense: true,
+                              icon: const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
                               dropdownColor: const Color(0xFF1E293B),
                               style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
-                              isDense: true,
                               items: PmsTemplates.definitions
                                   .map((d) => DropdownMenuItem(
                                         value: d.code,
-                                        child: Text(d.title.replaceAll('PMS CHECK SHEET - ', ''), overflow: TextOverflow.ellipsis),
+                                        child: Text(
+                                          d.title.replaceAll('PMS CHECK SHEET - ', ''),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ))
+                                  .toList(),
+                              selectedItemBuilder: (ctx) => PmsTemplates.definitions
+                                  .map((d) => Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          d.title.replaceAll('PMS CHECK SHEET - ', ''),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
+                                        ),
                                       ))
                                   .toList(),
                               onChanged: (v) {
@@ -616,31 +640,37 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                       ),
                       const SizedBox(width: 8),
                       // Service Interval Chips
-                      ...curDef.intervals.map((inv) {
-                        final sel = _checksheet.selectedInterval == inv;
-                        return Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: InkWell(
-                            onTap: () => setState(() => _checksheet.selectedInterval = inv),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: sel ? const Color(0xFF60A5FA) : const Color(0xFF334155)),
-                              ),
-                              child: Text(
-                                inv,
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: sel ? Colors.white : Colors.grey.shade400,
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: curDef.intervals.map((inv) {
+                            final sel = _checksheet.selectedInterval == inv;
+                            return Padding(
+                              padding: const EdgeInsets.only(left: 4),
+                              child: InkWell(
+                                onTap: () => setState(() => _checksheet.selectedInterval = inv),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: sel ? const Color(0xFF60A5FA) : const Color(0xFF334155)),
+                                  ),
+                                  child: Text(
+                                    inv,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: sel ? Colors.white : Colors.grey.shade400,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      }),
+                            );
+                          }).toList(),
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -681,12 +711,16 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _selectedCategoryFilter == 'DEFECTS'
-                            ? 'Flagged Defects (${displayedItems.length})'
-                            : 'Inspection Points (${displayedItems.length})',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                      Expanded(
+                        child: Text(
+                          _selectedCategoryFilter == 'DEFECTS'
+                              ? 'Flagged Defects (${displayedItems.length})'
+                              : 'Inspection Points (${displayedItems.length})',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       TextButton.icon(
                         style: TextButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1274,6 +1308,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: ['Empty', '1/4', 'Half', '3/4', 'Full'].contains(_checksheet.fuelLevel)
                         ? _checksheet.fuelLevel
                         : 'Half',

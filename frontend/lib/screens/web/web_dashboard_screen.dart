@@ -4727,6 +4727,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
+                      isExpanded: true,
                       value: _statusFilter,
                       icon: const Icon(Icons.keyboard_arrow_down, size: 16),
                       items: const [
@@ -4755,6 +4756,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
+                      isExpanded: true,
                       value: _availableTechnicians.contains(_technicianFilter) ? _technicianFilter : 'All',
                       icon: const Icon(Icons.keyboard_arrow_down, size: 16),
                       items: _availableTechnicians

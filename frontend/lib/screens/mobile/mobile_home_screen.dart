@@ -4760,7 +4760,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                         return (j['technician'] ?? '').toString().toLowerCase().trim() == t.toLowerCase().trim();
                       }).length;
                       return Row(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Container(
                             width: 8,
@@ -4771,7 +4770,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Flexible(
+                          Expanded(
                             child: Text(
                               '$t (${activeCount == 0 ? "Available" : "$activeCount active"})',
                               overflow: TextOverflow.ellipsis,
