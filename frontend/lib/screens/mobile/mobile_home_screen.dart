@@ -4870,22 +4870,29 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 Builder(builder: (_) {
                   final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
                   final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
-                  final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' || pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR';
+                  final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' ||
+                      pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+                      pmsRaw?['status'] == 'COMPLETED' ||
+                      pmsRaw?['isLocked'] == true;
                   final score = (pmsRaw?['healthPercentage'] as num?)?.toDouble() ?? (pmsRaw?['healthScore'] as num?)?.toDouble();
                   final ngCount = (pmsRaw?['ngCount'] as num?)?.toInt() ?? 0;
                   final cautionCount = (pmsRaw?['cautionCount'] as num?)?.toInt() ?? 0;
                   final templateTitle = (pmsRaw?['templateTitle'] ?? pmsRaw?['templateName'] ?? 'Official Isuzu / PMS Check Sheet').toString();
-                  final tech = (pmsRaw?['technicianName'] ?? '').toString();
+                  final tech = (pmsRaw?['technicianName'] ?? job['technician'] ?? '').toString();
                   final interval = (pmsRaw?['selectedInterval'] ?? pmsRaw?['serviceInterval'] ?? '').toString();
 
-                  Color cardBg = const Color(0xFFF0FDF4);
-                  Color cardBorder = const Color(0xFF86EFAC);
-                  Color titleColor = const Color(0xFF166534);
+                  Color cardBg = isSubmitted ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC);
+                  Color cardBorder = isSubmitted ? const Color(0xFF86EFAC) : const Color(0xFFCBD5E1);
+                  Color titleColor = isSubmitted ? const Color(0xFF166534) : const Color(0xFF1E3A8A);
 
                   if (pmsRaw == null) {
                     cardBg = const Color(0xFFF8FAFC);
                     cardBorder = const Color(0xFFCBD5E1);
                     titleColor = const Color(0xFF1E3A8A);
+                  } else if (isSubmitted) {
+                    cardBg = const Color(0xFFF0FDF4);
+                    cardBorder = const Color(0xFF15803D);
+                    titleColor = const Color(0xFF14532D);
                   } else if (ngCount > 0) {
                     cardBg = const Color(0xFFFEF2F2);
                     cardBorder = const Color(0xFFFCA5A5);
@@ -4896,13 +4903,15 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     titleColor = const Color(0xFF92400E);
                   }
 
+                  final bool isTechRestricted = isSubmitted && (techMode || AuthService.instance.isMechanic);
+
                   return Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cardBg,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: cardBorder, width: 1.2),
+                      border: Border.all(color: cardBorder, width: 1.4),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4915,7 +4924,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 color: titleColor.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Icon(Icons.assignment_turned_in, size: 20, color: titleColor),
+                              child: Icon(isSubmitted ? Icons.verified : Icons.assignment_turned_in, size: 20, color: titleColor),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -4926,11 +4935,33 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                     children: [
                                       Flexible(
                                         child: Text(
-                                          'PMS Diagnostic Check Sheet',
+                                          isSubmitted ? '✓ PMS Inspection Complete' : 'PMS Diagnostic Check Sheet',
                                           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: titleColor),
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
+                                      if (isSubmitted) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF15803D).withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: const Color(0xFF15803D)),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.lock, size: 10, color: Color(0xFF15803D)),
+                                              SizedBox(width: 2),
+                                              Text(
+                                                'LOCKED',
+                                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
                                       if (interval.isNotEmpty) ...[
                                         const SizedBox(width: 6),
                                         Container(
@@ -4950,7 +4981,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                   ),
                                   Text(
                                     pmsRaw != null
-                                        ? '$templateTitle \u2022 ${isSubmitted ? "Submitted to Advisor" : "Draft"}'
+                                        ? '$templateTitle \u2022 ${isSubmitted ? "Signed off by ${tech.isNotEmpty ? tech : 'Technician'}" : "Draft"}'
                                         : 'Official Isuzu 64/70-Point Technical Inspection Sheet',
                                     style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
                                     overflow: TextOverflow.ellipsis,
@@ -5011,8 +5042,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 ),
                               if (tech.isNotEmpty)
                                 Text(
-                                  'Inspected by: $tech',
-                                  style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade800, fontStyle: FontStyle.italic),
+                                  isSubmitted ? 'Completed & Locked by: $tech' : 'Inspected by: $tech',
+                                  style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade800, fontStyle: FontStyle.italic, fontWeight: isSubmitted ? FontWeight.bold : FontWeight.normal),
                                 ),
                             ],
                           ),
@@ -5023,16 +5054,25 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                             Expanded(
                               child: ElevatedButton.icon(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: isSubmitted ? const Color(0xFF1E3A8A) : const Color(0xFF0F766E),
+                                  backgroundColor: isSubmitted
+                                      ? (isTechRestricted ? const Color(0xFF0F766E) : const Color(0xFF1E3A8A))
+                                      : const Color(0xFF0F766E),
                                   foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                 ),
-                                icon: Icon(isSubmitted ? Icons.edit_note : Icons.playlist_add_check, size: 17),
+                                icon: Icon(
+                                  isSubmitted
+                                      ? (isTechRestricted ? Icons.lock_outline : Icons.edit_note)
+                                      : Icons.playlist_add_check,
+                                  size: 17,
+                                ),
                                 label: Text(
                                   pmsRaw == null
                                       ? 'Start PMS Diagnostic Check Sheet'
-                                      : (isSubmitted ? 'Review / Re-evaluate Check Sheet' : 'Continue PMS Check Sheet (Draft)'),
+                                      : (isSubmitted
+                                          ? (isTechRestricted ? '🔒 View Completed Sheet (Read-Only)' : 'Review / Re-evaluate Check Sheet')
+                                          : 'Continue PMS Check Sheet (Draft)'),
                                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                                 ),
                                 onPressed: () async {
@@ -5041,6 +5081,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                     job: job,
                                     baseUrl: _baseUrl,
                                     workshopSettings: _workshopSettings,
+                                    readOnly: isTechRestricted,
                                     onSubmitted: () {
                                       setSheet(() {});
                                       _fetchJobs();
@@ -5096,55 +5137,107 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Mechanical & OBD-II Diagnostic Health Check (Tap to toggle Pass / Attention / Fail)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: sheetDiag.keys.map((sys) {
-                          final currentVal = sheetDiag[sys] ?? 'Pass';
-                          final chipColor = currentVal == 'Pass'
-                              ? Colors.green
-                              : currentVal == 'Attention'
-                                  ? Colors.orange
-                                  : Colors.red;
-                          return InkWell(
-                            onTap: () {
-                              setSheet(() {
-                                sheetDiag[sys] = currentVal == 'Pass'
-                                    ? 'Attention'
+                      Builder(builder: (_) {
+                        final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
+                        final isDiagLocked = pmsRaw?['isLocked'] == true ||
+                            pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+                            pmsRaw?['status'] == 'COMPLETED';
+                        final bool lockDiagForTech = isDiagLocked && (techMode || AuthService.instance.isMechanic);
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    lockDiagForTech
+                                        ? 'Mechanical & OBD-II Diagnostics (Complete & Locked)'
+                                        : 'Mechanical & OBD-II Diagnostic Health Check (Tap to toggle)',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)),
+                                  ),
+                                ),
+                                if (lockDiagForTech)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.shade50,
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.green.shade300),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.lock, size: 10, color: Colors.green),
+                                        SizedBox(width: 3),
+                                        Text('Locked', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: sheetDiag.keys.map((sys) {
+                                final currentVal = sheetDiag[sys] ?? 'Pass';
+                                final chipColor = currentVal == 'Pass'
+                                    ? Colors.green
                                     : currentVal == 'Attention'
-                                        ? 'Fail'
-                                        : 'Pass';
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: chipColor.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: chipColor.withValues(alpha: 0.5)),
-                              ),
-                              child: Text(
-                                '$sys: $currentVal',
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: chipColor),
+                                        ? Colors.orange
+                                        : Colors.red;
+                                return InkWell(
+                                  onTap: lockDiagForTech
+                                      ? () {
+                                          ScaffoldMessenger.of(ctx).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('🔒 Diagnostics are signed & locked. Re-checks by another technician are restricted.'),
+                                              duration: Duration(seconds: 2),
+                                              backgroundColor: Color(0xFF1E293B),
+                                            ),
+                                          );
+                                        }
+                                      : () {
+                                          setSheet(() {
+                                            sheetDiag[sys] = currentVal == 'Pass'
+                                                ? 'Attention'
+                                                : currentVal == 'Attention'
+                                                    ? 'Fail'
+                                                    : 'Pass';
+                                          });
+                                        },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: chipColor.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: chipColor.withValues(alpha: 0.5)),
+                                    ),
+                                    child: Text(
+                                      '$sys: $currentVal',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: chipColor),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: obdCtrl,
+                              readOnly: lockDiagForTech,
+                              decoration: InputDecoration(
+                                labelText: lockDiagForTech
+                                    ? 'OBD-II Fault Codes / Scanner Notes (Locked)'
+                                    : 'OBD-II Fault Codes / Scanner Notes (e.g. P0300 Random Misfire, ABS C1201)',
+                                isDense: true,
+                                border: const OutlineInputBorder(),
                               ),
                             ),
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: obdCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'OBD-II Fault Codes / Scanner Notes (e.g. P0300 Random Misfire, ABS C1201)',
-                          isDense: true,
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
+                          ],
+                        );
+                      }),
                     ],
                   ),
                 ),

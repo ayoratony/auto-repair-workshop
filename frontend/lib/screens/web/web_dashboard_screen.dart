@@ -2552,22 +2552,30 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       Builder(builder: (_) {
                         final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
                         final pmsRaw = walkData['pmsChecklist'] is Map ? (walkData['pmsChecklist'] as Map) : null;
-                        final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' || pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR';
+                        final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' ||
+                            pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+                            pmsRaw?['status'] == 'COMPLETED' ||
+                            pmsRaw?['isLocked'] == true;
                         final score = (pmsRaw?['healthPercentage'] as num?)?.toDouble() ?? (pmsRaw?['healthScore'] as num?)?.toDouble();
                         final ngCount = (pmsRaw?['ngCount'] as num?)?.toInt() ?? 0;
                         final cautionCount = (pmsRaw?['cautionCount'] as num?)?.toInt() ?? 0;
                         final templateTitle = (pmsRaw?['templateTitle'] ?? pmsRaw?['templateName'] ?? 'Official Isuzu / PMS Check Sheet').toString();
                         final techName = (pmsRaw?['technicianName'] ?? job['technician'] ?? '').toString();
                         final interval = (pmsRaw?['selectedInterval'] ?? pmsRaw?['serviceInterval'] ?? '').toString();
+                        final bool isTechRestricted = isSubmitted && AuthService.instance.isMechanic;
 
-                        Color cardBg = const Color(0xFFF0FDF4);
-                        Color cardBorder = const Color(0xFF86EFAC);
-                        Color titleColor = const Color(0xFF166534);
+                        Color cardBg = isSubmitted ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC);
+                        Color cardBorder = isSubmitted ? const Color(0xFF15803D) : const Color(0xFF86EFAC);
+                        Color titleColor = isSubmitted ? const Color(0xFF14532D) : const Color(0xFF166534);
 
                         if (pmsRaw == null) {
                           cardBg = const Color(0xFFF8FAFC);
                           cardBorder = const Color(0xFFCBD5E1);
                           titleColor = const Color(0xFF1E3A8A);
+                        } else if (isSubmitted) {
+                          cardBg = const Color(0xFFF0FDF4);
+                          cardBorder = const Color(0xFF15803D);
+                          titleColor = const Color(0xFF14532D);
                         } else if (ngCount > 0) {
                           cardBg = const Color(0xFFFEF2F2);
                           cardBorder = const Color(0xFFFCA5A5);
@@ -2704,17 +2712,26 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 children: [
                                   ElevatedButton.icon(
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: isSubmitted ? const Color(0xFF1E3A8A) : const Color(0xFF0F766E),
+                                      backgroundColor: isSubmitted
+                                          ? (isTechRestricted ? const Color(0xFF0F766E) : const Color(0xFF1E3A8A))
+                                          : const Color(0xFF0F766E),
                                       foregroundColor: Colors.white,
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       minimumSize: Size.zero,
                                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     ),
-                                    icon: Icon(isSubmitted ? Icons.edit_note : Icons.playlist_add_check, size: 15),
+                                    icon: Icon(
+                                      isSubmitted
+                                          ? (isTechRestricted ? Icons.lock_outline : Icons.edit_note)
+                                          : Icons.playlist_add_check,
+                                      size: 15,
+                                    ),
                                     label: Text(
                                       pmsRaw == null
                                           ? 'Start / Fill PMS Diagnostic Check Sheet'
-                                          : (isSubmitted ? 'View / Re-evaluate PMS Check Sheet' : 'Continue Check Sheet (Draft)'),
+                                          : (isSubmitted
+                                              ? (isTechRestricted ? '🔒 View Completed Sheet (Read-Only)' : 'View / Re-evaluate PMS Check Sheet')
+                                              : 'Continue Check Sheet (Draft)'),
                                       style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
                                     ),
                                     onPressed: () async {
@@ -2723,6 +2740,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                         job: job,
                                         baseUrl: _baseUrl,
                                         workshopSettings: _workshopSettings,
+                                        readOnly: isTechRestricted,
                                         onSubmitted: () {
                                           setModalState(() {});
                                           _refreshAllData();

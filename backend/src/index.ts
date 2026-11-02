@@ -1288,6 +1288,11 @@ app.delete('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Res
     });
 
     res.json({ success: true, count: updatedRecs.length });
+  } catch (error) {
+    console.error('Delete recommendation error:', error);
+    res.status(500).json({ error: 'Failed to delete recommendation' });
+  }
+});
 
 // -------------------------------------------------------------
 // PMS DIAGNOSTIC CHECK SHEET API
@@ -1353,6 +1358,28 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
         ? (existing.walkAroundData as Record<string, any>)
         : {};
 
+    const existingPms = currentWalkAround.pmsChecklist && typeof currentWalkAround.pmsChecklist === 'object'
+      ? (currentWalkAround.pmsChecklist as Record<string, any>)
+      : null;
+
+    const userRole = String(req.headers['x-user-role'] || '').toUpperCase();
+    const isSupervisor = ['ADMIN', 'SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADVISOR'].includes(userRole);
+    const isAlreadyLocked = existingPms && (
+      existingPms.isLocked === true ||
+      existingPms.status === 'SUBMITTED_TO_ADVISOR' ||
+      existingPms.status === 'COMPLETED'
+    );
+
+    // Security Gate: Another technician cannot redo or overwrite a completed & locked PMS sheet
+    if (isAlreadyLocked && !isSupervisor && !req.body.supervisorOverride) {
+      return res.status(403).json({
+        error: `Security Lock: This PMS Check Sheet has already been completed and locked by ${existingPms.technicianName || 'Technician'} on ${existingPms.submittedAt || 'earlier'}. Another technician cannot redo or overwrite this completed diagnosis. Contact a Service Advisor or Workshop Admin to request an unlock.`,
+        isLocked: true,
+        completedBy: existingPms.technicianName,
+        completedAt: existingPms.submittedAt,
+      });
+    }
+
     const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
       ? currentWalkAround.recommendations
       : [];
@@ -1367,7 +1394,9 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
     checklist.technicianName = tech;
     if (submitToAdvisor) {
       checklist.status = 'SUBMITTED_TO_ADVISOR';
-      checklist.submittedAt = new Date().toISOString();
+      checklist.isLocked = true;
+      checklist.completedBy = tech;
+      checklist.submittedAt = checklist.submittedAt || new Date().toISOString();
     }
 
     let updatedRecs = [...existingRecs];
@@ -1501,9 +1530,66 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
   }
 });
 
-  } catch (error) {
-    console.error('Delete recommendation error:', error);
-    res.status(500).json({ error: 'Failed to delete recommendation' });
+// Unlock PMS Check Sheet (Service Advisor / Admin only)
+app.post('/api/jobs/:id/pms-unlock', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const userRole = String(req.headers['x-user-role'] || '').toUpperCase();
+    const userName = String(req.headers['x-user-name'] || 'Supervisor');
+    const isSupervisor = ['ADMIN', 'SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADVISOR'].includes(userRole);
+
+    if (!isSupervisor) {
+      return res.status(403).json({ error: 'Only Service Advisors, Managers, or Admins can unlock a completed PMS Check Sheet.' });
+    }
+
+    const job = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround = job.walkAroundData && typeof job.walkAroundData === 'object'
+      ? { ...(job.walkAroundData as Record<string, any>) }
+      : {};
+
+    const pms = currentWalkAround.pmsChecklist && typeof currentWalkAround.pmsChecklist === 'object'
+      ? { ...(currentWalkAround.pmsChecklist as Record<string, any>) }
+      : null;
+
+    if (!pms) {
+      return res.status(400).json({ error: 'No PMS Check Sheet found to unlock.' });
+    }
+
+    pms.isLocked = false;
+    pms.status = 'DRAFT';
+    pms.unlockedBy = userName;
+    pms.unlockedAt = new Date().toISOString();
+    pms.unlockReason = req.body.reason || 'Supervisor authorized re-inspection';
+
+    currentWalkAround.pmsChecklist = pms;
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: { walkAroundData: currentWalkAround },
+      include: { customer: true, vehicle: true, estimates: { include: { lineItems: true, invoice: true } } },
+    });
+
+    await createJobCardAuditLog({
+      jobCardId: updatedJob.id,
+      actorName: userName,
+      actorRole: userRole,
+      action: 'PMS_CHECKLIST_UNLOCKED',
+      details: `PMS Check Sheet unlocked by ${userName} (${userRole}) for re-evaluation. Reason: ${pms.unlockReason}`,
+      diff: { wasLocked: true, isLocked: false },
+    });
+
+    res.json({ success: true, message: 'PMS Check Sheet unlocked successfully.', jobCard: updatedJob, pmsChecklist: pms });
+  } catch (error: any) {
+    console.error('Error unlocking PMS checklist:', error);
+    res.status(500).json({ error: error.message || 'Failed to unlock PMS checklist' });
   }
 });
 

@@ -11,6 +11,7 @@ class PmsChecklistSheet extends StatefulWidget {
   final String baseUrl;
   final VoidCallback onSubmitted;
   final Map<String, dynamic>? workshopSettings;
+  final bool? readOnly;
 
   const PmsChecklistSheet({
     super.key,
@@ -18,6 +19,7 @@ class PmsChecklistSheet extends StatefulWidget {
     required this.baseUrl,
     required this.onSubmitted,
     this.workshopSettings,
+    this.readOnly,
   });
 
   static Future<void> show({
@@ -26,6 +28,7 @@ class PmsChecklistSheet extends StatefulWidget {
     required String baseUrl,
     required VoidCallback onSubmitted,
     Map<String, dynamic>? workshopSettings,
+    bool? readOnly,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -36,6 +39,7 @@ class PmsChecklistSheet extends StatefulWidget {
         baseUrl: baseUrl,
         onSubmitted: onSubmitted,
         workshopSettings: workshopSettings,
+        readOnly: readOnly,
       ),
     );
   }
@@ -48,6 +52,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
   late PmsChecksheetData _checksheet;
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isReadOnly = false;
   String _selectedCategoryFilter = 'ALL';
   late TextEditingController _techCommentsCtrl;
   late TextEditingController _complaintsCtrl;
@@ -141,9 +146,97 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
     _complaintsCtrl.text = _checksheet.customerComplaint;
     _mileageCtrl.text = _checksheet.currentMileage?.toString() ?? '';
 
+    final wad = widget.job['walkAroundData'] is Map ? (widget.job['walkAroundData'] as Map) : {};
+    final pmsRaw = (wad['pmsChecklist'] is Map) ? (wad['pmsChecklist'] as Map) : null;
+    final isLocked = _checksheet.isLocked ||
+        _checksheet.status == 'SUBMITTED_TO_ADVISOR' ||
+        _checksheet.status == 'COMPLETED' ||
+        pmsRaw?['isLocked'] == true ||
+        pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+        pmsRaw?['status'] == 'COMPLETED';
+
+    final isSupervisor = AuthService.instance.isOwner ||
+        AuthService.instance.isManager ||
+        AuthService.instance.isAdvisor;
+
+    _isReadOnly = widget.readOnly ?? (isLocked && !isSupervisor);
+
     setState(() {
       _isLoading = false;
     });
+  }
+
+  Future<void> _unlockChecksheet() async {
+    final jobId = widget.job['id']?.toString() ?? '';
+    setState(() => _isSaving = true);
+    try {
+      final res = await http.post(
+        Uri.parse('${widget.baseUrl}/jobs/$jobId/pms-unlock'),
+        headers: AuthService.instance.authHeaders,
+        body: json.encode({
+          'reason': 'Supervisor authorized re-evaluation',
+        }),
+      );
+      if (res.statusCode == 200) {
+        setState(() {
+          _isReadOnly = false;
+          _checksheet.status = 'DRAFT';
+          _checksheet.isLocked = false;
+        });
+        widget.onSubmitted();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✓ Check Sheet unlocked for re-inspection.'),
+              backgroundColor: Color(0xFF15803D),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Unlock failed: ${res.body}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _openPdfPreview() {
+    try {
+      PmsPdfService.showPdfPreviewModal(
+        context: context,
+        workshopSettings: widget.workshopSettings ?? widget.job['workshopSettings'] ?? {},
+        job: widget.job,
+        checksheet: _checksheet,
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cannot render PDF: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  String _formatDateShort(dynamic iso) {
+    if (iso == null || iso.toString().isEmpty) return '';
+    try {
+      final dt = DateTime.parse(iso.toString()).toLocal();
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+    } catch (_) {
+      return iso.toString();
+    }
   }
 
   void _switchTemplate(String newCode) {
@@ -489,7 +582,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                               overflow: TextOverflow.ellipsis,
                             ),
                             Text(
-                              'Job #${_checksheet.jobCardNumber} • Tech: ${AuthService.instance.userName}',
+                              'Job #${_checksheet.jobCardNumber} • ${_isReadOnly ? "Inspected by: ${_checksheet.technicianName.isNotEmpty ? _checksheet.technicianName : 'Tech'}" : "Tech: ${AuthService.instance.userName}"}',
                               style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
                             ),
                           ],
@@ -498,14 +591,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                       IconButton(
                         icon: const Icon(Icons.print_outlined, color: Color(0xFF1E3A8A)),
                         tooltip: 'Print Customer PMS Report (PDF)',
-                        onPressed: () {
-                          PmsPdfService.showPdfPreviewModal(
-                            context: context,
-                            workshopSettings: widget.workshopSettings ?? widget.job['workshopSettings'] ?? {},
-                            job: widget.job,
-                            checksheet: _checksheet,
-                          );
-                        },
+                        onPressed: _openPdfPreview,
                       ),
                       IconButton(
                         onPressed: () => Navigator.pop(context),
@@ -516,6 +602,52 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 ],
               ),
             ),
+
+            if (_isReadOnly)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF064E3B),
+                  border: Border(bottom: BorderSide(color: Color(0xFF34D399), width: 1.5)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.verified, color: Color(0xFF4ADE80), size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'DIAGNOSTIC INSPECTION COMPLETE & LOCKED',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11),
+                          ),
+                          Text(
+                            'Signed by ${_checksheet.technicianName.isNotEmpty ? _checksheet.technicianName : "Technician"}${_checksheet.submittedAt != null ? " on ${_formatDateShort(_checksheet.submittedAt)}" : ""} • Read-Only Security Mode',
+                            style: const TextStyle(color: Color(0xFFA7F3D0), fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.lock, size: 11, color: Colors.white),
+                          SizedBox(width: 3),
+                          Text('Locked', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // Sticky Header: KPI score & Template Switcher
             Container(
@@ -608,88 +740,134 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                   const SizedBox(height: 6),
 
                   // Template & Interval Row
-                  Row(
-                    children: [
-                      // Template Dropdown
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E293B),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFF334155)),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _checksheet.templateCode,
-                              isExpanded: true,
-                              isDense: true,
-                              icon: const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
-                              dropdownColor: const Color(0xFF1E293B),
-                              style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
-                              items: PmsTemplates.definitions
-                                  .map((d) => DropdownMenuItem(
-                                        value: d.code,
-                                        child: Text(
-                                          d.title.replaceAll('PMS CHECK SHEET - ', ''),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ))
-                                  .toList(),
-                              selectedItemBuilder: (ctx) => PmsTemplates.definitions
-                                  .map((d) => Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: Text(
-                                          d.title.replaceAll('PMS CHECK SHEET - ', ''),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
-                                        ),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) {
-                                if (v != null) _switchTemplate(v);
-                              },
+                  if (_isReadOnly)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E293B),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFF334155)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.lock_outline, size: 13, color: Colors.white70),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    _checksheet.templateTitle.replaceAll('PMS CHECK SHEET - ', ''),
+                                    style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Service Interval Chips
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: curDef.intervals.map((inv) {
-                            final sel = _checksheet.selectedInterval == inv;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 4),
-                              child: InkWell(
-                                onTap: () => setState(() => _checksheet.selectedInterval = inv),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: sel ? const Color(0xFF60A5FA) : const Color(0xFF334155)),
-                                  ),
-                                  child: Text(
-                                    inv,
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.bold,
-                                      color: sel ? Colors.white : Colors.grey.shade400,
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2563EB).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF60A5FA)),
+                          ),
+                          child: Text(
+                            'Interval: ${_checksheet.selectedInterval}',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF93C5FD)),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        // Template Dropdown
+                        Expanded(
+                          flex: 3,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E293B),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFF334155)),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _checksheet.templateCode,
+                                isExpanded: true,
+                                isDense: true,
+                                icon: const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
+                                dropdownColor: const Color(0xFF1E293B),
+                                style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
+                                items: PmsTemplates.definitions
+                                    .map((d) => DropdownMenuItem(
+                                          value: d.code,
+                                          child: Text(
+                                            d.title.replaceAll('PMS CHECK SHEET - ', ''),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ))
+                                    .toList(),
+                                selectedItemBuilder: (ctx) => PmsTemplates.definitions
+                                    .map((d) => Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Text(
+                                            d.title.replaceAll('PMS CHECK SHEET - ', ''),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w600),
+                                          ),
+                                        ))
+                                    .toList(),
+                                onChanged: (v) {
+                                  if (v != null) _switchTemplate(v);
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Service Interval Chips
+                        Expanded(
+                          flex: 2,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: curDef.intervals.map((inv) {
+                                final sel = _checksheet.selectedInterval == inv;
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: InkWell(
+                                    onTap: () => setState(() => _checksheet.selectedInterval = inv),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: sel ? const Color(0xFF60A5FA) : const Color(0xFF334155)),
+                                      ),
+                                      child: Text(
+                                        inv,
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: sel ? Colors.white : Colors.grey.shade400,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
+                                );
+                              }).toList(),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -738,17 +916,35 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          backgroundColor: const Color(0xFFF0FDF4),
+                      if (!_isReadOnly)
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            backgroundColor: const Color(0xFFF0FDF4),
+                          ),
+                          icon: const Icon(Icons.flash_on, size: 14, color: Color(0xFF16A34A)),
+                          label: const Text('Mark Remaining as OK', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
+                          onPressed: _markAllRemainingAsOk,
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFFA7F3D0)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock, size: 12, color: Color(0xFF059669)),
+                              SizedBox(width: 4),
+                              Text('Read-Only View', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF047857))),
+                            ],
+                          ),
                         ),
-                        icon: const Icon(Icons.flash_on, size: 14, color: Color(0xFF16A34A)),
-                        label: const Text('Mark Remaining as OK', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
-                        onPressed: _markAllRemainingAsOk,
-                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -785,40 +981,95 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 ],
               ),
               child: SafeArea(
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        icon: const Icon(Icons.save_outlined, size: 18),
-                        label: const Text('Save Draft', style: TextStyle(fontWeight: FontWeight.bold)),
-                        onPressed: _isSaving ? null : () => _saveChecklist(submitToAdvisor: false),
+                child: _isReadOnly
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF15803D),
+                                side: const BorderSide(color: Color(0xFF86EFAC)),
+                                backgroundColor: const Color(0xFFF0FDF4),
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              icon: const Icon(Icons.print_outlined, size: 17, color: Color(0xFF15803D)),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Print / Preview PMS PDF', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFF15803D))),
+                              ),
+                              onPressed: _openPdfPreview,
+                            ),
+                          ),
+                          if (AuthService.instance.isOwner || AuthService.instance.isManager || AuthService.instance.isAdvisor) ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFD97706),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                                icon: _isSaving
+                                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                    : const Icon(Icons.lock_open, size: 17),
+                                label: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Unlock Sheet', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                ),
+                                onPressed: _isSaving ? null : _unlockChecksheet,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 6),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(context),
+                            tooltip: 'Close',
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              icon: const Icon(Icons.save_outlined, size: 16),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Save Draft', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                              ),
+                              onPressed: _isSaving ? null : () => _saveChecklist(submitToAdvisor: false),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 3,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF15803D),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                elevation: 2,
+                              ),
+                              icon: _isSaving
+                                  ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                  : const Icon(Icons.send_rounded, size: 16),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Send to Advisor', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                              ),
+                              onPressed: _isSaving ? null : _confirmSubmitToAdvisor,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 3,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF15803D),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          elevation: 2,
-                        ),
-                        icon: _isSaving
-                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Icon(Icons.send_rounded, size: 18),
-                        label: const Text('Send Diagnosis to Advisor', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        onPressed: _isSaving ? null : _confirmSubmitToAdvisor,
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ],
@@ -994,6 +1245,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                     const SizedBox(height: 6),
                     TextFormField(
                       initialValue: item.defectDescription ?? item.remarks,
+                      readOnly: _isReadOnly,
                       decoration: InputDecoration(
                         labelText: 'Defect Observation / Failure Details *',
                         hintText: 'e.g. Lining worn below limit, leaking axle seal',
@@ -1009,6 +1261,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                     const SizedBox(height: 8),
                     TextFormField(
                       initialValue: item.recommendedFix,
+                      readOnly: _isReadOnly,
                       decoration: const InputDecoration(
                         labelText: 'Recommended Repair / Action for Customer *',
                         hintText: 'e.g. Replace rear brake shoes, skim drum, replace hub seals',
@@ -1024,6 +1277,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         Expanded(
                           child: TextFormField(
                             initialValue: item.partsNeeded,
+                            readOnly: _isReadOnly,
                             decoration: const InputDecoration(
                               labelText: 'Parts Needed',
                               hintText: 'e.g. Brake shoe set',
@@ -1038,6 +1292,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         Expanded(
                           child: TextFormField(
                             initialValue: item.estimatedParts > 0 ? item.estimatedParts.toStringAsFixed(0) : '',
+                            readOnly: _isReadOnly,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
                               labelText: 'Est. Parts (KES)',
@@ -1052,6 +1307,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         Expanded(
                           child: TextFormField(
                             initialValue: item.estimatedLabour > 0 ? item.estimatedLabour.toStringAsFixed(0) : '',
+                            readOnly: _isReadOnly,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
                               labelText: 'Est. Labour (KES)',
@@ -1082,7 +1338,17 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
     required VoidCallback onTap,
   }) {
     return InkWell(
-      onTap: onTap,
+      onTap: _isReadOnly
+          ? () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('🔒 Inspection is complete and locked. Altering status is restricted to prevent tampering.'),
+                  duration: Duration(seconds: 2),
+                  backgroundColor: Color(0xFF1E293B),
+                ),
+              );
+            }
+          : onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1094,6 +1360,10 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_isReadOnly && isSelected) ...[
+              const Icon(Icons.check, size: 12, color: Colors.white),
+              const SizedBox(width: 4),
+            ],
             Text(
               label,
               style: TextStyle(
@@ -1176,6 +1446,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         flex: 2,
                         child: TextFormField(
                           initialValue: tyre.pressurePsi?.toString() ?? '',
+                          readOnly: _isReadOnly,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           decoration: const InputDecoration(
                             labelText: 'PSI',
@@ -1198,6 +1469,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                         flex: 2,
                         child: TextFormField(
                           initialValue: tyre.treadDepthMm?.toString() ?? '',
+                          readOnly: _isReadOnly,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           decoration: const InputDecoration(
                             labelText: 'Tread mm',
@@ -1261,6 +1533,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 Expanded(
                   child: TextFormField(
                     initialValue: _checksheet.battery.battery1Voltage?.toString() ?? '',
+                    readOnly: _isReadOnly,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
                       labelText: 'Batt 1 (V) [>11.5V]',
@@ -1278,6 +1551,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                   Expanded(
                     child: TextFormField(
                       initialValue: _checksheet.battery.battery2Voltage?.toString() ?? '',
+                      readOnly: _isReadOnly,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
                         labelText: 'Batt 2 (V) [>11.5V]',
@@ -1295,6 +1569,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 Expanded(
                   child: TextFormField(
                     initialValue: _checksheet.battery.totalVoltage?.toString() ?? '',
+                    readOnly: _isReadOnly,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: InputDecoration(
                       labelText: _checksheet.battery.is24VSystem ? 'Total (V) [>23V]' : 'Total (V) [>12.4V]',
@@ -1314,6 +1589,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                 Expanded(
                   child: TextFormField(
                     controller: _mileageCtrl,
+                    readOnly: _isReadOnly,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Current Mileage (km) *',
@@ -1337,9 +1613,11 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                     items: ['Empty', '1/4', 'Half', '3/4', 'Full']
                         .map((f) => DropdownMenuItem(value: f, child: Text(f)))
                         .toList(),
-                    onChanged: (v) {
-                      if (v != null) _checksheet.fuelLevel = v;
-                    },
+                    onChanged: _isReadOnly
+                        ? null
+                        : (v) {
+                            if (v != null) _checksheet.fuelLevel = v;
+                          },
                   ),
                 ),
               ],
@@ -1348,6 +1626,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
 
             TextFormField(
               controller: _complaintsCtrl,
+              readOnly: _isReadOnly,
               maxLines: 2,
               decoration: const InputDecoration(
                 labelText: 'Customer Complaints / Intake Requests',
@@ -1359,6 +1638,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
 
             TextFormField(
               controller: _techCommentsCtrl,
+              readOnly: _isReadOnly,
               maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'Technician Diagnostic Summary & Overall Comments *',

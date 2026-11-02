@@ -284,12 +284,14 @@ class PmsChecksheetData {
   String? submittedAt;
   String? reviewedByAdvisor;
   String? reviewedAt;
+  bool isLocked;
 
   PmsChecksheetData({
     required this.templateCode,
     required this.templateTitle,
     this.selectedInterval = '15K',
     this.status = 'DRAFT',
+    this.isLocked = false,
     required this.registrationNumber,
     this.vinNumber = '',
     this.jobCardNumber = '',
@@ -385,6 +387,7 @@ class PmsChecksheetData {
         'technicianName': technicianName,
         'technicianSignature': technicianSignature,
         'submittedAt': submittedAt,
+        'isLocked': isLocked,
         'reviewedByAdvisor': reviewedByAdvisor,
         'reviewedAt': reviewedAt,
         'summary': {
@@ -426,6 +429,7 @@ class PmsChecksheetData {
       technicianName: json['technicianName']?.toString() ?? '',
       technicianSignature: json['technicianSignature']?.toString(),
       submittedAt: json['submittedAt']?.toString(),
+      isLocked: json['isLocked'] == true || json['status'] == 'SUBMITTED_TO_ADVISOR' || json['status'] == 'COMPLETED',
       reviewedByAdvisor: json['reviewedByAdvisor']?.toString(),
       reviewedAt: json['reviewedAt']?.toString(),
     );
