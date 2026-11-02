@@ -4,17 +4,20 @@ import 'package:http/http.dart' as http;
 import '../../models/pms_checklist_model.dart';
 import '../../models/pms_checklist_templates.dart';
 import '../../services/auth_service.dart';
+import '../../services/pms_pdf_service.dart';
 
 class PmsChecklistSheet extends StatefulWidget {
   final Map<String, dynamic> job;
   final String baseUrl;
   final VoidCallback onSubmitted;
+  final Map<String, dynamic>? workshopSettings;
 
   const PmsChecklistSheet({
     super.key,
     required this.job,
     required this.baseUrl,
     required this.onSubmitted,
+    this.workshopSettings,
   });
 
   static Future<void> show({
@@ -22,6 +25,7 @@ class PmsChecklistSheet extends StatefulWidget {
     required Map<String, dynamic> job,
     required String baseUrl,
     required VoidCallback onSubmitted,
+    Map<String, dynamic>? workshopSettings,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -31,6 +35,7 @@ class PmsChecklistSheet extends StatefulWidget {
         job: job,
         baseUrl: baseUrl,
         onSubmitted: onSubmitted,
+        workshopSettings: workshopSettings,
       ),
     );
   }
@@ -489,6 +494,18 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
                             ),
                           ],
                         ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.print_outlined, color: Color(0xFF1E3A8A)),
+                        tooltip: 'Print Customer PMS Report (PDF)',
+                        onPressed: () {
+                          PmsPdfService.showPdfPreviewModal(
+                            context: context,
+                            workshopSettings: widget.workshopSettings ?? widget.job['workshopSettings'] ?? {},
+                            job: widget.job,
+                            checksheet: _checksheet,
+                          );
+                        },
                       ),
                       IconButton(
                         onPressed: () => Navigator.pop(context),

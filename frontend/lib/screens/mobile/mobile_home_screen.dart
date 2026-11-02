@@ -5029,6 +5029,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                     context: ctx,
                                     job: job,
                                     baseUrl: _baseUrl,
+                                    workshopSettings: _workshopSettings,
                                     onSubmitted: () {
                                       setSheet(() {});
                                       _fetchJobs();
@@ -5043,13 +5044,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                               const SizedBox(width: 8),
                               OutlinedButton.icon(
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF0F172A),
-                                  side: const BorderSide(color: Color(0xFF94A3B8)),
+                                  foregroundColor: const Color(0xFF15803D),
+                                  side: const BorderSide(color: Color(0xFF86EFAC)),
+                                  backgroundColor: const Color(0xFFF0FDF4),
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                 ),
-                                icon: const Icon(Icons.print_outlined, size: 16),
-                                label: const Text('PDF', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5)),
+                                icon: const Icon(Icons.print_outlined, size: 16, color: Color(0xFF15803D)),
+                                label: const Text('Print PMS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5, color: Color(0xFF15803D))),
                                 onPressed: () {
                                   try {
                                     final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
@@ -5609,12 +5611,48 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 }),
                 const SizedBox(height: 18),
                 if (!techMode) ...[
+                  Builder(builder: (_) {
+                    final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : null;
+                    final pmsRaw = (wad != null && wad['pmsChecklist'] is Map) ? (wad['pmsChecklist'] as Map) : null;
+                    if (pmsRaw == null) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.assignment_turned_in_outlined, size: 16, color: Color(0xFF15803D)),
+                          label: const Text('Print Customer PMS Report (Separate)', style: TextStyle(fontSize: 12.5, color: Color(0xFF15803D), fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF86EFAC), width: 1.2),
+                            backgroundColor: const Color(0xFFF0FDF4),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () {
+                            try {
+                              final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                              PmsPdfService.showPdfPreviewModal(
+                                context: context,
+                                workshopSettings: _workshopSettings,
+                                job: job,
+                                checksheet: checksheetObj,
+                              );
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Cannot render PMS PDF: $e'), backgroundColor: Colors.red),
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    );
+                  }),
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
                           icon: const Icon(Icons.print_outlined, size: 15),
-                          label: const Text('Customer Copy', style: TextStyle(fontSize: 12)),
+                          label: const Text('Job Card Copy', style: TextStyle(fontSize: 12)),
                           onPressed: () => InvoicePdfService.showJobCardPreviewModal(
                             context: context,
                             workshopSettings: _workshopSettings,

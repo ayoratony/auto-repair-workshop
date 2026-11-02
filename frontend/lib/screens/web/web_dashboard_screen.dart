@@ -2415,6 +2415,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                         context: ctx,
                                         job: job,
                                         baseUrl: _baseUrl,
+                                        workshopSettings: _workshopSettings,
                                         onSubmitted: () {
                                           setModalState(() {});
                                           _refreshAllData();
@@ -3202,10 +3203,43 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   onPressed: () => Navigator.pop(ctx),
                   child: const Text('Close'),
                 ),
+                Builder(builder: (_) {
+                  final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : null;
+                  final pmsRaw = (wad != null && wad['pmsChecklist'] is Map) ? (wad['pmsChecklist'] as Map) : null;
+                  if (pmsRaw == null) return const SizedBox.shrink();
+                  return OutlinedButton.icon(
+                    onPressed: () {
+                      try {
+                        final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                        PmsPdfService.showPdfPreviewModal(
+                          context: context,
+                          workshopSettings: _workshopSettings,
+                          job: job,
+                          checksheet: checksheetObj,
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Cannot render PMS Report: $e'), backgroundColor: Colors.red),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.assignment_turned_in, size: 17, color: Color(0xFF15803D)),
+                    label: const Text(
+                      'Print Customer PMS Report',
+                      style: TextStyle(color: Color(0xFF15803D), fontWeight: FontWeight.bold),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFF15803D)),
+                      backgroundColor: const Color(0xFFF0FDF4),
+                    ),
+                  );
+                }),
                 OutlinedButton.icon(
                   onPressed: () {
                     final updatedJob = Map<String, dynamic>.from(job);
+                    final existingWad = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
                     updatedJob['walkAroundData'] = {
+                      ...existingWad,
                       'bodyType': bodyType.name,
                       'markers': markers.map((m) => m.toJson()).toList(),
                       'memoDetails': memoDetails.toJson(),
@@ -3222,7 +3256,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   },
                   icon: const Icon(Icons.print_outlined, size: 17, color: Color(0xFF1D4ED8)),
                   label: const Text(
-                    'Print / PDF Customer Copy',
+                    'Print Job Card Copy',
                     style: TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
                   ),
                   style: OutlinedButton.styleFrom(
@@ -3231,11 +3265,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
+                    final existingWad = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
                     await http.put(
                       Uri.parse('$_baseUrl/jobs/${job['id']}'),
                       headers: {'Content-Type': 'application/json'},
                       body: json.encode({
                         'walkAroundData': {
+                          ...existingWad,
                           'bodyType': bodyType.name,
                           'markers': markers.map((m) => m.toJson()).toList(),
                           'memoDetails': memoDetails.toJson(),
@@ -4987,21 +5023,61 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 child: const Text('Edit', style: TextStyle(color: Colors.black87, fontSize: 12)),
               ),
               const SizedBox(width: 6),
-              OutlinedButton.icon(
-                onPressed: () => InvoicePdfService.showJobCardPreviewModal(
-                  context: context,
-                  workshopSettings: _workshopSettings,
-                  job: job,
-                ),
-                icon: const Icon(Icons.print_outlined, size: 15, color: Color(0xFF1D4ED8)),
-                label: const Text('Customer Copy', style: TextStyle(color: Color(0xFF1D4ED8), fontSize: 12, fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 32),
-                  side: const BorderSide(color: Color(0xFF93C5FD)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              Tooltip(
+                message: 'Print Vehicle Intake & Job Card Receiving Memo',
+                child: OutlinedButton.icon(
+                  onPressed: () => InvoicePdfService.showJobCardPreviewModal(
+                    context: context,
+                    workshopSettings: _workshopSettings,
+                    job: job,
+                  ),
+                  icon: const Icon(Icons.print_outlined, size: 15, color: Color(0xFF1D4ED8)),
+                  label: const Text('Job Card', style: TextStyle(color: Color(0xFF1D4ED8), fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 32),
+                    side: const BorderSide(color: Color(0xFF93C5FD)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
                 ),
               ),
+              Builder(builder: (_) {
+                final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : null;
+                final pmsRaw = (wad != null && wad['pmsChecklist'] is Map) ? (wad['pmsChecklist'] as Map) : null;
+                if (pmsRaw == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Tooltip(
+                    message: 'Print Separate Customer PMS Health & Diagnostic Report',
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        try {
+                          final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                          PmsPdfService.showPdfPreviewModal(
+                            context: context,
+                            workshopSettings: _workshopSettings,
+                            job: job,
+                            checksheet: checksheetObj,
+                          );
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Cannot render PMS Report: $e'), backgroundColor: Colors.red),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.assignment_turned_in_outlined, size: 15, color: Color(0xFF15803D)),
+                      label: const Text('Customer PMS', style: TextStyle(color: Color(0xFF15803D), fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        minimumSize: const Size(0, 32),
+                        side: const BorderSide(color: Color(0xFF86EFAC)),
+                        backgroundColor: const Color(0xFFF0FDF4),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      ),
+                    ),
+                  ),
+                );
+              }),
             ],
           ),
         ),
