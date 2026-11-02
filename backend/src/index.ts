@@ -894,6 +894,45 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job Card not found' });
     }
 
+    // Security Gate: Prevent another technician from overwriting a locked Job Sheet assessment
+    const existingWalk =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? (existing.walkAroundData as Record<string, any>)
+        : {};
+    const existingTechInsp =
+      existingWalk.techInspection && typeof existingWalk.techInspection === 'object'
+        ? (existingWalk.techInspection as Record<string, any>)
+        : {};
+    const existingWf =
+      existingWalk.workflowState && typeof existingWalk.workflowState === 'object'
+        ? (existingWalk.workflowState as Record<string, any>)
+        : {};
+    const existingPms =
+      existingWalk.pmsChecklist && typeof existingWalk.pmsChecklist === 'object'
+        ? (existingWalk.pmsChecklist as Record<string, any>)
+        : {};
+
+    const callerRole = String(req.headers['x-user-role'] || '').toUpperCase();
+    const isCallerSupervisor = ['ADMIN', 'SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADVISOR'].includes(callerRole);
+    const isAssessmentAlreadyLocked =
+      existingTechInsp.isLocked === true ||
+      existingWf.isAssessmentLocked === true ||
+      existingPms.isLocked === true ||
+      existing.status === 'AWAITING_APPROVAL';
+
+    if (
+      isAssessmentAlreadyLocked &&
+      !isCallerSupervisor &&
+      walkAroundData &&
+      typeof walkAroundData === 'object' &&
+      !req.body.supervisorOverride
+    ) {
+      walkAroundData.techInspection = existingWalk.techInspection;
+      walkAroundData.diagnostics = existingWalk.diagnostics;
+      walkAroundData.obdCodes = existingWalk.obdCodes;
+      walkAroundData.pmsChecklist = existingWalk.pmsChecklist;
+    }
+
     if (customerName || phone !== undefined) {
       await prisma.customer.update({
         where: { id: existing.customerId },
@@ -1495,7 +1534,18 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
     }
 
     let newStatus = existing.status;
-    if (submitToAdvisor && (existing.status === 'BOOKED' || existing.status === 'INSPECTION')) {
+    const isAlreadyAuthorized = Boolean(
+      currentWalkAround.repairAuthorization &&
+      typeof currentWalkAround.repairAuthorization === 'object' &&
+      (currentWalkAround.repairAuthorization as any).isAuthorized === true
+    );
+    if (
+      submitToAdvisor &&
+      !isAlreadyAuthorized &&
+      existing.status !== 'QUALITY_CHECK' &&
+      existing.status !== 'READY' &&
+      existing.status !== 'COMPLETED'
+    ) {
       newStatus = 'AWAITING_APPROVAL';
     }
 
@@ -1508,11 +1558,25 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
       ? {
           ...existingWorkflow,
           stage: 'AWAITING_ADVISOR_APPROVAL',
+          isAssessmentLocked: true,
           assessmentSubmittedAt: new Date().toISOString(),
           assessmentSubmittedBy: tech,
           pmsCompleted: true,
         }
       : existingWorkflow;
+
+    const existingTechInsp =
+      currentWalkAround.techInspection && typeof currentWalkAround.techInspection === 'object'
+        ? (currentWalkAround.techInspection as Record<string, any>)
+        : {};
+    const updatedTechInsp = submitToAdvisor
+      ? {
+          ...existingTechInsp,
+          isLocked: true,
+          submittedBy: tech,
+          submittedAt: new Date().toISOString(),
+        }
+      : existingTechInsp;
 
     const updatedJob = await prisma.jobCard.update({
       where: { id },
@@ -1523,6 +1587,7 @@ app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
         walkAroundData: {
           ...currentWalkAround,
           pmsChecklist: checklist,
+          techInspection: updatedTechInsp,
           recommendations: updatedRecs,
           workflowState: updatedWorkflowState,
         },
@@ -1621,21 +1686,45 @@ app.post('/api/jobs/:id/pms-unlock', async (req: Request, res: Response) => {
       ? { ...(currentWalkAround.pmsChecklist as Record<string, any>) }
       : null;
 
-    if (!pms) {
-      return res.status(400).json({ error: 'No PMS Check Sheet found to unlock.' });
+    const unlockReason = req.body.reason || 'Supervisor authorized re-inspection';
+    const nowIso = new Date().toISOString();
+
+    if (pms) {
+      pms.isLocked = false;
+      pms.status = 'DRAFT';
+      pms.unlockedBy = userName;
+      pms.unlockedAt = nowIso;
+      pms.unlockReason = unlockReason;
+      currentWalkAround.pmsChecklist = pms;
     }
 
-    pms.isLocked = false;
-    pms.status = 'DRAFT';
-    pms.unlockedBy = userName;
-    pms.unlockedAt = new Date().toISOString();
-    pms.unlockReason = req.body.reason || 'Supervisor authorized re-inspection';
+    if (currentWalkAround.techInspection && typeof currentWalkAround.techInspection === 'object') {
+      currentWalkAround.techInspection = {
+        ...currentWalkAround.techInspection,
+        isLocked: false,
+        unlockedBy: userName,
+        unlockedAt: nowIso,
+      };
+    }
 
-    currentWalkAround.pmsChecklist = pms;
+    if (currentWalkAround.workflowState && typeof currentWalkAround.workflowState === 'object') {
+      currentWalkAround.workflowState = {
+        ...currentWalkAround.workflowState,
+        isAssessmentLocked: false,
+        stage: 'DISPATCHED_FOR_ASSESSMENT',
+        unlockedBy: userName,
+        unlockedAt: nowIso,
+      };
+    }
+
+    const nextStatus = job.status === 'AWAITING_APPROVAL' ? ('INSPECTION' as JobStatus) : job.status;
 
     const updatedJob = await prisma.jobCard.update({
       where: { id },
-      data: { walkAroundData: currentWalkAround },
+      data: {
+        status: nextStatus,
+        walkAroundData: currentWalkAround,
+      },
       include: { customer: true, vehicle: true, estimates: { include: { lineItems: true, invoice: true } } },
     });
 
@@ -1644,11 +1733,11 @@ app.post('/api/jobs/:id/pms-unlock', async (req: Request, res: Response) => {
       actorName: userName,
       actorRole: userRole,
       action: 'PMS_CHECKLIST_UNLOCKED',
-      details: `PMS Check Sheet unlocked by ${userName} (${userRole}) for re-evaluation. Reason: ${pms.unlockReason}`,
+      details: `Job Sheet / PMS Assessment unlocked by ${userName} (${userRole}) for re-evaluation. Reason: ${unlockReason}`,
       diff: { wasLocked: true, isLocked: false },
     });
 
-    res.json({ success: true, message: 'PMS Check Sheet unlocked successfully.', jobCard: updatedJob, pmsChecklist: pms });
+    res.json({ success: true, message: 'Job Sheet & PMS Check Sheet unlocked successfully.', jobCard: updatedJob, pmsChecklist: pms });
   } catch (error: any) {
     console.error('Error unlocking PMS checklist:', error);
     res.status(500).json({ error: error.message || 'Failed to unlock PMS checklist' });
@@ -1704,16 +1793,43 @@ app.post('/api/jobs/:id/submit-assessment', async (req: Request, res: Response) 
       : [];
 
     const nowIso = new Date().toISOString();
+    const existingTechInsp =
+      currentWalkAround.techInspection && typeof currentWalkAround.techInspection === 'object'
+        ? (currentWalkAround.techInspection as Record<string, any>)
+        : {};
+    const existingPms =
+      currentWalkAround.pmsChecklist && typeof currentWalkAround.pmsChecklist === 'object'
+        ? { ...(currentWalkAround.pmsChecklist as Record<string, any>) }
+        : null;
+
+    if (existingPms) {
+      existingPms.isLocked = true;
+      existingPms.status = 'SUBMITTED_TO_ADVISOR';
+      existingPms.completedBy = existingPms.completedBy || tech;
+      existingPms.submittedAt = existingPms.submittedAt || nowIso;
+    }
 
     const updatedWalkAround: Record<string, any> = {
       ...currentWalkAround,
-      ...(diagnosticChecklist ? { diagnosticChecklist } : {}),
+      ...(diagnosticChecklist ? { diagnostics: diagnosticChecklist, diagnosticChecklist } : {}),
       ...(obdCodes !== undefined ? { obdCodes } : {}),
       ...(inspectionResults ? { inspectionResults } : {}),
       ...(techNotes !== undefined ? { techNotes } : {}),
+      ...(existingPms ? { pmsChecklist: existingPms } : {}),
+      techInspection: {
+        ...existingTechInsp,
+        ...(inspectionResults ? { results: inspectionResults } : {}),
+        ...(obdCodes !== undefined ? { obdCodes } : {}),
+        ...(techNotes !== undefined ? { notes: techNotes } : {}),
+        by: tech,
+        updatedAt: nowIso,
+        submittedAt: nowIso,
+        isLocked: true,
+      },
       workflowState: {
         ...existingWorkflow,
         stage: 'AWAITING_ADVISOR_APPROVAL',
+        isAssessmentLocked: true,
         assessmentSubmittedAt: nowIso,
         assessmentSubmittedBy: tech,
         assessmentNotes: (assessmentNotes || techNotes || '').toString().trim(),

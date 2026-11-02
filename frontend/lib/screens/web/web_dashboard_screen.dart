@@ -2652,6 +2652,23 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         final completedRecs = approvedRecs.where((r) => r['repairCompleted'] == true).toList();
                         final isAuthorized = repairAuth?['isAuthorized'] == true || approvedRecs.isNotEmpty;
                         final isMech = AuthService.instance.isMechanic;
+                        final techInsp = wad['techInspection'] is Map ? (wad['techInspection'] as Map) : null;
+                        final pmsMap = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
+                        final bool isJobSheetLocked = techInsp?['isLocked'] == true ||
+                            wf?['isAssessmentLocked'] == true ||
+                            pmsMap?['isLocked'] == true ||
+                            pmsMap?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+                            pmsMap?['status'] == 'COMPLETED' ||
+                            curStatus == 'AWAITING_APPROVAL' ||
+                            curStatus == 'QUALITY_CHECK' ||
+                            curStatus == 'READY' ||
+                            curStatus == 'COMPLETED';
+                        final String lockedByTech = (techInsp?['by'] ??
+                                wf?['assessmentSubmittedBy'] ??
+                                pmsMap?['technicianName'] ??
+                                job['technician'] ??
+                                'Technician')
+                            .toString();
 
                         int activeStep = 2;
                         if (curStatus == 'BOOKED' || curStatus == 'INSPECTION') {
@@ -2801,6 +2818,168 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 ],
                               ),
                             ),
+
+                            // Stage 2 / Locked Assessment Card
+                            if (isJobSheetLocked) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0FDF4),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFF15803D), width: 1.4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF15803D),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Icon(Icons.lock_rounded, size: 17, color: Colors.white),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            '🔒 JOB SHEET ASSESSMENT COMPLETED & LOCKED',
+                                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF14532D)),
+                                          ),
+                                          Text(
+                                            'Signed by $lockedByTech • Sent to Service Advisor. Re-checks or edits by another technician are blocked.',
+                                            style: const TextStyle(fontSize: 11, color: Color(0xFF166534), fontWeight: FontWeight.w600),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!isMech) ...[
+                                      const SizedBox(width: 10),
+                                      OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: const Color(0xFFB45309),
+                                          side: const BorderSide(color: Color(0xFFF59E0B), width: 1.2),
+                                          backgroundColor: const Color(0xFFFFFBEB),
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        ),
+                                        icon: const Icon(Icons.lock_open_rounded, size: 15, color: Color(0xFFD97706)),
+                                        label: const Text(
+                                          '🔓 Unlock Assessment (Supervisor)',
+                                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                                        ),
+                                        onPressed: () async {
+                                          try {
+                                            final res = await http.post(
+                                              Uri.parse('$_baseUrl/jobs/${job['id']}/pms-unlock'),
+                                              headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                              body: json.encode({'reason': 'Supervisor unlocked assessment from Web Dashboard'}),
+                                            );
+                                            if (res.statusCode == 200) {
+                                              final data = json.decode(res.body);
+                                              if (data['jobCard'] is Map) {
+                                                setModalState(() {
+                                                  job.addAll(Map<String, dynamic>.from(data['jobCard']));
+                                                });
+                                              }
+                                              _refreshAllData();
+                                              if (ctx.mounted) {
+                                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('🔓 Job Sheet assessment unlocked for re-inspection!'),
+                                                    backgroundColor: Color(0xFF15803D),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          } catch (_) {}
+                                        },
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ] else if (!isAuthorized && curStatus != 'QUALITY_CHECK' && curStatus != 'READY' && curStatus != 'COMPLETED') ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFFBEB),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFFF59E0B), width: 1.4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFD97706),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Icon(Icons.engineering_rounded, size: 18, color: Colors.white),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '🔧 STAGE 2: MECHANIC ASSESSMENT & SUBMIT TO SERVICE ADVISOR',
+                                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF92400E)),
+                                          ),
+                                          Text(
+                                            'Complete PMS checksheet & findings below, then submit to Service Advisor. Submitting locks the assessment from further technician edits.',
+                                            style: TextStyle(fontSize: 11, color: Color(0xFFB45309)),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFFD97706),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                      ),
+                                      icon: const Icon(Icons.send_rounded, size: 15),
+                                      label: const Text(
+                                        '📤 Submit Assessment to Service Advisor (Locks Sheet)',
+                                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900),
+                                      ),
+                                      onPressed: () async {
+                                        try {
+                                          final res = await http.post(
+                                            Uri.parse('$_baseUrl/jobs/${job['id']}/submit-assessment'),
+                                            headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                                            body: json.encode({
+                                              'technicianName': job['technician'] ?? AuthService.instance.userName,
+                                            }),
+                                          );
+                                          if (res.statusCode == 200) {
+                                            final data = json.decode(res.body);
+                                            if (data['job'] is Map) {
+                                              setModalState(() {
+                                                job.addAll(Map<String, dynamic>.from(data['job']));
+                                              });
+                                            }
+                                            _refreshAllData();
+                                            if (ctx.mounted) {
+                                              ScaffoldMessenger.of(ctx).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('🔒 Assessment submitted to Service Advisor & Job Sheet locked!'),
+                                                  backgroundColor: Color(0xFF15803D),
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        } catch (_) {}
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
 
                             // Stage 4 Card: Authorized Repair Work Order
                             if (isAuthorized || (curStatus == 'IN_PROGRESS' && recs.isNotEmpty)) ...[
@@ -3141,7 +3320,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         final templateTitle = (pmsRaw?['templateTitle'] ?? pmsRaw?['templateName'] ?? 'Official Isuzu / PMS Check Sheet').toString();
                         final techName = (pmsRaw?['technicianName'] ?? job['technician'] ?? '').toString();
                         final interval = (pmsRaw?['selectedInterval'] ?? pmsRaw?['serviceInterval'] ?? '').toString();
-                        final bool isTechRestricted = isSubmitted && AuthService.instance.isMechanic;
+                        final bool isTechRestricted = isSubmitted;
 
                         Color cardBg = isSubmitted ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC);
                         Color cardBorder = isSubmitted ? const Color(0xFF15803D) : const Color(0xFF86EFAC);
@@ -3410,6 +3589,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       Builder(builder: (_) {
                         final curStatus = (job['status'] ?? 'IN_PROGRESS').toString().toUpperCase();
                         final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final techInspMap = walkData['techInspection'] is Map ? (walkData['techInspection'] as Map) : null;
+                        final wfMap = walkData['workflowState'] is Map ? (walkData['workflowState'] as Map) : null;
+                        final pmsMap2 = walkData['pmsChecklist'] is Map ? (walkData['pmsChecklist'] as Map) : null;
+                        final bool isAssessmentLockedHere = techInspMap?['isLocked'] == true ||
+                            wfMap?['isAssessmentLocked'] == true ||
+                            pmsMap2?['isLocked'] == true ||
+                            curStatus == 'AWAITING_APPROVAL' ||
+                            curStatus == 'QUALITY_CHECK' ||
+                            curStatus == 'READY' ||
+                            curStatus == 'COMPLETED';
                         final recs = (walkData['recommendations'] is List)
                             ? (walkData['recommendations'] as List).whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
                             : <Map<String, dynamic>>[];
@@ -3674,7 +3863,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   );
                                 }),
                               ],
-                              if (curStatus == 'BOOKED' || curStatus == 'INSPECTION') ...[
+                              if (!isAssessmentLockedHere) ...[
                                 const SizedBox(height: 8),
                                 Align(
                                   alignment: Alignment.centerRight,
@@ -3686,7 +3875,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     ),
                                     icon: const Icon(Icons.send_rounded, size: 15),
                                     label: const Text(
-                                      '📤 Submit Assessment & Recommendations to Service Advisor',
+                                      '📤 Submit Assessment & Recommendations to Service Advisor (Locks Sheet)',
                                       style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
                                     ),
                                     onPressed: () async {
@@ -3695,7 +3884,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                           Uri.parse('$_baseUrl/jobs/${job['id']}/submit-assessment'),
                                           headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
                                           body: json.encode({
-                                            'technicianName': job['technician'] ?? 'Technician',
+                                            'technicianName': job['technician'] ?? AuthService.instance.userName,
                                           }),
                                         );
                                         if (res.statusCode == 200) {
@@ -3709,8 +3898,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                           if (ctx.mounted) {
                                             ScaffoldMessenger.of(ctx).showSnackBar(
                                               const SnackBar(
-                                                content: Text('📤 Assessment & Recommendations submitted to Service Advisor!'),
-                                                backgroundColor: Color(0xFFD97706),
+                                                content: Text('🔒 Assessment & Recommendations submitted to Service Advisor & Job Sheet locked!'),
+                                                backgroundColor: Color(0xFF15803D),
                                               ),
                                             );
                                           }

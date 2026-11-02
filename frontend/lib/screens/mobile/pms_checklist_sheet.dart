@@ -155,11 +155,7 @@ class _PmsChecklistSheetState extends State<PmsChecklistSheet> {
         pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
         pmsRaw?['status'] == 'COMPLETED';
 
-    final isSupervisor = AuthService.instance.isOwner ||
-        AuthService.instance.isManager ||
-        AuthService.instance.isAdvisor;
-
-    _isReadOnly = widget.readOnly ?? (isLocked && !isSupervisor);
+    _isReadOnly = (widget.readOnly == true) || isLocked;
 
     setState(() {
       _isLoading = false;

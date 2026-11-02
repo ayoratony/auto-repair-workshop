@@ -5055,7 +5055,131 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => DraggableScrollableSheet(
+        builder: (ctx, setSheet) {
+          final curWad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : walk;
+          final curWf = curWad['workflowState'] is Map ? (curWad['workflowState'] as Map) : null;
+          final curTechInsp = curWad['techInspection'] is Map ? (curWad['techInspection'] as Map) : tech;
+          final curPms = curWad['pmsChecklist'] is Map ? (curWad['pmsChecklist'] as Map) : null;
+          final curRepairAuth = curWad['repairAuthorization'] is Map ? (curWad['repairAuthorization'] as Map) : null;
+          final bool isJobSheetLocked = curTechInsp['isLocked'] == true ||
+              curWf?['isAssessmentLocked'] == true ||
+              curPms?['isLocked'] == true ||
+              curPms?['status'] == 'SUBMITTED_TO_ADVISOR' ||
+              curPms?['status'] == 'COMPLETED' ||
+              status == 'AWAITING_APPROVAL' ||
+              status == 'QUALITY_CHECK' ||
+              status == 'READY' ||
+              status == 'COMPLETED';
+          final String lockedByTech = (curTechInsp['by'] ??
+                  curWf?['assessmentSubmittedBy'] ??
+                  curPms?['technicianName'] ??
+                  job['technician'] ??
+                  'Technician')
+              .toString();
+
+          Future<void> submitAndLockAssessment({bool closeSheetAfter = false}) async {
+            setSheet(() => saving = true);
+            try {
+              final nowIso = DateTime.now().toIso8601String();
+              final actingTech = (_techName.isNotEmpty && _techName != 'All')
+                  ? _techName
+                  : (assigned.isNotEmpty && assigned != 'Unassigned'
+                      ? assigned
+                      : (job['technician']?.toString().isNotEmpty == true && job['technician'] != 'Unassigned'
+                          ? job['technician'].toString()
+                          : AuthService.instance.userName));
+              final h = double.tryParse(hoursCtrl.text.trim());
+              walk['diagnostics'] = sheetDiag;
+              walk['obdCodes'] = obdCtrl.text.trim();
+              walk['securityPhotos'] = sheetPhotos;
+              walk['techInspection'] = {
+                'results': results,
+                'obdCodes': obdCtrl.text.trim(),
+                'notes': notesCtrl.text.trim(),
+                'by': actingTech,
+                'updatedAt': nowIso,
+                'submittedAt': nowIso,
+                'isLocked': true,
+              };
+              tech['isLocked'] = true;
+              tech['by'] = actingTech;
+
+              final res = await http.post(
+                Uri.parse('$_baseUrl/jobs/${job['id']}/submit-assessment'),
+                headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                body: json.encode({
+                  'technicianName': actingTech,
+                  'assessmentNotes': notesCtrl.text.trim(),
+                  'diagnosticChecklist': sheetDiag,
+                  'obdCodes': obdCtrl.text.trim(),
+                  'inspectionResults': results,
+                  'techNotes': notesCtrl.text.trim(),
+                  if (h != null) 'actualHours': h,
+                }),
+              );
+              if (res.statusCode == 200) {
+                final data = json.decode(res.body);
+                if (data['job'] is Map) {
+                  setSheet(() {
+                    job.addAll(Map<String, dynamic>.from(data['job']));
+                    walk.addAll(Map<String, dynamic>.from(data['job']['walkAroundData'] ?? {}));
+                    status = 'AWAITING_APPROVAL';
+                  });
+                }
+                _toast('🔒 Assessment submitted to Service Advisor & Job Sheet locked!', color: const Color(0xFF15803D));
+                _fetchJobs();
+                if (closeSheetAfter && ctx.mounted) {
+                  Navigator.pop(ctx);
+                }
+              } else {
+                _toast('Failed to submit assessment: ${res.body}', color: Colors.red);
+              }
+            } catch (e) {
+              _toast('Failed to submit assessment: $e', color: Colors.red);
+            } finally {
+              if (ctx.mounted) setSheet(() => saving = false);
+            }
+          }
+
+          Future<void> unlockJobSheetAssessment() async {
+            setSheet(() => saving = true);
+            try {
+              final res = await http.post(
+                Uri.parse('$_baseUrl/jobs/${job['id']}/pms-unlock'),
+                headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
+                body: json.encode({'reason': 'Supervisor unlocked Job Sheet for re-evaluation'}),
+              );
+              if (res.statusCode == 200) {
+                final data = json.decode(res.body);
+                setSheet(() {
+                  tech['isLocked'] = false;
+                  if (walk['techInspection'] is Map) walk['techInspection']['isLocked'] = false;
+                  if (walk['workflowState'] is Map) walk['workflowState']['isAssessmentLocked'] = false;
+                  if (walk['pmsChecklist'] is Map) {
+                    walk['pmsChecklist']['isLocked'] = false;
+                    walk['pmsChecklist']['status'] = 'DRAFT';
+                  }
+                  if (data['jobCard'] is Map) {
+                    job.addAll(Map<String, dynamic>.from(data['jobCard']));
+                    walk.addAll(Map<String, dynamic>.from(data['jobCard']['walkAroundData'] ?? {}));
+                    status = (data['jobCard']['status'] ?? 'INSPECTION').toString();
+                  } else if (status == 'AWAITING_APPROVAL') {
+                    status = 'INSPECTION';
+                  }
+                });
+                _toast('🔓 Job Sheet unlocked for re-inspection!', color: const Color(0xFF15803D));
+                _fetchJobs();
+              } else {
+                _toast('Unlock failed: ${res.body}', color: Colors.red);
+              }
+            } catch (e) {
+              _toast('Error unlocking sheet: $e', color: Colors.red);
+            } finally {
+              if (ctx.mounted) setSheet(() => saving = false);
+            }
+          }
+
+          return DraggableScrollableSheet(
           expand: false,
           initialChildSize: 0.9,
           maxChildSize: 0.97,
@@ -5260,6 +5384,141 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                           ],
                         ),
                       ),
+
+                      // -------------------------------------------------------------
+                      // STAGE 2 / LOCKED ASSESSMENT STATUS CARD (ALWAYS VISIBLE)
+                      // -------------------------------------------------------------
+                      if (isJobSheetLocked) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF15803D), width: 1.5),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF15803D),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.lock_rounded, size: 17, color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          '🔒 JOB SHEET ASSESSMENT COMPLETED & LOCKED',
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF14532D)),
+                                        ),
+                                        Text(
+                                          'Signed by $lockedByTech • Sent to Service Advisor for Customer Approval. Re-checks or edits by another technician are blocked.',
+                                          style: const TextStyle(fontSize: 10.5, color: Color(0xFF166534), fontWeight: FontWeight.w600),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (!AuthService.instance.isMechanic) ...[
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: const Color(0xFFB45309),
+                                      side: const BorderSide(color: Color(0xFFF59E0B), width: 1.2),
+                                      backgroundColor: const Color(0xFFFFFBEB),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    icon: const Icon(Icons.lock_open_rounded, size: 15, color: Color(0xFFD97706)),
+                                    label: const Text(
+                                      '🔓 Unlock Job Sheet Assessment (Supervisor Only)',
+                                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Color(0xFFB45309)),
+                                    ),
+                                    onPressed: saving ? null : unlockJobSheetAssessment,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ] else if (!isAuthorized && status != 'QUALITY_CHECK' && status != 'READY' && status != 'COMPLETED') ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFD97706),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.engineering_rounded, size: 18, color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '🔧 STAGE 2: MECHANIC ASSESSMENT & SUBMIT TO ADVISOR',
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF92400E)),
+                                        ),
+                                        Text(
+                                          'Complete inspection checks & findings below, then submit to Service Advisor. Submitting locks this Job Sheet from further technician edits.',
+                                          style: TextStyle(fontSize: 10.5, color: Color(0xFFB45309)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFD97706),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  icon: saving
+                                      ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                      : const Icon(Icons.send_rounded, size: 16),
+                                  label: const FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      '📤 Submit Assessment & Recommendations to Service Advisor (Locks Sheet)',
+                                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                                    ),
+                                  ),
+                                  onPressed: saving ? null : () => submitAndLockAssessment(closeSheetAfter: false),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       // -------------------------------------------------------------
                       // STAGE 4 CARD (MECHANIC / ALL): AUTHORIZED REPAIR WORK ORDER
@@ -5750,19 +6009,44 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 }),
 
                 const SizedBox(height: 14),
-                const Text('Repair Stage', style: TextStyle(fontWeight: FontWeight.w800)),
+                Row(
+                  children: [
+                    const Text('Repair Stage', style: TextStyle(fontWeight: FontWeight.w800)),
+                    if (techMode && isJobSheetLocked && !(curRepairAuth?['isAuthorized'] == true)) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.green.shade300),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock, size: 10, color: Colors.green),
+                            SizedBox(width: 3),
+                            Text('Locked Awaiting Approval', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.green)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
                   children: (techMode
-                          ? ['INSPECTION', 'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK']
+                          ? ['INSPECTION', 'AWAITING_APPROVAL', 'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK']
                           : ['BOOKED', 'INSPECTION', 'AWAITING_APPROVAL', 'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK', 'READY', 'COMPLETED'])
                       .map((s) => ChoiceChip(
                             label: Text(_prettyStatus(s), style: const TextStyle(fontSize: 11)),
                             selected: status == s,
                             selectedColor: _statusColor(s).withOpacity(0.2),
-                            onSelected: (_) => setSheet(() => status = s),
+                            onSelected: (techMode && isJobSheetLocked && !(curRepairAuth?['isAuthorized'] == true))
+                                ? null
+                                : (_) => setSheet(() => status = s),
                           ))
                       .toList(),
                 ),
@@ -5872,7 +6156,35 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 ],
                 if (techMode) ...[
                   const SizedBox(height: 16),
-                  const Text('Mechanical & OBD-II Inspection', style: TextStyle(fontWeight: FontWeight.w800)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          isJobSheetLocked
+                              ? 'Mechanical & OBD-II Inspection (Completed & Locked)'
+                              : 'Mechanical & OBD-II Inspection',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      if (isJobSheetLocked)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.green.shade300),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock, size: 10, color: Colors.green),
+                              SizedBox(width: 3),
+                              Text('LOCKED', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.green)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   ..._inspectionPoints.map((p) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -5889,7 +6201,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                               return Padding(
                                 padding: const EdgeInsets.only(left: 4),
                                 child: GestureDetector(
-                                  onTap: () => setSheet(() => results[p] = o[0] as String),
+                                  onTap: isJobSheetLocked
+                                      ? () {
+                                          ScaffoldMessenger.of(ctx).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('🔒 Job Sheet is locked after submission. Another technician cannot redo or overwrite completed checks.'),
+                                              duration: Duration(seconds: 2),
+                                              backgroundColor: Color(0xFF1E293B),
+                                            ),
+                                          );
+                                        }
+                                      : () => setSheet(() => results[p] = o[0] as String),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
                                     decoration: BoxDecoration(
@@ -5910,13 +6232,25 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: obdCtrl,
-                    decoration: const InputDecoration(labelText: 'OBD-II fault codes (e.g. P0300)', border: OutlineInputBorder()),
+                    readOnly: isJobSheetLocked,
+                    decoration: InputDecoration(
+                      labelText: isJobSheetLocked
+                          ? 'OBD-II fault codes (Locked)'
+                          : 'OBD-II fault codes (e.g. P0300)',
+                      border: const OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: notesCtrl,
+                    readOnly: isJobSheetLocked,
                     maxLines: 2,
-                    decoration: const InputDecoration(labelText: 'Findings / parts needed', border: OutlineInputBorder()),
+                    decoration: InputDecoration(
+                      labelText: isJobSheetLocked
+                          ? 'Findings / parts needed (Locked)'
+                          : 'Findings / parts needed',
+                      border: const OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -5931,6 +6265,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       Expanded(
                         child: TextField(
                           controller: hoursCtrl,
+                          readOnly: isJobSheetLocked && !(curRepairAuth?['isAuthorized'] == true),
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           decoration: const InputDecoration(labelText: 'Actual hrs', border: OutlineInputBorder()),
                         ),
@@ -5979,7 +6314,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     titleColor = const Color(0xFF92400E);
                   }
 
-                  final bool isTechRestricted = isSubmitted && (techMode || AuthService.instance.isMechanic);
+                  final bool isTechRestricted = isSubmitted || isJobSheetLocked;
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 14),
@@ -6216,10 +6551,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       Builder(builder: (_) {
                         final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
                         final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
-                        final isDiagLocked = pmsRaw?['isLocked'] == true ||
+                        final isDiagLocked = isJobSheetLocked ||
+                            pmsRaw?['isLocked'] == true ||
                             pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||
                             pmsRaw?['status'] == 'COMPLETED';
-                        final bool lockDiagForTech = isDiagLocked && (techMode || AuthService.instance.isMechanic);
+                        final bool lockDiagForTech = isDiagLocked;
 
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -6718,7 +7054,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                           }),
                         ],
                         // Mechanic 1-Click Submit Assessment & Recommendations to Service Advisor
-                        if (status == 'BOOKED' || status == 'INSPECTION') ...[
+                        if (!isJobSheetLocked && status != 'QUALITY_CHECK' && status != 'READY' && status != 'COMPLETED') ...[
                           const SizedBox(height: 10),
                           SizedBox(
                             width: double.infinity,
@@ -6729,49 +7065,17 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                                 padding: const EdgeInsets.symmetric(vertical: 11),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               ),
-                              icon: const Icon(Icons.send_rounded, size: 16),
+                              icon: saving
+                                  ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  : const Icon(Icons.send_rounded, size: 16),
                               label: const FittedBox(
                                 fit: BoxFit.scaleDown,
                                 child: Text(
-                                  '📤 Submit Assessment & Recommendations to Service Advisor',
+                                  '📤 Submit Assessment & Recommendations to Service Advisor (Locks Sheet)',
                                   style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
                                 ),
                               ),
-                              onPressed: () async {
-                                setSheet(() => saving = true);
-                                try {
-                                  final h = double.tryParse(hoursCtrl.text.trim());
-                                  final res = await http.post(
-                                    Uri.parse('$_baseUrl/jobs/${job['id']}/submit-assessment'),
-                                    headers: {'Content-Type': 'application/json', ...AuthService.instance.authHeaders},
-                                    body: json.encode({
-                                      'technicianName': _techName.isNotEmpty ? _techName : (job['technician'] ?? 'Technician'),
-                                      'assessmentNotes': notesCtrl.text.trim(),
-                                      'diagnosticChecklist': sheetDiag,
-                                      'obdCodes': obdCtrl.text.trim(),
-                                      'inspectionResults': results,
-                                      'techNotes': notesCtrl.text.trim(),
-                                      if (h != null) 'actualHours': h,
-                                    }),
-                                  );
-                                  if (res.statusCode == 200) {
-                                    final data = json.decode(res.body);
-                                    if (data['job'] is Map) {
-                                      setSheet(() {
-                                        job.addAll(Map<String, dynamic>.from(data['job']));
-                                        walk.addAll(Map<String, dynamic>.from(data['job']['walkAroundData'] ?? {}));
-                                        status = 'AWAITING_APPROVAL';
-                                      });
-                                    }
-                                    _toast('📤 Assessment & Recommendations sent to Service Advisor!', color: Colors.orange.shade800);
-                                    _fetchJobs();
-                                  }
-                                } catch (e) {
-                                  _toast('Failed to submit assessment: $e', color: Colors.red);
-                                } finally {
-                                  if (ctx.mounted) setSheet(() => saving = false);
-                                }
-                              },
+                              onPressed: saving ? null : () => submitAndLockAssessment(closeSheetAfter: false),
                             ),
                           ),
                         ],
@@ -7015,53 +7319,100 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ),
                   const SizedBox(height: 10),
                 ],
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0F4C81),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    icon: saving
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.save),
-                    label: const Text('Save Job Sheet Updates', style: TextStyle(fontWeight: FontWeight.bold)),
-                    onPressed: saving
-                        ? null
-                        : () async {
-                                setSheet(() => saving = true);
-                                final body = <String, dynamic>{'status': status};
-                                walk['diagnostics'] = sheetDiag;
-                                walk['obdCodes'] = obdCtrl.text.trim();
-                                if (techMode) {
-                                  walk['techInspection'] = {
-                                    'results': results,
-                                    'obdCodes': obdCtrl.text.trim(),
-                                    'notes': notesCtrl.text.trim(),
-                                    'by': _techName,
-                                    'updatedAt': DateTime.now().toIso8601String(),
-                                  };
-                                  final h = double.tryParse(hoursCtrl.text.trim());
-                                  if (h != null) body['actualHours'] = h;
-                                } else {
-                                  body['technician'] = assigned;
-                                }
-                                walk['securityPhotos'] = sheetPhotos;
-                                body['walkAroundData'] = walk;
-                                final ok = await _putJob(job['id'].toString(), body);
-                                if (ctx.mounted) Navigator.pop(ctx);
-                                _toast(ok ? 'Job updated' : 'Failed to update job', color: ok ? Colors.green : Colors.red);
-                                _fetchJobs();
-                              },
+                if (!isJobSheetLocked && status != 'QUALITY_CHECK' && status != 'READY' && status != 'COMPLETED') ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFD97706),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
+                      icon: saving
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.send_rounded),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '📤 Submit Assessment to Service Advisor & Lock Job Sheet',
+                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                        ),
+                      ),
+                      onPressed: saving ? null : () => submitAndLockAssessment(closeSheetAfter: true),
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (techMode && isJobSheetLocked) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF16A34A), width: 1.4),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.lock_rounded, size: 17, color: Color(0xFF15803D)),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Job Sheet Assessment Locked by $lockedByTech (Read-Only)',
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5, color: Color(0xFF14532D)),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F4C81),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: saving
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.save),
+                      label: Text(
+                        techMode ? 'Save & Lock Job Sheet Updates' : 'Save Job Card Assignment / Status',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              if (techMode) {
+                                await submitAndLockAssessment(closeSheetAfter: true);
+                                return;
+                              }
+                              setSheet(() => saving = true);
+                              final body = <String, dynamic>{'status': status};
+                              walk['diagnostics'] = sheetDiag;
+                              walk['obdCodes'] = obdCtrl.text.trim();
+                              body['technician'] = assigned;
+                              walk['securityPhotos'] = sheetPhotos;
+                              body['walkAroundData'] = walk;
+                              final ok = await _putJob(job['id'].toString(), body);
+                              if (ctx.mounted) Navigator.pop(ctx);
+                              _toast(ok ? 'Job updated' : 'Failed to update job', color: ok ? Colors.green : Colors.red);
+                              _fetchJobs();
+                            },
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
               ],
             ),
           ),
-        ),
+        );
+        },
       ),
     );
   }
