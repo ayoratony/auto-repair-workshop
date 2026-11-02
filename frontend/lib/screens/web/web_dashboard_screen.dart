@@ -87,6 +87,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
   static const Map<String, String> _tabToNav = {
     'Current Job Cards': 'Job Cards',
+    'Vehicle History & Search': 'Vehicles & Fleets',
     'Parts Catalog': 'Parts Catalog',
     'Estimates': 'Estimates',
     'Invoices': 'Invoices',
@@ -2538,7 +2539,37 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                 children: [
                                   const Text('VEHICLE & DIAGNOSTIC SUMMARY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   const SizedBox(height: 6),
-                                  Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text('Reg No: ${vehicle['registrationNo'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                      ),
+                                      InkWell(
+                                        onTap: () {
+                                          final vId = (job['vehicleId'] ?? vehicle['id'] ?? '').toString();
+                                          if (vId.isNotEmpty && vId != 'null') {
+                                            _showVehicleHistoryDialog(vId, initialVehicle: Map<String, dynamic>.from(vehicle));
+                                          }
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF0F172A),
+                                            borderRadius: BorderRadius.circular(5),
+                                            border: Border.all(color: Colors.amber.shade400),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.history_edu, size: 12, color: Colors.amber),
+                                              SizedBox(width: 4),
+                                              Text('📜 Vehicle History', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Colors.white)),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                   Text('Make/Model: ${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'),
                                   Text('Odometer: ${job['odometer'] != null ? '${job['odometer']} km' : 'Not recorded'}  \u2022  Next Service: ${job['nextServiceMileage'] != null ? '${job['nextServiceMileage']} km' : 'TBA'}'),
                                   Text('Fuel Level: ${job['fuelLevel'] ?? 'Not recorded'}  \u2022  QC Passed: ${qcPassed ? 'YES \u2713' : 'Pending'}'),
@@ -5218,7 +5249,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   _sidebarItem(Icons.receipt, 'Estimates', tabTarget: 'Estimates'),
                   _sidebarItem(Icons.request_quote, 'Invoices', tabTarget: 'Invoices'),
                   _sidebarItem(Icons.people, 'Customers'),
-                  _sidebarItem(Icons.directions_car_filled, 'Vehicles & Fleets'),
+                  _sidebarItem(Icons.history_edu, 'Vehicles & Fleets', tabTarget: 'Vehicle History & Search'),
                   _sidebarItem(Icons.badge, 'Employees'),
                   _sidebarItem(Icons.bar_chart, 'Reports'),
                   _sidebarItem(Icons.warehouse, 'Inventory'),
@@ -5293,6 +5324,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   setState(() {
                     _searchQuery = val;
                     _searchController.text = val;
+                    _vehicleSearchQuery = val;
                   });
                 },
                 decoration: const InputDecoration(
@@ -5302,7 +5334,24 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F172A),
+                foregroundColor: Colors.amber.shade400,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              icon: const Icon(Icons.history_edu, size: 16),
+              label: const Text('Vehicle History & Search', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+              onPressed: () {
+                setState(() {
+                  _activeSidebar = 'Vehicles & Fleets';
+                  _activeTab = 'Vehicle History & Search';
+                });
+              },
+            ),
+            const SizedBox(width: 10),
             IconButton(
               tooltip: 'Refresh Data from PostgreSQL',
               icon: const Icon(Icons.refresh, color: Color(0xFF2563EB)),
@@ -5629,6 +5678,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               children: [
                 _buildTabItem('Current Job Cards'),
                 const SizedBox(width: 24),
+                _buildTabItem('Vehicle History & Search'),
+                const SizedBox(width: 24),
                 _buildTabItem('Parts Catalog'),
                 const SizedBox(width: 24),
                 _buildTabItem('Estimates'),
@@ -5639,6 +5690,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           ),
           const Divider(height: 32),
           if (_activeTab == 'Current Job Cards' && _can('nav:Job Cards')) _buildJobCardsTabContent(),
+          if (_activeTab == 'Vehicle History & Search' && _can('nav:Vehicles & Fleets')) _buildVehiclesSection(),
           if (_activeTab == 'Parts Catalog' && _can('nav:Parts Catalog')) _buildPartsCatalogTabContent(),
           if (_activeTab == 'Estimates' && _can('nav:Estimates')) _buildEstimatesTabContent(),
           if (_activeTab == 'Invoices' && _can('nav:Invoices')) _buildInvoicesTabContent(),
@@ -6020,6 +6072,34 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                 ),
                 child: const Text('View', style: TextStyle(color: Colors.black87, fontSize: 12)),
+              ),
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Open Digital Vehicle Service Passport & Full Repair History',
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    final vId = (job['vehicleId'] ?? job['vehicle']?['id'] ?? '').toString();
+                    final vMap = job['vehicle'] is Map ? Map<String, dynamic>.from(job['vehicle']) : null;
+                    if (vId.isNotEmpty && vId != 'null') {
+                      _showVehicleHistoryDialog(vId, initialVehicle: vMap);
+                    } else {
+                      setState(() {
+                        _vehicleSearchQuery = (job['vehicle']?['registrationNo'] ?? '').toString();
+                        _activeSidebar = 'Vehicles & Fleets';
+                        _activeTab = 'Vehicle History & Search';
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.history_edu, size: 14, color: Color(0xFF0F172A)),
+                  label: const Text('History', style: TextStyle(color: Color(0xFF0F172A), fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF8FAFC),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 32),
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                ),
               ),
               const SizedBox(width: 6),
               OutlinedButton(
@@ -6954,9 +7034,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Vehicles & Fleets Management', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  const Text('🔍 Vehicle Service History, Digital Passports & Fleet Registry', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
                   const SizedBox(height: 4),
-                  Text('Complete vehicle lifecycle tracking for Personal cars, Government fleets, Schools, and Corporate organizations.',
+                  Text('Search any vehicle by Registration Plate, Make/Model, Owner, or Fleet Unit to inspect its complete repair timeline, PMS health, and parts history.',
                       style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                 ],
               ),
@@ -6978,6 +7058,68 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 ],
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          // High-Visibility Vehicle History Search Bar Banner
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0F172A), Color(0xFF1E3A8A)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.manage_search_rounded, color: Colors.amber.shade400, size: 28),
+                const SizedBox(width: 12),
+                const Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Search Vehicle Service History & Digital Passport',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Click "📜 Service History" on any vehicle below to open its 5-tab Digital Service Passport',
+                        style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: TextField(
+                      onChanged: (val) => setState(() => _vehicleSearchQuery = val),
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search, color: Color(0xFF1E3A8A)),
+                        hintText: 'Type Registration No (e.g. KDA 123A), Make, Model, Customer Name, Driver, or Unit #...',
+                        hintStyle: const TextStyle(fontSize: 13),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        suffixIcon: _vehicleSearchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () => setState(() => _vehicleSearchQuery = ''),
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 20),
 

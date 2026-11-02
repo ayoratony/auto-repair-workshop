@@ -889,8 +889,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final advisorTitles = ['Overview', 'Job Cards', 'Vehicle Intake', 'Quotations', 'Bay Schedule'];
-    final techTitles = ['My Assigned Jobs', 'Item Requests', 'Completed Jobs'];
-    final title = _isAdvisor ? advisorTitles[_selectedIndex] : techTitles[_selectedIndex];
+    final techTitles = ['My Assigned Jobs', 'Item Requests', 'Completed Jobs', 'Vehicle History & Search'];
+    final safeIdx = _isAdvisor
+        ? _selectedIndex.clamp(0, advisorTitles.length - 1)
+        : _selectedIndex.clamp(0, techTitles.length - 1);
+    final title = _isAdvisor ? advisorTitles[safeIdx] : techTitles[safeIdx];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF1F5F9),
@@ -936,6 +939,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          IconButton(
+            tooltip: 'Search Vehicle History & Digital Passport',
+            icon: const Icon(Icons.manage_search_rounded),
+            onPressed: () => _showVehiclesSheet(),
+          ),
           if (_isAdvisor && _selectedIndex == 4)
             IconButton(
               tooltip: 'Book Appointment',
@@ -983,12 +991,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             )
           : null,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
+        selectedIndex: safeIdx,
         backgroundColor: Colors.white,
         indicatorColor: const Color(0xFFDBEAFE),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         height: 66,
         onDestinationSelected: (index) {
+          if (!_isAdvisor && index == 3) {
+            _showVehiclesSheet();
+            return;
+          }
           setState(() => _selectedIndex = index);
           if (!(_isAdvisor && index == 2)) _fetchJobs();
         },
@@ -1004,6 +1016,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 NavigationDestination(icon: Icon(Icons.build_outlined), selectedIcon: Icon(Icons.build), label: 'My Jobs'),
                 NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Item Requests'),
                 NavigationDestination(icon: Icon(Icons.check_circle_outline), selectedIcon: Icon(Icons.check_circle), label: 'Completed'),
+                NavigationDestination(icon: Icon(Icons.history_edu_outlined), selectedIcon: Icon(Icons.history_edu), label: 'History'),
               ],
       ),
     );
@@ -1068,7 +1081,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     final tiles = <List<dynamic>>[
       ['Job Cards', 'Create & track repairs', Icons.assignment, () => setState(() => _selectedIndex = 1)],
       ['Customers', 'Profiles & history', Icons.people_alt, _showCustomersSheet],
-      ['Vehicles & Fleets', 'Personal, Govt, Schools & Fleets', Icons.directions_car_filled, _showVehiclesSheet],
+      ['Vehicle History & Search', 'Search past repairs & fleets', Icons.history_edu, () => _showVehiclesSheet()],
       ['Appointments', 'Bookings & bays', Icons.event_available, () => setState(() => _selectedIndex = 4)],
       ['Quotations', 'Estimates & approvals', Icons.request_quote, () => setState(() => _selectedIndex = 3)],
       ['Communications', 'Customer updates', Icons.chat_bubble, _showCommunicationsSheet],
@@ -1080,6 +1093,66 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       child: ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          // High-visibility Vehicle History & Search Banner
+          InkWell(
+            onTap: () => _showVehiclesSheet(),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0F172A), Color(0xFF1E3A8A)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: const Color(0xFF1E3A8A).withOpacity(0.25), blurRadius: 8, offset: const Offset(0, 3))],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.amber.shade400, width: 1.2),
+                    ),
+                    child: Icon(Icons.manage_search_rounded, color: Colors.amber.shade300, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '🔍 Search Vehicle History & Passport',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13.5),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Tap to search by Plate (e.g. KDA 123A), Make, Model, Customer or Fleet Unit',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Search',
+                      style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w900, fontSize: 11.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
           const Text('Today at the workshop', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
           const SizedBox(height: 10),
           Row(
@@ -1440,9 +1513,20 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     );
   }
 
-  void _showVehiclesSheet() {
+  void _openVehiclePassportFromJob(Map<String, dynamic> job) {
+    final vId = (job['vehicleId'] ?? job['vehicle']?['id'] ?? '').toString();
+    if (vId.isNotEmpty && vId != 'null') {
+      _showMobileVehiclePassport(vId);
+    } else {
+      final reg = (job['vehicle']?['registrationNo'] ?? '').toString();
+      _showVehiclesSheet(reg);
+    }
+  }
+
+  void _showVehiclesSheet([String initialQuery = '']) {
     String categoryFilter = 'ALL';
-    String searchQuery = '';
+    String searchQuery = initialQuery.trim();
+    final searchCtrl = TextEditingController(text: searchQuery);
     List<dynamic> vehicles = [];
     bool isLoading = true;
 
@@ -1488,7 +1572,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               final unit = (v['fleetUnitNumber'] ?? '').toString().toLowerCase();
               final driver = (v['assignedDriver'] ?? '').toString().toLowerCase();
               final cust = (v['customer']?['name'] ?? '').toString().toLowerCase();
-              if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q)) {
+              final phone = (v['customer']?['phone'] ?? '').toString().toLowerCase();
+              if (!reg.contains(q) && !make.contains(q) && !model.contains(q) && !unit.contains(q) && !driver.contains(q) && !cust.contains(q) && !phone.contains(q)) {
                 return false;
               }
             }
@@ -1497,8 +1582,8 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
           return DraggableScrollableSheet(
             expand: false,
-            initialChildSize: 0.85,
-            maxChildSize: 0.95,
+            initialChildSize: 0.88,
+            maxChildSize: 0.96,
             builder: (_, scroll) => Column(
               children: [
                 const SizedBox(height: 12),
@@ -1509,7 +1594,13 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Vehicles & Fleets Registry', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                      const Expanded(
+                        child: Text(
+                          '🔍 Vehicle Service History & Fleet Search',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                       IconButton(icon: const Icon(Icons.refresh, size: 20), onPressed: () => setSheetState(() { isLoading = true; fetchVehicles(); })),
                     ],
                   ),
@@ -1517,13 +1608,26 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   child: TextField(
+                    controller: searchCtrl,
+                    autofocus: initialQuery.isEmpty,
                     decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search, size: 18),
-                      hintText: 'Search plate, make, model, driver...',
-                      hintStyle: const TextStyle(fontSize: 13),
+                      prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF1E3A8A)),
+                      suffixIcon: searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 16),
+                              onPressed: () {
+                                searchCtrl.clear();
+                                setSheetState(() => searchQuery = '');
+                              },
+                            )
+                          : null,
+                      hintText: 'Search Plate (e.g. KDA 123A), Make, Model, Customer, Driver...',
+                      hintStyle: const TextStyle(fontSize: 12.5),
                       isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onChanged: (val) => setSheetState(() => searchQuery = val),
                   ),
@@ -1551,48 +1655,69 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   child: isLoading
                       ? const Center(child: CircularProgressIndicator())
                       : filtered.isEmpty
-                          ? const Center(child: Text('No vehicles found.', style: TextStyle(color: Colors.grey)))
+                          ? const Center(child: Text('No matching vehicles found in history.', style: TextStyle(color: Colors.grey)))
                           : ListView.builder(
                               controller: scroll,
                               itemCount: filtered.length,
                               itemBuilder: (_, i) {
                                 final v = filtered[i];
                                 final cust = v['customer'] ?? {};
+                                final visitsCount = v['jobCardsCount'] ?? (v['jobCards'] is List ? (v['jobCards'] as List).length : 0);
                                 return Card(
                                   margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(color: Colors.grey.shade200),
+                                  ),
                                   child: ListTile(
                                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                     leading: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFFF1F5F9),
+                                        color: const Color(0xFF0F172A),
                                         borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: const Color(0xFF0F172A), width: 1.2),
+                                        border: Border.all(color: Colors.amber.shade400, width: 1.2),
                                       ),
                                       child: Text(
                                         (v['registrationNo'] ?? '-').toString().toUpperCase(),
-                                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Color(0xFF0F172A)),
+                                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11.5, color: Colors.white),
                                       ),
                                     ),
                                     title: Row(
                                       children: [
                                         Expanded(
-                                          child: Text('${v['make'] ?? ''} ${v['model'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                          child: Text(
+                                            '${v['make'] ?? ''} ${v['model'] ?? ''}',
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ),
+                                        const SizedBox(width: 4),
                                         _buildMobileCategoryBadge(v['category'] ?? 'PERSONAL'),
                                       ],
                                     ),
                                     subtitle: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        const SizedBox(height: 2),
-                                        Text('Owner: ${cust['name'] ?? '-'}  \u2022  ${v['lastOdometer'] ?? 0} km', style: const TextStyle(fontSize: 12)),
+                                        const SizedBox(height: 3),
+                                        Text('Owner: ${cust['name'] ?? '-'}  \u2022  ${v['lastOdometer'] ?? 0} km', style: const TextStyle(fontSize: 11.5)),
                                         if ((v['assignedDriver'] ?? '').toString().isNotEmpty || (v['fleetUnitNumber'] ?? '').toString().isNotEmpty)
                                           Text('Driver: ${v['assignedDriver'] ?? '-'}  \u2022  Unit: ${v['fleetUnitNumber'] ?? '-'}',
                                               style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700)),
                                       ],
                                     ),
-                                    trailing: const Icon(Icons.chevron_right, size: 20),
+                                    trailing: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFEFF6FF),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                                      ),
+                                      child: Text(
+                                        '📜 History${visitsCount > 0 ? " ($visitsCount)" : ""}',
+                                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF1D4ED8)),
+                                      ),
+                                    ),
                                     onTap: () {
                                       Navigator.pop(ctx);
                                       _showMobileVehiclePassport(v['id'].toString());
@@ -3197,46 +3322,62 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   // Quick Status
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       side: BorderSide(color: Colors.grey.shade300),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     onPressed: () => _showQuickStatusPicker(Map<String, dynamic>.from(job)),
-                    icon: const Icon(Icons.published_with_changes, size: 14, color: Color(0xFF0F4C81)),
-                    label: const Text('Status', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81))),
+                    icon: const Icon(Icons.published_with_changes, size: 13, color: Color(0xFF0F4C81)),
+                    label: const Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF0F4C81))),
                   ),
-                  const SizedBox(width: 8),
-                  // Quotes shortcut / Quick Create Estimate
+                  const SizedBox(width: 6),
+                  // Vehicle History / Digital Passport
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      side: BorderSide(color: Colors.grey.shade300),
+                      backgroundColor: const Color(0xFFEFF6FF),
+                      side: const BorderSide(color: Color(0xFFBFDBFE)),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    onPressed: () {
-                      final hasEstimate = _estimates.any((e) =>
-                          e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id']);
-                      if (hasEstimate) {
-                        setState(() {
-                          _selectedIndex = 3;
-                          _quoteSearch = reg.isNotEmpty ? reg : jobNo;
-                        });
-                      } else {
-                        _openCreateEstimateModal(initialJobCardId: job['id']);
-                      }
-                    },
-                    icon: const Icon(Icons.request_quote_outlined, size: 14, color: Color(0xFF2563EB)),
-                    label: Text(
-                      _estimates.any((e) => e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id'])
-                          ? 'Quotes'
-                          : '+ Quote',
-                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
-                    ),
+                    onPressed: () => _openVehiclePassportFromJob(Map<String, dynamic>.from(job)),
+                    icon: const Icon(Icons.history_edu, size: 13, color: Color(0xFF1D4ED8)),
+                    label: const Text('History', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8))),
                   ),
+                  const SizedBox(width: 6),
+                  // Quotes shortcut / Quick Create Estimate
+                  if (!techMode)
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () {
+                        final hasEstimate = _estimates.any((e) =>
+                            e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id']);
+                        if (hasEstimate) {
+                          setState(() {
+                            _selectedIndex = 3;
+                            _quoteSearch = reg.isNotEmpty ? reg : jobNo;
+                          });
+                        } else {
+                          _openCreateEstimateModal(initialJobCardId: job['id']);
+                        }
+                      },
+                      icon: const Icon(Icons.request_quote_outlined, size: 13, color: Color(0xFF2563EB)),
+                      label: Text(
+                        _estimates.any((e) => e['jobCardId'] == job['id'] || e['jobCard']?['id'] == job['id'])
+                            ? 'Quotes'
+                            : '+ Quote',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                      ),
+                    ),
                   const Spacer(),
                   // View Job Sheet (Primary)
                   ElevatedButton.icon(
@@ -3244,7 +3385,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       backgroundColor: const Color(0xFF0F4C81),
                       foregroundColor: Colors.white,
                       elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -3672,6 +3813,45 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: InkWell(
+            onTap: () => _showVehiclesSheet(),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.manage_search_rounded, color: Colors.amber.shade400, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '🔍 Search Vehicle History & Past Repairs (Plate, Model, Owner)...',
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'History',
+                      style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w900, fontSize: 10.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
         if (!isPrivileged)
           Container(
             margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
@@ -4753,7 +4933,21 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       child: Text('${job['jobNumber'] ?? 'Job Card'} \u2022 ${job['vehicle']?['registrationNo'] ?? ''}',
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        backgroundColor: const Color(0xFFEFF6FF),
+                        side: const BorderSide(color: Color(0xFFBFDBFE)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () => _openVehiclePassportFromJob(Map<String, dynamic>.from(job)),
+                      icon: const Icon(Icons.history_edu, size: 14, color: Color(0xFF1D4ED8)),
+                      label: const Text('📜 History', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1D4ED8))),
+                    ),
+                    const SizedBox(width: 6),
                     _buildFuelTypePill((job['fuelType'] ?? job['vehicle']?['fuelType'] ?? 'Petrol').toString()),
                   ],
                 ),
