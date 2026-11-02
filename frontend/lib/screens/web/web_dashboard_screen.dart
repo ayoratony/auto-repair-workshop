@@ -11,6 +11,9 @@ import 'inventory_workspace_view.dart';
 import '../../services/auth_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/vehicle_photo_service.dart';
+import '../../models/pms_checklist_model.dart';
+import '../../services/pms_pdf_service.dart';
+import '../mobile/pms_checklist_sheet.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -2236,6 +2239,266 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       ),
                       const SizedBox(height: 12),
 
+                      // -------------------------------------------------------------
+                      // PMS DIAGNOSTIC & VEHICLE HEALTH CHECK SHEET
+                      // -------------------------------------------------------------
+                      Builder(builder: (_) {
+                        final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final pmsRaw = walkData['pmsChecklist'] is Map ? (walkData['pmsChecklist'] as Map) : null;
+                        final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' || pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR';
+                        final score = (pmsRaw?['healthPercentage'] as num?)?.toDouble() ?? (pmsRaw?['healthScore'] as num?)?.toDouble();
+                        final ngCount = (pmsRaw?['ngCount'] as num?)?.toInt() ?? 0;
+                        final cautionCount = (pmsRaw?['cautionCount'] as num?)?.toInt() ?? 0;
+                        final templateTitle = (pmsRaw?['templateTitle'] ?? pmsRaw?['templateName'] ?? 'Official Isuzu / PMS Check Sheet').toString();
+                        final techName = (pmsRaw?['technicianName'] ?? job['technician'] ?? '').toString();
+                        final interval = (pmsRaw?['selectedInterval'] ?? pmsRaw?['serviceInterval'] ?? '').toString();
+
+                        Color cardBg = const Color(0xFFF0FDF4);
+                        Color cardBorder = const Color(0xFF86EFAC);
+                        Color titleColor = const Color(0xFF166534);
+
+                        if (pmsRaw == null) {
+                          cardBg = const Color(0xFFF8FAFC);
+                          cardBorder = const Color(0xFFCBD5E1);
+                          titleColor = const Color(0xFF1E3A8A);
+                        } else if (ngCount > 0) {
+                          cardBg = const Color(0xFFFEF2F2);
+                          cardBorder = const Color(0xFFFCA5A5);
+                          titleColor = const Color(0xFF991B1B);
+                        } else if (cautionCount > 0) {
+                          cardBg = const Color(0xFFFFFBEB);
+                          cardBorder = const Color(0xFFFDE68A);
+                          titleColor = const Color(0xFF92400E);
+                        }
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: cardBg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: cardBorder, width: 1.2),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(7),
+                                    decoration: BoxDecoration(
+                                      color: titleColor.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(Icons.assignment_turned_in, size: 20, color: titleColor),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                              'PERIODIC MAINTENANCE SERVICE (PMS) & TECHNICAL DIAGNOSIS',
+                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: titleColor),
+                                            ),
+                                            if (interval.isNotEmpty) ...[
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                  border: Border.all(color: const Color(0xFF2563EB).withValues(alpha: 0.3)),
+                                                ),
+                                                child: Text(
+                                                  interval,
+                                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          pmsRaw != null
+                                              ? '$templateTitle \u2022 Status: ${isSubmitted ? "Submitted to Service Advisor" : "Draft (In Progress)"}${techName.isNotEmpty ? " \u2022 Technician: $techName" : ""}'
+                                              : 'Official Isuzu 64/70-Point Technical Inspection Sheet (NMR85, NLR77, NKR, FRR, FVR, FVZ, GXZ, D-Max, mu-X, Buses)',
+                                          style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (pmsRaw != null && score != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: (score >= 85 ? Colors.green : (score >= 65 ? Colors.orange : Colors.red)).withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: score >= 85 ? Colors.green : (score >= 65 ? Colors.orange : Colors.red)),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Text(
+                                            '${score.toStringAsFixed(0)}%',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w900,
+                                              color: score >= 85 ? Colors.green.shade800 : (score >= 65 ? Colors.orange.shade900 : Colors.red.shade900),
+                                            ),
+                                          ),
+                                          Text('HEALTH', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (pmsRaw != null) ...[
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    if (ngCount > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade50,
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.red.shade300),
+                                        ),
+                                        child: Text(
+                                          '⚠️ $ngCount Defect${ngCount > 1 ? "s" : ""} (Immediate Attention / NG)',
+                                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red.shade900),
+                                        ),
+                                      ),
+                                    if (cautionCount > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.shade50,
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.amber.shade400),
+                                        ),
+                                        child: Text(
+                                          '⚡ $cautionCount Caution${cautionCount > 1 ? "s" : ""} (Further Attention / C)',
+                                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: isSubmitted ? const Color(0xFF1E3A8A) : const Color(0xFF0F766E),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: Icon(isSubmitted ? Icons.edit_note : Icons.playlist_add_check, size: 15),
+                                    label: Text(
+                                      pmsRaw == null
+                                          ? 'Start / Fill PMS Diagnostic Check Sheet'
+                                          : (isSubmitted ? 'View / Re-evaluate PMS Check Sheet' : 'Continue Check Sheet (Draft)'),
+                                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                                    ),
+                                    onPressed: () async {
+                                      await PmsChecklistSheet.show(
+                                        context: ctx,
+                                        job: job,
+                                        baseUrl: _baseUrl,
+                                        onSubmitted: () {
+                                          setModalState(() {});
+                                          _refreshAllData();
+                                        },
+                                      );
+                                      setModalState(() {});
+                                      _refreshAllData();
+                                    },
+                                  ),
+                                  if (pmsRaw != null) ...[
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(0xFF0F172A),
+                                        side: const BorderSide(color: Color(0xFF94A3B8)),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      icon: const Icon(Icons.print_outlined, size: 15),
+                                      label: const Text('Print Official PMS Check Sheet (PDF)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                                      onPressed: () {
+                                        try {
+                                          final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                                          PmsPdfService.showPdfPreviewModal(
+                                            context: ctx,
+                                            workshopSettings: _workshopSettings,
+                                            job: job,
+                                            checksheet: checksheetObj,
+                                          );
+                                        } catch (e) {
+                                          ScaffoldMessenger.of(ctx).showSnackBar(
+                                            SnackBar(content: Text('Cannot render PDF: $e'), backgroundColor: Colors.red),
+                                          );
+                                        }
+                                      },
+                                    ),
+                                    if (ngCount > 0 || cautionCount > 0)
+                                      OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.green.shade800,
+                                          side: BorderSide(color: Colors.green.shade600),
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                          minimumSize: Size.zero,
+                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        icon: const Icon(Icons.chat_outlined, size: 15, color: Colors.green),
+                                        label: const Text('WhatsApp PMS Findings to Customer', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                                        onPressed: () {
+                                          final custPhone = customer['phone']?.toString() ?? '';
+                                          final custName = customer['name']?.toString() ?? 'Customer';
+                                          final regNo = vehicle['registrationNo']?.toString() ?? 'vehicle';
+                                          final makeModel = '${vehicle['make'] ?? ''} ${vehicle['model'] ?? ''}'.trim();
+                                          final checksheetObj = PmsChecksheetData.fromJson(Map<String, dynamic>.from(pmsRaw));
+                                          final recs = checksheetObj.generateRecommendations();
+
+                                          final buffer = StringBuffer();
+                                          buffer.writeln('Hello $custName, during the Periodic Maintenance Service (PMS) inspection of your $makeModel ($regNo) at ${_workshopSettings['name'] ?? 'our workshop'}, our technicians identified the following findings:\n');
+                                          for (int i = 0; i < recs.length; i++) {
+                                            final r = recs[i];
+                                            final isCrit = r['urgency'] == 'CRITICAL';
+                                            buffer.writeln('${i + 1}. [${isCrit ? "DEFECT - IMMEDIATE" : "CAUTION"}] ${r["system"]}: ${r["issue"]}');
+                                            buffer.writeln('   • Recommended Action: ${r["recommendation"]}');
+                                            if (r['partsNeeded'] != null && r['partsNeeded'].toString().isNotEmpty) {
+                                              buffer.writeln('   • Parts Required: ${r["partsNeeded"]}');
+                                            }
+                                            final total = (r['totalEstimated'] as num?)?.toDouble() ?? 0.0;
+                                            if (total > 0) {
+                                              buffer.writeln('   • Est. Cost: KES ${total.toStringAsFixed(0)}');
+                                            }
+                                            buffer.writeln('');
+                                          }
+                                          buffer.writeln('Overall Vehicle Health: ${score?.toStringAsFixed(0) ?? "100"}%');
+                                          buffer.writeln('Please review and let us know if you would like us to proceed with these repairs.');
+
+                                          _launchWhatsAppMessage(custPhone, buffer.toString());
+                                        },
+                                      ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                       // -------------------------------------------------------------
                       // TECHNICIAN DEFECT FINDINGS & RECOMMENDATIONS
                       // -------------------------------------------------------------

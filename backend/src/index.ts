@@ -1288,6 +1288,219 @@ app.delete('/api/jobs/:id/recommendations/:recId', async (req: Request, res: Res
     });
 
     res.json({ success: true, count: updatedRecs.length });
+
+// -------------------------------------------------------------
+// PMS DIAGNOSTIC CHECK SHEET API
+// -------------------------------------------------------------
+app.get('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const job = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+    if (!job) return res.status(404).json({ error: 'Job Card not found' });
+
+    const wad = job.walkAroundData && typeof job.walkAroundData === 'object' ? (job.walkAroundData as any) : {};
+    const existingChecksheet = wad.pmsChecklist || null;
+
+    res.json({
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      status: job.status,
+      technician: job.technician,
+      vehicle: {
+        registrationNo: job.vehicle.registrationNo,
+        make: job.vehicle.make,
+        model: job.vehicle.model,
+        vinNumber: job.vehicle.vinNumber,
+        category: (job.vehicle as any).category,
+      },
+      customer: {
+        name: job.customer.name,
+        phone: job.customer.phone,
+      },
+      currentMileage: job.odometer,
+      workRequested: job.workRequested,
+      pmsChecklist: existingChecksheet,
+    });
+  } catch (error) {
+    console.error('Fetch PMS checklist error:', error);
+    res.status(500).json({ error: 'Failed to fetch PMS checklist' });
+  }
+});
+
+app.post('/api/jobs/:id/pms-checklist', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const { checklist, submitToAdvisor = false, technicianName } = req.body;
+
+    if (!checklist || typeof checklist !== 'object') {
+      return res.status(400).json({ error: 'Checklist data object is required' });
+    }
+
+    const existing = await prisma.jobCard.findUnique({
+      where: { id },
+      include: { customer: true, vehicle: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Job Card not found' });
+    }
+
+    const currentWalkAround =
+      existing.walkAroundData && typeof existing.walkAroundData === 'object'
+        ? (existing.walkAroundData as Record<string, any>)
+        : {};
+
+    const existingRecs: any[] = Array.isArray(currentWalkAround.recommendations)
+      ? currentWalkAround.recommendations
+      : [];
+
+    const tech =
+      technicianName ||
+      checklist.technicianName ||
+      (req.headers['x-user-name'] as string) ||
+      existing.technician ||
+      'Technician';
+
+    checklist.technicianName = tech;
+    if (submitToAdvisor) {
+      checklist.status = 'SUBMITTED_TO_ADVISOR';
+      checklist.submittedAt = new Date().toISOString();
+    }
+
+    let updatedRecs = [...existingRecs];
+    let newFindingsCount = 0;
+
+    if (submitToAdvisor && Array.isArray(checklist.items)) {
+      const pmsDefects = checklist.items.filter((item: any) => {
+        const s = String(item.status || '').toUpperCase();
+        return s === 'NG' || s === 'C';
+      });
+
+      for (const def of pmsDefects) {
+        const isImmediate = String(def.status || '').toUpperCase() === 'NG';
+        const itemNum = def.itemNumber || 0;
+        const systemCategory = def.category || 'General';
+        const issueText = (def.defectDescription && String(def.defectDescription).trim())
+          ? String(def.defectDescription).trim()
+          : (def.remarks && String(def.remarks).trim() ? String(def.remarks).trim() : `${def.description} failed PMS inspection (${def.status})`);
+        const fixText = (def.recommendedFix && String(def.recommendedFix).trim())
+          ? String(def.recommendedFix).trim()
+          : (isImmediate ? 'Urgent repair / component replacement required immediately.' : 'Further attention & servicing advised.');
+
+        const alreadyExists = updatedRecs.some((r) => 
+          (r.pmsItemNumber && r.pmsItemNumber === itemNum) || 
+          (r.issue && r.issue.toLowerCase() === issueText.toLowerCase())
+        );
+
+        if (!alreadyExists) {
+          const recObj = {
+            id: `rec_pms_${itemNum}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            pmsItemNumber: itemNum,
+            system: systemCategory,
+            issue: issueText,
+            recommendation: fixText,
+            urgency: isImmediate ? 'CRITICAL' : 'RECOMMENDED',
+            estimatedLabour: Number(def.estimatedLabour) || 0,
+            estimatedParts: Number(def.estimatedParts) || 0,
+            totalEstimated: (Number(def.estimatedLabour) || 0) + (Number(def.estimatedParts) || 0),
+            partsNeeded: (def.partsNeeded || '').trim(),
+            technicianName: tech,
+            status: 'PENDING',
+            source: 'PMS_INSPECTION',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          updatedRecs = [recObj, ...updatedRecs];
+          newFindingsCount++;
+        }
+      }
+    }
+
+    let newStatus = existing.status;
+    if (submitToAdvisor && (existing.status === 'BOOKED' || existing.status === 'INSPECTION')) {
+      newStatus = 'AWAITING_APPROVAL';
+    }
+
+    const updatedJob = await prisma.jobCard.update({
+      where: { id },
+      data: {
+        status: newStatus,
+        technician: existing.technician || tech,
+        ...(checklist.currentMileage ? { odometer: Number(checklist.currentMileage) } : {}),
+        walkAroundData: {
+          ...currentWalkAround,
+          pmsChecklist: checklist,
+          recommendations: updatedRecs,
+        },
+      },
+      include: {
+        customer: true,
+        vehicle: true,
+        estimates: { include: { lineItems: true, invoice: true } },
+      },
+    });
+
+    const ngCount = checklist.summary?.ngCount ?? 0;
+    const cautionCount = checklist.summary?.cautionCount ?? 0;
+    const okCount = checklist.summary?.okCount ?? 0;
+    const health = checklist.summary?.healthPercentage ?? 100;
+
+    await createJobCardAuditLog({
+      jobCardId: updatedJob.id,
+      actorName: tech,
+      actorRole: (req.headers['x-user-role'] as string) || 'MECHANIC',
+      action: submitToAdvisor ? 'PMS_CHECKLIST_SUBMITTED' : 'PMS_CHECKLIST_DRAFT_SAVED',
+      details: submitToAdvisor
+        ? `PMS Diagnosis completed by ${tech} (${checklist.templateTitle || 'Checksheet'}). Result: ${okCount} OK, ${cautionCount} Caution, ${ngCount} Immediate (NG). Sent to Service Advisor with ${newFindingsCount} recommendations.`
+        : `PMS Checksheet draft saved by ${tech} (${okCount} OK, ${cautionCount} Caution, ${ngCount} NG).`,
+      diff: {
+        templateCode: checklist.templateCode,
+        selectedInterval: checklist.selectedInterval,
+        ngCount,
+        cautionCount,
+        okCount,
+        healthPercentage: health,
+        submitToAdvisor,
+        newFindingsCount,
+      },
+    });
+
+    if (submitToAdvisor) {
+      recordSyncEvent({
+        type: 'RECOMMENDATION_ADDED',
+        entityId: updatedJob.id,
+        actorName: tech,
+        actorRole: (req.headers['x-user-role'] as string) || 'MECHANIC',
+        message: `PMS Diagnosis submitted for ${existing.vehicle.registrationNo} by ${tech}: ${ngCount} critical defects & ${cautionCount} cautions found. Ready for Service Advisor review.`,
+        metadata: {
+          jobId: updatedJob.id,
+          jobNumber: updatedJob.jobNumber,
+          registrationNo: existing.vehicle.registrationNo,
+          customerName: existing.customer.name,
+          customerPhone: existing.customer.phone,
+          ngCount,
+          cautionCount,
+          healthPercentage: health,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      job: updatedJob,
+      checklist,
+      recommendationsCount: updatedRecs.length,
+      newFindingsCount,
+    });
+  } catch (error) {
+    console.error('Save PMS checklist error:', error);
+    res.status(500).json({ error: 'Failed to save PMS checklist' });
+  }
+});
+
   } catch (error) {
     console.error('Delete recommendation error:', error);
     res.status(500).json({ error: 'Failed to delete recommendation' });
