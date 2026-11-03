@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'url_opener_stub.dart' if (dart.library.html) 'url_opener_web.dart';
+import 'bulk_parts_import_dialog.dart';
 
 class InventoryWorkspaceView extends StatefulWidget {
   final String activeUserRole;
@@ -1282,11 +1283,36 @@ class _InventoryWorkspaceViewState extends State<InventoryWorkspaceView> with Si
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('${filteredParts.length} of ${_parts.length} Spare Parts (Resale / Customer Vehicle Repairs)', style: const TextStyle(fontWeight: FontWeight.bold)),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Add Spare Part'),
-                onPressed: _showAddPartDialog,
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF0F4C81),
+                      side: const BorderSide(color: Color(0xFF0F4C81)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    icon: const Icon(Icons.file_upload_outlined, size: 16),
+                    label: const Text('Import Excel / CSV', style: TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      BulkPartsImportDialog.show(
+                        context,
+                        baseUrl: _baseUrl,
+                        authHeaders: _headers,
+                        onImportCompleted: () {
+                          _fetchAllInventoryData();
+                          widget.onDataChanged();
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F4C81), foregroundColor: Colors.white),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Add Spare Part'),
+                    onPressed: _showAddPartDialog,
+                  ),
+                ],
               ),
             ],
           ),

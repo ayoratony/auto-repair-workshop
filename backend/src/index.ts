@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import * as XLSX from 'xlsx';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaClient, JobStatus, EstimateStatus, PaymentStatus, Role, ClientCategory } from '@prisma/client';
 import {
@@ -35,7 +36,7 @@ const prisma = new PrismaClient();
 const PORT = Number(process.env.PORT) || 5001;
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(createAuthMiddleware(prisma));
 
 // Helper to get or create the active workshop tenant
@@ -427,7 +428,7 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
 // ==========================================
 export interface SyncEvent {
   id: string;
-  type: 'JOB_UPDATED' | 'RECOMMENDATION_ADDED' | 'RECOMMENDATION_UPDATED' | 'ESTIMATE_CREATED' | 'ESTIMATE_UPDATED' | 'INVENTORY_REQUEST' | 'STATUS_CHANGED';
+  type: 'JOB_UPDATED' | 'RECOMMENDATION_ADDED' | 'RECOMMENDATION_UPDATED' | 'ESTIMATE_CREATED' | 'ESTIMATE_UPDATED' | 'INVENTORY_REQUEST' | 'STATUS_CHANGED' | 'PARTS_BULK_IMPORTED' | 'PART_UPDATED';
   entityId: string;
   actorName: string;
   actorRole: string;
@@ -2246,6 +2247,353 @@ app.post('/api/jobs/:id/complete-repairs', async (req: Request, res: Response) =
 // ==========================================
 // PARTS CATALOG & STOCK LEDGER API
 // ==========================================
+
+// Helper to normalize parsed row keys regardless of header variations
+function normalizePartRow(rawRow: Record<string, any>): Record<string, any> {
+  const normalized: Record<string, any> = {};
+  for (const [key, val] of Object.entries(rawRow)) {
+    if (val === undefined || val === null) continue;
+    const cleanKey = key.trim().toLowerCase().replace(/[\s\-_#\.\/\\]+/g, '');
+    if (!cleanKey) continue;
+    const strVal = String(val).trim();
+
+    if (['partnumber', 'partno', 'partcode', 'sku', 'code', 'itemcode', 'itemno', 'partnum', 'part'].includes(cleanKey)) {
+      normalized.partNumber = strVal;
+    } else if (['description', 'desc', 'partdescription', 'partname', 'itemname', 'name', 'item', 'productname', 'title'].includes(cleanKey)) {
+      normalized.description = strVal;
+    } else if (['brand', 'make', 'manufacturer', 'oem', 'brandname', 'producer'].includes(cleanKey)) {
+      normalized.brand = strVal;
+    } else if (['compatibility', 'compatiblemodels', 'vehiclecompatibility', 'vehicles', 'fitment', 'application', 'fits', 'carmodels', 'model'].includes(cleanKey)) {
+      normalized.compatibility = strVal;
+    } else if (['costprice', 'cost', 'buyingprice', 'purchaseprice', 'unitcost', 'buyprice', 'costkes', 'costksh'].includes(cleanKey)) {
+      const num = Number(strVal.replace(/[^0-9\.]+/g, ''));
+      if (!isNaN(num)) normalized.costPrice = num;
+    } else if (['unitprice', 'price', 'sellingprice', 'retailprice', 'saleprice', 'retail', 'selling', 'pricekes', 'priceksh'].includes(cleanKey)) {
+      const num = Number(strVal.replace(/[^0-9\.]+/g, ''));
+      if (!isNaN(num)) normalized.unitPrice = num;
+    } else if (['stockquantity', 'quantity', 'qty', 'stock', 'openingstock', 'currentstock', 'count', 'onhand', 'quantityonhand', 'balance'].includes(cleanKey)) {
+      const num = parseInt(strVal.replace(/[^0-9\-]+/g, ''), 10);
+      if (!isNaN(num)) normalized.stockQuantity = num;
+    } else if (['reorderlevel', 'reorder', 'minstock', 'minimumstock', 'alertlevel', 'minqty'].includes(cleanKey)) {
+      const num = parseInt(strVal.replace(/[^0-9]+/g, ''), 10);
+      if (!isNaN(num)) normalized.reorderLevel = num;
+    } else if (['location', 'shelf', 'bin', 'bay', 'rack', 'store', 'storagelocation', 'aisle'].includes(cleanKey)) {
+      normalized.location = strVal;
+    } else if (['suppliername', 'supplier', 'vendor', 'vendorname', 'source'].includes(cleanKey)) {
+      normalized.supplierName = strVal;
+    } else if (['supplierphone', 'phone', 'vendorphone', 'suppliercontact', 'contact'].includes(cleanKey)) {
+      normalized.supplierPhone = strVal;
+    } else if (['warrantymonths', 'warranty', 'guarantee', 'warrantymonth', 'warrantypmt'].includes(cleanKey)) {
+      const num = parseInt(strVal.replace(/[^0-9]+/g, ''), 10);
+      if (!isNaN(num)) normalized.warrantyMonths = num;
+    }
+  }
+
+  // Sensible defaults
+  if (normalized.costPrice === undefined && normalized.unitPrice !== undefined) {
+    normalized.costPrice = Math.round(normalized.unitPrice * 0.65 * 100) / 100;
+  }
+  if (normalized.unitPrice === undefined && normalized.costPrice !== undefined) {
+    normalized.unitPrice = Math.round(normalized.costPrice * 1.35 * 100) / 100;
+  }
+  if (normalized.costPrice === undefined) normalized.costPrice = 0;
+  if (normalized.unitPrice === undefined) normalized.unitPrice = 0;
+  if (normalized.stockQuantity === undefined) normalized.stockQuantity = 0;
+  if (normalized.reorderLevel === undefined) normalized.reorderLevel = 5;
+  if (!normalized.location) normalized.location = 'Main Store';
+  if (normalized.warrantyMonths === undefined) normalized.warrantyMonths = 6;
+
+  return normalized;
+}
+
+// Helper to extract raw JSON rows from fileBase64, csvText, or rows array
+function extractRawRowsFromInput(body: any): any[] {
+  let rawRows: any[] = [];
+  if (body.fileBase64 && typeof body.fileBase64 === 'string') {
+    const cleanBase64 = body.fileBase64.replace(/^data:.*?;base64,/, '');
+    const buf = Buffer.from(cleanBase64, 'base64');
+    const workbook = XLSX.read(buf, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    if (sheetName) {
+      const worksheet = workbook.Sheets[sheetName];
+      rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+    }
+  } else if (body.csvText && typeof body.csvText === 'string') {
+    const workbook = XLSX.read(body.csvText, { type: 'string' });
+    const sheetName = workbook.SheetNames[0];
+    if (sheetName) {
+      const worksheet = workbook.Sheets[sheetName];
+      rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+    }
+  } else if (Array.isArray(body.rows)) {
+    rawRows = body.rows;
+  }
+  return rawRows;
+}
+
+// 1. Download ready-to-use CSV template
+app.get('/api/parts/import-template', (_req: Request, res: Response) => {
+  const headers = 'Part Number,Description,Brand,Compatibility,Cost Price,Unit Price,Stock Quantity,Reorder Level,Location,Supplier Name,Supplier Phone,Warranty Months\r\n';
+  const sample1 = 'OIL-FLT-001,Engine Oil Filter,Toyota Genuine,Corolla / Hilux / Premio,450,850,25,5,Shelf A-1,AutoParts Kenya,0712345678,6\r\n';
+  const sample2 = 'BRK-PAD-002,Front Ceramic Brake Pads,Brembo,Land Cruiser Prado 150,3200,5500,12,3,Shelf B-2,Brembo East Africa,0722334455,12\r\n';
+  const sample3 = 'SPK-PLG-003,Iridium Spark Plugs (Pack of 4),NGK,Toyota / Nissan / Subaru,1800,2800,40,10,Shelf A-3,NGK Distributors,0733445566,12\r\n';
+  const sample4 = 'AIR-FLT-004,Heavy Duty Air Cleaner Element,Denso,Isuzu D-Max / FRR,1200,1950,15,4,Shelf C-1,Denso Kenya,0744556677,6\r\n';
+  const sample5 = 'WIP-BLD-005,All-Weather Wiper Blades 22 Inch,Bosch,Universal Fit J-Hook,650,1200,30,8,Shelf D-4,Bosch Nairobi,0755667788,3\r\n';
+
+  const csvContent = headers + sample1 + sample2 + sample3 + sample4 + sample5;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="parts_import_template.csv"');
+  res.status(200).send(csvContent);
+});
+
+// 2. Parse & Preview before importing
+app.post('/api/parts/bulk-preview', async (req: Request, res: Response) => {
+  try {
+    const rawRows = extractRawRowsFromInput(req.body);
+    if (!rawRows.length) {
+      return res.status(400).json({ error: 'No data found in uploaded file or CSV text' });
+    }
+
+    const tenant = await getActiveTenant();
+    const existingParts = await prisma.partCatalog.findMany({
+      where: { tenantId: tenant.id },
+      select: { id: true, partNumber: true, description: true, stockQuantity: true, costPrice: true, unitPrice: true },
+    });
+
+    const existingMap = new Map<string, typeof existingParts[0]>();
+    for (const p of existingParts) {
+      existingMap.set(p.partNumber.trim().toUpperCase(), p);
+    }
+
+    const validItems: any[] = [];
+    const invalidItems: any[] = [];
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const raw = rawRows[i];
+      const normalized = normalizePartRow(raw);
+      const rowNum = i + 2; // Accounting for 1-based index + header row
+
+      if (!normalized.partNumber && !normalized.description) {
+        invalidItems.push({ rowNumber: rowNum, error: 'Row is empty or missing both Part Number and Description', raw });
+        continue;
+      }
+
+      if (!normalized.partNumber) {
+        const prefix = (normalized.brand || 'PART').substring(0, 3).toUpperCase();
+        normalized.partNumber = `${prefix}-${Date.now().toString().slice(-4)}-${i + 1}`;
+      }
+
+      if (!normalized.description) {
+        normalized.description = normalized.partNumber;
+      }
+
+      const key = normalized.partNumber.trim().toUpperCase();
+      const existing = existingMap.get(key);
+
+      validItems.push({
+        ...normalized,
+        rowNumber: rowNum,
+        isExisting: Boolean(existing),
+        existingId: existing ? existing.id : null,
+        currentStock: existing ? existing.stockQuantity : null,
+        currentCostPrice: existing ? existing.costPrice : null,
+        currentUnitPrice: existing ? existing.unitPrice : null,
+      });
+    }
+
+    const newCount = validItems.filter((item) => !item.isExisting).length;
+    const updateCount = validItems.filter((item) => item.isExisting).length;
+
+    res.json({
+      totalRows: rawRows.length,
+      validCount: validItems.length,
+      invalidCount: invalidItems.length,
+      newCount,
+      updateCount,
+      preview: validItems.slice(0, 100),
+      items: validItems,
+      errors: invalidItems,
+    });
+  } catch (error: any) {
+    console.error('Parts bulk preview error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process and preview file' });
+  }
+});
+
+// 3. Execute Bulk Import
+app.post('/api/parts/bulk-import', async (req: Request, res: Response) => {
+  try {
+    let itemsToProcess: any[] = [];
+
+    if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+      itemsToProcess = req.body.items;
+    } else {
+      const rawRows = extractRawRowsFromInput(req.body);
+      if (!rawRows.length) {
+        return res.status(400).json({ error: 'No items or file data provided for bulk import' });
+      }
+      for (let i = 0; i < rawRows.length; i++) {
+        const norm = normalizePartRow(rawRows[i]);
+        if (!norm.partNumber && !norm.description) continue;
+        if (!norm.partNumber) norm.partNumber = `PART-${Date.now().toString().slice(-4)}-${i + 1}`;
+        if (!norm.description) norm.description = norm.partNumber;
+        itemsToProcess.push(norm);
+      }
+    }
+
+    if (!itemsToProcess.length) {
+      return res.status(400).json({ error: 'No valid parts found to import' });
+    }
+
+    const tenant = await getActiveTenant();
+    const updateExisting = req.body.updateExisting !== false; // default true
+    const stockMode = req.body.stockMode === 'SET' ? 'SET' : 'ADD'; // default ADD
+    const createStockMovements = req.body.createStockMovements !== false; // default true
+    const actorName = (req.headers['x-user-name'] as string) || 'Admin';
+    const sourceFileName = req.body.fileName ? String(req.body.fileName) : 'Bulk Import';
+
+    const existingParts = await prisma.partCatalog.findMany({
+      where: { tenantId: tenant.id },
+    });
+    const existingMap = new Map<string, typeof existingParts[0]>();
+    for (const p of existingParts) {
+      existingMap.set(p.partNumber.trim().toUpperCase(), p);
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const errors: Array<{ partNumber: string; error: string }> = [];
+
+    for (const item of itemsToProcess) {
+      const pNum = String(item.partNumber || '').trim();
+      if (!pNum) {
+        skippedCount++;
+        continue;
+      }
+      const key = pNum.toUpperCase();
+      const existing = existingMap.get(key);
+
+      try {
+        if (!existing) {
+          // Create new part
+          const newPart = await prisma.partCatalog.create({
+            data: {
+              partNumber: pNum,
+              description: String(item.description || pNum).trim(),
+              brand: item.brand ? String(item.brand).trim() : null,
+              compatibility: item.compatibility ? String(item.compatibility).trim() : null,
+              costPrice: Number(item.costPrice) || 0,
+              unitPrice: Number(item.unitPrice) || 0,
+              stockQuantity: Number(item.stockQuantity) || 0,
+              reorderLevel: item.reorderLevel !== undefined ? Number(item.reorderLevel) : 5,
+              location: item.location ? String(item.location).trim() : 'Main Store',
+              supplierName: item.supplierName ? String(item.supplierName).trim() : null,
+              supplierPhone: item.supplierPhone ? String(item.supplierPhone).trim() : null,
+              warrantyMonths: item.warrantyMonths !== undefined ? Number(item.warrantyMonths) : 6,
+              tenantId: tenant.id,
+            },
+          });
+
+          // Record stock movement if initial stock > 0
+          if (createStockMovements && (Number(item.stockQuantity) || 0) > 0) {
+            await prisma.stockMovement.create({
+              data: {
+                partId: newPart.id,
+                type: 'RECEIVED',
+                quantity: Number(item.stockQuantity),
+                unitCost: Number(item.costPrice) || 0,
+                unitPrice: Number(item.unitPrice) || 0,
+                supplierName: item.supplierName ? String(item.supplierName).trim() : null,
+                reference: 'Bulk Import',
+                notes: `Initial stock from ${sourceFileName} (imported by ${actorName})`,
+                tenantId: tenant.id,
+              },
+            });
+          }
+
+          existingMap.set(key, newPart);
+          createdCount++;
+        } else if (updateExisting) {
+          // Update existing part
+          const importedStock = Number(item.stockQuantity) || 0;
+          let finalStock = existing.stockQuantity;
+          let stockDelta = 0;
+
+          if (stockMode === 'ADD') {
+            finalStock = existing.stockQuantity + importedStock;
+            stockDelta = importedStock;
+          } else {
+            finalStock = importedStock;
+            stockDelta = importedStock - existing.stockQuantity;
+          }
+
+          const updatedPart = await prisma.partCatalog.update({
+            where: { id: existing.id },
+            data: {
+              ...(item.description ? { description: String(item.description).trim() } : {}),
+              ...(item.brand ? { brand: String(item.brand).trim() } : {}),
+              ...(item.compatibility ? { compatibility: String(item.compatibility).trim() } : {}),
+              ...(item.costPrice !== undefined ? { costPrice: Number(item.costPrice) } : {}),
+              ...(item.unitPrice !== undefined ? { unitPrice: Number(item.unitPrice) } : {}),
+              ...(item.reorderLevel !== undefined ? { reorderLevel: Number(item.reorderLevel) } : {}),
+              ...(item.location ? { location: String(item.location).trim() } : {}),
+              ...(item.supplierName ? { supplierName: String(item.supplierName).trim() } : {}),
+              ...(item.supplierPhone ? { supplierPhone: String(item.supplierPhone).trim() } : {}),
+              ...(item.warrantyMonths !== undefined ? { warrantyMonths: Number(item.warrantyMonths) } : {}),
+              stockQuantity: finalStock,
+            },
+          });
+
+          if (createStockMovements && stockDelta !== 0) {
+            await prisma.stockMovement.create({
+              data: {
+                partId: existing.id,
+                type: stockDelta > 0 ? 'RECEIVED' : 'ADJUSTED',
+                quantity: Math.abs(stockDelta),
+                unitCost: Number(item.costPrice) || existing.costPrice,
+                unitPrice: Number(item.unitPrice) || existing.unitPrice,
+                supplierName: item.supplierName ? String(item.supplierName).trim() : existing.supplierName,
+                reference: 'Bulk Import Update',
+                notes: `Stock updated via ${sourceFileName} (${stockDelta > 0 ? '+' : ''}${stockDelta} units by ${actorName})`,
+                tenantId: tenant.id,
+              },
+            });
+          }
+
+          existingMap.set(key, updatedPart);
+          updatedCount++;
+        } else {
+          skippedCount++;
+        }
+      } catch (err: any) {
+        errors.push({ partNumber: pNum, error: err.message || 'Database write error' });
+      }
+    }
+
+    recordSyncEvent({
+      type: 'PARTS_BULK_IMPORTED',
+      entityId: tenant.id,
+      actorName,
+      actorRole: (req.headers['x-user-role'] as string) || 'USER',
+      message: `Bulk imported ${createdCount} new parts and updated ${updatedCount} parts from ${sourceFileName}`,
+      metadata: { createdCount, updatedCount, skippedCount, totalProcessed: itemsToProcess.length },
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully processed ${createdCount + updatedCount} parts (${createdCount} created, ${updatedCount} updated, ${skippedCount} skipped)`,
+      createdCount,
+      updatedCount,
+      skippedCount,
+      totalProcessed: itemsToProcess.length,
+      errors,
+    });
+  } catch (error: any) {
+    console.error('Parts bulk import error:', error);
+    res.status(500).json({ error: error.message || 'Failed to execute bulk import' });
+  }
+});
 app.get('/api/parts', async (_req: Request, res: Response) => {
   try {
     const parts = await prisma.partCatalog.findMany({

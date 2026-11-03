@@ -14,6 +14,7 @@ import '../../services/vehicle_photo_service.dart';
 import '../../models/pms_checklist_model.dart';
 import '../../services/pms_pdf_service.dart';
 import '../mobile/pms_checklist_sheet.dart';
+import 'bulk_parts_import_dialog.dart';
 
 class WebDashboardScreen extends StatefulWidget {
   const WebDashboardScreen({Key? key}) : super(key: key);
@@ -6737,6 +6738,19 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   onPressed: _showStockLedgerHistoryDialog,
                   icon: const Icon(Icons.history_edu, size: 17),
                   label: const Text('Stock Ledger History'),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    BulkPartsImportDialog.show(
+                      context,
+                      baseUrl: _baseUrl,
+                      authHeaders: AuthService.instance.authHeaders,
+                      onImportCompleted: _refreshAllData,
+                    );
+                  },
+                  icon: const Icon(Icons.file_upload_outlined, size: 17),
+                  label: const Text('Import Excel / CSV', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(width: 10),
                 ElevatedButton.icon(
