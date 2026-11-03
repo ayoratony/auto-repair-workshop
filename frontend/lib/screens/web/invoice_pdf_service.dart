@@ -17,7 +17,7 @@ class InvoicePdfService {
     bool isInvoice = true,
   }) async {
     final pdf = pw.Document(
-      title: isInvoice ? 'Tax Invoice' : 'Official Estimate',
+      title: isInvoice ? 'Invoice' : 'Official Estimate',
       author: workshopSettings['name']?.toString() ?? 'AutoKe Auto Workshop',
     );
 
@@ -158,7 +158,7 @@ class InvoicePdfService {
                       crossAxisAlignment: pw.CrossAxisAlignment.end,
                       children: [
                         pw.Text(
-                          isInvoice ? 'TAX INVOICE' : 'ESTIMATE',
+                          isInvoice ? 'INVOICE' : 'ESTIMATE',
                           style: pw.TextStyle(
                             font: fontBold,
                             fontSize: 21,
@@ -465,7 +465,12 @@ class InvoicePdfService {
                                 _summaryLine(fontRegular, fontBold, 'Net Taxable Amount', 'KSH ${_formatCurrency(d.taxableSubtotal)}'),
                               ],
                               pw.SizedBox(height: 6),
-                              _summaryLine(fontRegular, fontBold, 'VAT (${d.taxRate.toStringAsFixed(0)}%)', '+ KSH ${_formatCurrency(d.taxAmount)}'),
+                              _summaryLine(
+                                fontRegular,
+                                fontBold,
+                                d.taxRate <= 0 ? 'VAT (0% - Exempt)' : 'VAT (${d.taxRate.toStringAsFixed(0)}%)',
+                                d.taxRate <= 0 ? 'KSH 0.00' : '+ KSH ${_formatCurrency(d.taxAmount)}',
+                              ),
                               if (isInvoice && d.amountPaid > 0) ...[
                                 pw.SizedBox(height: 6),
                                 _summaryLine(
@@ -622,7 +627,7 @@ class InvoicePdfService {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              '${isInvoice ? "A4 Tax Invoice" : "A4 Official Estimate"} \u2014 $fileName',
+                              '${isInvoice ? "A4 Invoice" : "A4 Official Estimate"} \u2014 $fileName',
                               style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -838,7 +843,7 @@ class InvoicePdfService {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        isInvoice ? 'TAX INVOICE' : 'ESTIMATE',
+                        isInvoice ? 'INVOICE' : 'ESTIMATE',
                         style: const TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.w900,
@@ -1114,7 +1119,10 @@ class InvoicePdfService {
                                 _previewSummaryLine('Net Taxable Amount', 'KSH ${_formatCurrency(d.taxableSubtotal)}'),
                               ],
                               const SizedBox(height: 8),
-                              _previewSummaryLine('VAT (${d.taxRate.toStringAsFixed(0)}%)', '+ KSH ${_formatCurrency(d.taxAmount)}'),
+                              _previewSummaryLine(
+                                d.taxRate <= 0 ? 'VAT (0% - Exempt)' : 'VAT (${d.taxRate.toStringAsFixed(0)}%)',
+                                d.taxRate <= 0 ? 'KSH 0.00' : '+ KSH ${_formatCurrency(d.taxAmount)}',
+                              ),
                               if (isInvoice && d.amountPaid > 0) ...[
                                 const SizedBox(height: 8),
                                 _previewSummaryLine(
@@ -2555,6 +2563,23 @@ class InvoicePdfService {
                                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                 ),
                               ),
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  showVehicleGatePassModal(
+                                    context: context,
+                                    workshopSettings: workshopSettings,
+                                    vehicleData: job,
+                                  );
+                                },
+                                icon: const Icon(Icons.shield_outlined, size: 16),
+                                label: const Text('Issue Security Gate Pass', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0F766E),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                ),
+                              ),
                             ],
                           ),
                         ],
@@ -3514,6 +3539,9 @@ class InvoicePdfService {
   static Future<Uint8List> generatePaymentReceiptPdf({
     required Map<String, dynamic> workshopSettings,
     required Map<String, dynamic> invoice,
+    String clearanceReason = 'AUTO', // 'AUTO', 'FULL_PAYMENT', 'VEHICLE_INTAKE', 'CORPORATE_CREDIT', 'DIAGNOSTIC_EXIT', 'MANAGER_OVERRIDE', 'BALANCE_DUE'
+    String? authorizedByName,
+    String? clearanceNotes,
   }) async {
     final pdf = pw.Document(
       title: 'Official Payment Receipt & Gate Pass',
@@ -3530,7 +3558,10 @@ class InvoicePdfService {
       isInvoice: true,
     );
     final history = (invoice['paymentHistory'] as List<dynamic>?) ?? [];
-    final isCleared = d.balanceDue <= 0.01;
+    final bool balanceSettled = d.balanceDue <= 0.01;
+    final bool isCleared = clearanceReason == 'AUTO'
+        ? balanceSettled
+        : (clearanceReason != 'BALANCE_DUE');
 
     const navyDark = PdfColor.fromInt(0xFF0F172A);
     const primaryBlue = PdfColor.fromInt(0xFF1D4ED8);
@@ -3538,10 +3569,49 @@ class InvoicePdfService {
     const greenBg = PdfColor.fromInt(0xFFDCFCE7);
     const amberColor = PdfColor.fromInt(0xFFB45309);
     const amberBg = PdfColor.fromInt(0xFFFEF3C7);
+    const tealColor = PdfColor.fromInt(0xFF0F766E);
+    const tealBg = PdfColor.fromInt(0xFFCCFBF1);
     const redColor = PdfColor.fromInt(0xFFDC2626);
     const redBg = PdfColor.fromInt(0xFFFEE2E2);
     const borderGrey = PdfColor.fromInt(0xFFE2E8F0);
     const lightBg = PdfColor.fromInt(0xFFF8FAFC);
+
+    String gatePassTitle;
+    String gatePassBadge;
+    PdfColor passColor;
+    PdfColor passBg;
+
+    if (clearanceReason == 'VEHICLE_INTAKE') {
+      gatePassTitle = 'GATE PASS: VEHICLE INTAKE & WORKSHOP RECEIVING CONFIRMED';
+      gatePassBadge = 'INTAKE PERMITTED';
+      passColor = tealColor;
+      passBg = tealBg;
+    } else if (clearanceReason == 'CORPORATE_CREDIT') {
+      gatePassTitle = 'SECURITY GATE PASS: CLEARED ON CORPORATE CREDIT (NET-30 TERMS)';
+      gatePassBadge = 'CORPORATE ACCOUNT';
+      passColor = primaryBlue;
+      passBg = const PdfColor.fromInt(0xFFDBEAFE);
+    } else if (clearanceReason == 'DIAGNOSTIC_EXIT') {
+      gatePassTitle = 'SECURITY GATE PASS: DIAGNOSTIC TRIAGE ONLY / REPAIRS DECLINED';
+      gatePassBadge = 'EXIT PERMITTED';
+      passColor = primaryBlue;
+      passBg = const PdfColor.fromInt(0xFFDBEAFE);
+    } else if (clearanceReason == 'MANAGER_OVERRIDE') {
+      gatePassTitle = 'SECURITY GATE PASS: MANAGER AUTHORIZED COURTESY RELEASE';
+      gatePassBadge = 'MANAGER OVERRIDE';
+      passColor = greenColor;
+      passBg = greenBg;
+    } else if (clearanceReason == 'FULL_PAYMENT' || (clearanceReason == 'AUTO' && balanceSettled)) {
+      gatePassTitle = 'SECURITY GATE PASS: CLEARED FOR VEHICLE RELEASE';
+      gatePassBadge = 'CLEARED';
+      passColor = greenColor;
+      passBg = greenBg;
+    } else {
+      gatePassTitle = 'PARTIAL DEPOSIT RECEIPT — VEHICLE RELEASE SUBJECT TO MANAGER APPROVAL';
+      gatePassBadge = 'BALANCE DUE';
+      passColor = amberColor;
+      passBg = amberBg;
+    }
 
     pdf.addPage(
       pw.Page(
@@ -3678,7 +3748,12 @@ class InvoicePdfService {
                 ),
                 child: pw.Column(
                   children: [
-                    _summaryLine(fontRegular, fontBold, 'Total Invoice Amount (Incl. VAT)', 'KSH ${_formatCurrency(d.grandTotal)}'),
+                    _summaryLine(
+                      fontRegular,
+                      fontBold,
+                      d.taxRate <= 0 ? 'Total Invoice Amount (VAT Exempt)' : 'Total Invoice Amount (Incl. ${d.taxRate.toStringAsFixed(0)}% VAT)',
+                      'KSH ${_formatCurrency(d.grandTotal)}',
+                    ),
                     pw.SizedBox(height: 6),
                     _summaryLine(fontRegular, fontBold, 'Total Amount Received / Paid to Date', 'KSH ${_formatCurrency(d.amountPaid)}', valueColor: greenColor),
                     pw.SizedBox(height: 6),
@@ -3695,34 +3770,49 @@ class InvoicePdfService {
               pw.SizedBox(height: 22),
               // Gate Pass Authorization Box
               pw.Container(
-                padding: const pw.EdgeInsets.all(16),
+                padding: const pw.EdgeInsets.all(14),
                 decoration: pw.BoxDecoration(
-                  color: isCleared ? greenBg : amberBg,
+                  color: passBg,
                   borderRadius: pw.BorderRadius.circular(8),
-                  border: pw.Border.all(color: isCleared ? greenColor : amberColor, width: 1.5),
+                  border: pw.Border.all(color: passColor, width: 1.5),
                 ),
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text(
-                          isCleared
-                              ? 'SECURITY GATE PASS: CLEARED FOR VEHICLE RELEASE'
-                              : 'PARTIAL DEPOSIT RECEIPT — VEHICLE RELEASE SUBJECT TO MANAGER APPROVAL',
-                          style: pw.TextStyle(font: fontBold, fontSize: 11, color: isCleared ? greenColor : amberColor),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Text(
-                          'Vehicle Reg: ${d.regNo}  •  Job Card: ${d.jobNumber}  •  Customer: ${d.customerName}',
-                          style: pw.TextStyle(font: fontBold, fontSize: 9.5, color: navyDark),
-                        ),
-                      ],
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                            gatePassTitle,
+                            style: pw.TextStyle(font: fontBold, fontSize: 10, color: passColor),
+                          ),
+                          pw.SizedBox(height: 3),
+                          pw.Text(
+                            'Vehicle Reg: ${d.regNo}  •  Job Card: ${d.jobNumber}  •  Customer: ${d.customerName}',
+                            style: pw.TextStyle(font: fontBold, fontSize: 9, color: navyDark),
+                          ),
+                          if (authorizedByName != null && authorizedByName.isNotEmpty) ...[
+                            pw.SizedBox(height: 3),
+                            pw.Text(
+                              'Release Authorization: $authorizedByName ${clearanceNotes != null && clearanceNotes.isNotEmpty ? "($clearanceNotes)" : ""}',
+                              style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: passColor),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
-                    pw.Text(
-                      isCleared ? 'CLEARED' : 'BALANCE DUE',
-                      style: pw.TextStyle(font: fontBold, fontSize: 13, color: isCleared ? greenColor : amberColor),
+                    pw.SizedBox(width: 8),
+                    pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: pw.BoxDecoration(
+                        color: passColor,
+                        borderRadius: pw.BorderRadius.circular(4),
+                      ),
+                      child: pw.Text(
+                        gatePassBadge,
+                        style: pw.TextStyle(font: fontBold, fontSize: 10, color: PdfColors.white),
+                      ),
                     ),
                   ],
                 ),
@@ -3771,77 +3861,784 @@ class InvoicePdfService {
       isInvoice: true,
     );
     final history = (invoice['paymentHistory'] as List<dynamic>?) ?? [];
-    final isCleared = d.balanceDue <= 0.01;
     final fileName = 'Receipt_${d.docNumber.replaceAll("INV-", "RCT-")}';
+
+    String selectedClearance = d.balanceDue <= 0.01 ? 'FULL_PAYMENT' : 'AUTO';
+    String authManager = 'Workshop Manager';
+    String authNotes = '';
 
     await showDialog(
       context: context,
       builder: (ctx) {
-        return Dialog(
-          backgroundColor: const Color(0xFF0F172A),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          child: SizedBox(
-            width: 820,
-            height: MediaQuery.of(ctx).size.height * 0.9,
-            child: Column(
-              children: [
-                // Top Action Bar (Fully Responsive to avoid overflow)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF1E293B),
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final bool isCleared = selectedClearance == 'AUTO'
+                ? (d.balanceDue <= 0.01)
+                : (selectedClearance != 'BALANCE_DUE');
+
+            return Dialog(
+              backgroundColor: const Color(0xFF0F172A),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              child: SizedBox(
+                width: 860,
+                height: MediaQuery.of(ctx).size.height * 0.92,
+                child: Column(
+                  children: [
+                    // Top Action Bar
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1E293B),
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.verified_outlined, color: Colors.greenAccent, size: 20),
+                          Row(
+                            children: [
+                              const Icon(Icons.verified_outlined, color: Colors.greenAccent, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Payment Receipt & Security Gate Pass (${d.regNo})',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: 'Close',
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              // Clearance Mode Dropdown
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF334155),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFF475569)),
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: selectedClearance,
+                                    dropdownColor: const Color(0xFF1E293B),
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
+                                    items: [
+                                      DropdownMenuItem(
+                                        value: 'AUTO',
+                                        child: Text(d.balanceDue <= 0.01 ? 'Auto: Cleared (Paid)' : 'Auto: Balance Due'),
+                                      ),
+                                      const DropdownMenuItem(
+                                        value: 'FULL_PAYMENT',
+                                        child: Text('Clearance: Full Payment Cleared'),
+                                      ),
+                                      const DropdownMenuItem(
+                                        value: 'VEHICLE_INTAKE',
+                                        child: Text('Gate Pass: Vehicle Intake Check-In'),
+                                      ),
+                                      const DropdownMenuItem(
+                                        value: 'CORPORATE_CREDIT',
+                                        child: Text('Clearance: Corporate Credit (Net-30)'),
+                                      ),
+                                      const DropdownMenuItem(
+                                        value: 'DIAGNOSTIC_EXIT',
+                                        child: Text('Clearance: Diagnostics Only / Work Declined'),
+                                      ),
+                                      const DropdownMenuItem(
+                                        value: 'MANAGER_OVERRIDE',
+                                        child: Text('Clearance: Manager Courtesy Release'),
+                                      ),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setModalState(() => selectedClearance = val);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  final bytes = await generatePaymentReceiptPdf(
+                                    workshopSettings: workshopSettings,
+                                    invoice: invoice,
+                                    clearanceReason: selectedClearance,
+                                    authorizedByName: authManager,
+                                    clearanceNotes: authNotes,
+                                  );
+                                  await printPdfBytesImpl(bytes, fileName);
+                                },
+                                icon: const Icon(Icons.print, size: 16),
+                                label: const Text('Print Receipt & Pass', style: TextStyle(fontSize: 12)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF2563EB),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: () async {
+                                  final bytes = await generatePaymentReceiptPdf(
+                                    workshopSettings: workshopSettings,
+                                    invoice: invoice,
+                                    clearanceReason: selectedClearance,
+                                    authorizedByName: authManager,
+                                    clearanceNotes: authNotes,
+                                  );
+                                  await saveAndDownloadPdfImpl(bytes, '$fileName.pdf');
+                                },
+                                icon: const Icon(Icons.download, size: 16, color: Colors.white),
+                                label: const Text('Download PDF', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFF475569)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  showVehicleGatePassModal(
+                                    context: context,
+                                    workshopSettings: workshopSettings,
+                                    vehicleData: {
+                                      ...invoice,
+                                      ...est,
+                                      'jobNumber': d.jobNumber,
+                                      'regNo': d.regNo,
+                                      'makeModel': d.makeModel,
+                                      'customerName': d.customerName,
+                                      'customerPhone': d.customerPhone,
+                                      'odometer': d.odometer,
+                                      'fuelLevel': d.fuelLevel,
+                                    },
+                                    initialClearance: selectedClearance,
+                                  );
+                                },
+                                icon: const Icon(Icons.shield_outlined, size: 16),
+                                label: const Text('Dedicated Gate Pass', style: TextStyle(fontSize: 12)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0F766E),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Container(
+                          padding: const EdgeInsets.all(28),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(d.workshopName.toUpperCase(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                                      Text('${d.workshopAddress} • PIN: ${d.workshopPin}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                                    ],
+                                  ),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      const Text('OFFICIAL PAYMENT RECEIPT', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Color(0xFF1D4ED8))),
+                                      Text('Job Card: ${d.jobNumber} • Vehicle: ${d.regNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const Divider(height: 24),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Customer: ${d.customerName} (${d.customerPhone})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  Text('Vehicle: ${d.regNo} (${d.makeModel})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              const Text('Payment & Deposit History Ledger:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              const SizedBox(height: 8),
+                              if (history.isEmpty)
+                                ListTile(
+                                  dense: true,
+                                  tileColor: Colors.grey.shade50,
+                                  title: Text('${d.paymentMode} ${d.mpesaReceiptNo.isNotEmpty ? "• Ref: ${d.mpesaReceiptNo}" : ""}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  subtitle: Text('Date: ${d.createdAtStr}'),
+                                  trailing: Text('KSH ${_formatCurrency(d.amountPaid)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                                )
+                              else
+                                ...history.map((h) {
+                                  final amt = (h['amount'] as num?)?.toDouble() ?? 0.0;
+                                  return ListTile(
+                                    dense: true,
+                                    tileColor: Colors.grey.shade50,
+                                    title: Text('${h['mode'] ?? d.paymentMode} • Ref: ${h['reference'] ?? d.mpesaReceiptNo ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    subtitle: Text('${_formatFullDate(h['date'])} — ${h['notes'] ?? ''}'),
+                                    trailing: Text('KSH ${_formatCurrency(amt)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                                  );
+                                }),
+                              const Divider(height: 24),
+                              _previewSummaryLine(
+                                d.taxRate <= 0 ? 'Total Invoice Amount (VAT Exempt)' : 'Total Invoice Amount (Incl. ${d.taxRate.toStringAsFixed(0)}% VAT)',
+                                'KSH ${_formatCurrency(d.grandTotal)}',
+                              ),
+                              const SizedBox(height: 6),
+                              _previewSummaryLine('Total Amount Paid / Received', 'KSH ${_formatCurrency(d.amountPaid)}', valueColor: Colors.green.shade800),
+                              const SizedBox(height: 6),
+                              _previewSummaryLine('Remaining Balance Due', 'KSH ${_formatCurrency(d.balanceDue)}', valueColor: isCleared ? Colors.green.shade800 : Colors.red.shade800),
+                              const SizedBox(height: 20),
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: isCleared ? Colors.green.shade50 : Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: isCleared ? Colors.green : Colors.amber.shade800, width: 1.5),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            isCleared
+                                                ? (selectedClearance == 'VEHICLE_INTAKE'
+                                                    ? 'GATE PASS: VEHICLE INTAKE & CHECK-IN CONFIRMED ✓'
+                                                    : selectedClearance == 'CORPORATE_CREDIT'
+                                                        ? 'SECURITY GATE PASS: CLEARED ON CORPORATE CREDIT (NET-30) ✓'
+                                                        : selectedClearance == 'DIAGNOSTIC_EXIT'
+                                                            ? 'SECURITY GATE PASS: DIAGNOSTICS ONLY / WORK DECLINED (EXIT) ✓'
+                                                            : selectedClearance == 'MANAGER_OVERRIDE'
+                                                                ? 'SECURITY GATE PASS: MANAGER COURTESY RELEASE AUTHORIZED ✓'
+                                                                : 'SECURITY GATE PASS: CLEARED FOR VEHICLE RELEASE ✓')
+                                                : 'PARTIAL DEPOSIT RECEIPT (VEHICLE RELEASE SUBJECT TO MANAGER APPROVAL)',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
+                                              color: isCleared ? Colors.green.shade900 : Colors.amber.shade900,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text('Vehicle ${d.regNo} (${d.makeModel}) — Job ${d.jobNumber}', style: const TextStyle(fontSize: 11)),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: isCleared ? Colors.green.shade700 : Colors.amber.shade800,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        isCleared ? 'CLEARED' : 'BALANCE DUE',
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // MODULE 7: OFFICIAL STANDALONE SECURITY GATE PASS (GATE-IN & GATE-OUT)
+  // ===========================================================================
+
+  /// Generates a dedicated high-security A4 Gate Pass PDF for vehicles:
+  /// - GATE-IN: Vehicle Intake & Receiving Pass (at the time vehicle is brought in)
+  /// - GATE-OUT: Vehicle Security Release Pass (Full Payment, Corporate Account, Diagnostic Only / Declined, or Manager Authorized Release)
+  static Future<Uint8List> generateVehicleGatePassPdf({
+    required Map<String, dynamic> workshopSettings,
+    required Map<String, dynamic> vehicleData,
+    String passType = 'GATE_OUT', // 'GATE_OUT' (Release) or 'GATE_IN' (Intake)
+    String clearanceReason = 'FULL_PAYMENT', // 'INTAKE', 'FULL_PAYMENT', 'CORPORATE_CREDIT', 'DIAGNOSTIC_EXIT', 'MANAGER_OVERRIDE'
+    String driverName = '',
+    String driverPhone = '',
+    String driverId = '',
+    String authorizedBy = 'Service Manager',
+    String securityOfficer = 'Main Gate Security',
+    String odometer = '',
+    String fuelLevel = '1/2',
+    String notes = '',
+  }) async {
+    final pdf = pw.Document(
+      title: passType == 'GATE_IN' ? 'Vehicle Gate-In Intake Pass' : 'Vehicle Security Release Gate Pass',
+      author: workshopSettings['name']?.toString() ?? 'AutoKe Auto Workshop',
+    );
+    final fontRegular = pw.Font.helvetica();
+    final fontBold = pw.Font.helveticaBold();
+
+    final String workshopName = workshopSettings['name']?.toString() ?? 'AutoKe Premium Workshop';
+    final String workshopAddress = workshopSettings['address']?.toString() ?? 'Industrial Area, Commercial Street, Nairobi';
+    final String workshopPin = workshopSettings['kraPin']?.toString() ?? 'P051234567Z';
+    final String workshopPhone = workshopSettings['phone']?.toString() ?? '+254 700 000 000';
+
+    final String regNo = (vehicleData['registrationNumber'] ?? vehicleData['regNo'] ?? vehicleData['vehicleRegistration'] ?? 'N/A').toString().toUpperCase().trim();
+    final String make = (vehicleData['make'] ?? '').toString();
+    final String model = (vehicleData['model'] ?? '').toString();
+    final String makeModel = (vehicleData['makeModel'] ?? '$make $model').toString().trim().isEmpty ? 'Vehicle' : (vehicleData['makeModel'] ?? '$make $model').toString().trim();
+    final String customerName = (vehicleData['customerName'] ?? vehicleData['customer']?['name'] ?? vehicleData['clientName'] ?? 'Walk-In Customer').toString();
+    final String customerPhone = (vehicleData['customerPhone'] ?? vehicleData['phone'] ?? vehicleData['customer']?['phone'] ?? '').toString();
+    final String jobNumber = (vehicleData['jobNumber'] ?? vehicleData['id'] ?? '').toString();
+    final String color = (vehicleData['color'] ?? vehicleData['vehicleColor'] ?? 'Standard').toString();
+    final String vin = (vehicleData['vin'] ?? vehicleData['chassisNo'] ?? 'On File').toString();
+    final String odo = odometer.isNotEmpty ? odometer : (vehicleData['odometer'] ?? vehicleData['currentMileage'] ?? '0').toString();
+    final String fuel = fuelLevel.isNotEmpty ? fuelLevel : (vehicleData['fuelLevel'] ?? '1/2').toString();
+    final String gatePassNo = 'GP-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+    final String dateStr = _formatFullDate(DateTime.now());
+
+    final bool isGateIn = passType == 'GATE_IN';
+    final PdfColor themeColor = isGateIn ? const PdfColor.fromInt(0xFF0F766E) : const PdfColor.fromInt(0xFF1E3A8A);
+    final PdfColor lightThemeBg = isGateIn ? const PdfColor.fromInt(0xFFCCFBF1) : const PdfColor.fromInt(0xFFEFF6FF);
+    const navyDark = PdfColor.fromInt(0xFF0F172A);
+    const borderGrey = PdfColor.fromInt(0xFFCBD5E1);
+
+    String reasonTitle;
+    String reasonBadge;
+    if (isGateIn) {
+      reasonTitle = 'VEHICLE INTAKE & WORKSHOP RECEIVING (CUSTODY HANDOVER)';
+      reasonBadge = 'INTAKE PERMITTED';
+    } else if (clearanceReason == 'CORPORATE_CREDIT') {
+      reasonTitle = 'CLEARED ON CORPORATE / FLEET CREDIT TERMS (NET-30 BILLING)';
+      reasonBadge = 'CORPORATE ACCOUNT';
+    } else if (clearanceReason == 'DIAGNOSTIC_EXIT') {
+      reasonTitle = 'DIAGNOSTIC TRIAGE COMPLETED — REPAIRS DECLINED BY CUSTOMER';
+      reasonBadge = 'WORK DECLINED EXIT';
+    } else if (clearanceReason == 'MANAGER_OVERRIDE') {
+      reasonTitle = 'MANAGER AUTHORIZED COURTESY / EMERGENCY VEHICLE RELEASE';
+      reasonBadge = 'MANAGER OVERRIDE';
+    } else {
+      reasonTitle = 'REPAIRS COMPLETED & FULL PAYMENT CLEARED';
+      reasonBadge = 'CLEARED FOR EXIT';
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        build: (context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              // Company Header
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: pw.BoxDecoration(
+                  color: navyDark,
+                  borderRadius: pw.BorderRadius.circular(8),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(workshopName.toUpperCase(), style: pw.TextStyle(font: fontBold, color: PdfColors.white, fontSize: 15)),
+                        pw.SizedBox(height: 3),
+                        pw.Text('$workshopAddress  •  PIN: $workshopPin  •  Tel: $workshopPhone', style: pw.TextStyle(font: fontRegular, color: const PdfColor.fromInt(0xFF94A3B8), fontSize: 8.5)),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          isGateIn ? 'OFFICIAL GATE-IN PASS' : 'OFFICIAL GATE-OUT PASS',
+                          style: pw.TextStyle(font: fontBold, color: PdfColors.white, fontSize: 13, letterSpacing: 1.1),
+                        ),
+                        pw.SizedBox(height: 3),
+                        pw.Text('Pass Ref: $gatePassNo  •  Date: $dateStr', style: pw.TextStyle(font: fontBold, color: const PdfColor.fromInt(0xFF93C5FD), fontSize: 8.5)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 14),
+
+              // Title Banner
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 14),
+                decoration: pw.BoxDecoration(
+                  color: lightThemeBg,
+                  borderRadius: pw.BorderRadius.circular(6),
+                  border: pw.Border.all(color: themeColor, width: 1.5),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      isGateIn ? 'SECURITY GATE PASS — VEHICLE INTAKE & RECEIVING' : 'SECURITY GATE PASS — VEHICLE RELEASE CLEARANCE',
+                      style: pw.TextStyle(font: fontBold, fontSize: 11, color: themeColor),
+                    ),
+                    pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: pw.BoxDecoration(color: themeColor, borderRadius: pw.BorderRadius.circular(4)),
+                      child: pw.Text(reasonBadge, style: pw.TextStyle(font: fontBold, fontSize: 9, color: PdfColors.white)),
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 14),
+
+              // Large Kenyan License Plate Display Box
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                decoration: pw.BoxDecoration(
+                  color: const PdfColor.fromInt(0xFFFEF3C7),
+                  borderRadius: pw.BorderRadius.circular(8),
+                  border: pw.Border.all(color: navyDark, width: 2),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.center,
+                  children: [
+                    pw.Text(
+                      '[  $regNo  ]',
+                      style: pw.TextStyle(font: fontBold, fontSize: 24, color: navyDark, letterSpacing: 3),
+                    ),
+                    pw.SizedBox(width: 24),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(makeModel, style: pw.TextStyle(font: fontBold, fontSize: 13, color: navyDark)),
+                        pw.SizedBox(height: 2),
+                        pw.Text('Color: $color  •  Chassis/VIN: $vin', style: pw.TextStyle(font: fontRegular, fontSize: 8.5, color: const PdfColor.fromInt(0xFF475569))),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 14),
+
+              // 2-Column Custody and Authorization Box
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  // Customer & Driver Box
+                  pw.Expanded(
+                    child: pw.Container(
+                      padding: const pw.EdgeInsets.all(12),
+                      decoration: pw.BoxDecoration(
+                        color: const PdfColor.fromInt(0xFFF8FAFC),
+                        borderRadius: pw.BorderRadius.circular(6),
+                        border: pw.Border.all(color: borderGrey),
+                      ),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('CUSTOMER & DRIVER CUSTODY', style: pw.TextStyle(font: fontBold, fontSize: 9, color: themeColor)),
+                          pw.SizedBox(height: 6),
+                          pw.Text('Owner / Customer: $customerName', style: pw.TextStyle(font: fontBold, fontSize: 9.5)),
+                          pw.Text('Customer Phone: $customerPhone', style: pw.TextStyle(font: fontRegular, fontSize: 8.5)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Handed Over To / Driver: ${driverName.isNotEmpty ? driverName : customerName}', style: pw.TextStyle(font: fontBold, fontSize: 9.5)),
+                          pw.Text('Driver Phone / ID: ${driverPhone.isNotEmpty ? driverPhone : customerPhone} ${driverId.isNotEmpty ? "• ID: $driverId" : ""}', style: pw.TextStyle(font: fontRegular, fontSize: 8.5)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  pw.SizedBox(width: 12),
+                  // Authorization Details Box
+                  pw.Expanded(
+                    child: pw.Container(
+                      padding: const pw.EdgeInsets.all(12),
+                      decoration: pw.BoxDecoration(
+                        color: const PdfColor.fromInt(0xFFF8FAFC),
+                        borderRadius: pw.BorderRadius.circular(6),
+                        border: pw.Border.all(color: borderGrey),
+                      ),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('PASS DETAILS & AUTHORIZATION', style: pw.TextStyle(font: fontBold, fontSize: 9, color: themeColor)),
+                          pw.SizedBox(height: 6),
+                          pw.Text('Job Card Ref: ${jobNumber.isNotEmpty ? "#$jobNumber" : "Intake Triage"}', style: pw.TextStyle(font: fontBold, fontSize: 9.5)),
+                          pw.Text('Clearance: $reasonTitle', style: pw.TextStyle(font: fontBold, fontSize: 8.5, color: themeColor)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Authorized Workshop Official: $authorizedBy', style: pw.TextStyle(font: fontBold, fontSize: 9)),
+                          if (notes.isNotEmpty) pw.Text('Gate Notes: $notes', style: pw.TextStyle(font: fontRegular, fontSize: 8.5)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 14),
+
+              // Perimeter Inspection Checklist
+              pw.Container(
+                padding: const pw.EdgeInsets.all(12),
+                decoration: pw.BoxDecoration(
+                  color: const PdfColor.fromInt(0xFFF8FAFC),
+                  borderRadius: pw.BorderRadius.circular(6),
+                  border: pw.Border.all(color: borderGrey),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('GATE PERIMETER INSPECTION & INVENTORY', style: pw.TextStyle(font: fontBold, fontSize: 9, color: navyDark)),
+                    pw.SizedBox(height: 8),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text('Odometer: $odo KM', style: pw.TextStyle(font: fontBold, fontSize: 9.5)),
+                        pw.Text('Fuel Level: $fuel', style: pw.TextStyle(font: fontBold, fontSize: 9.5)),
+                        pw.Text('[X] Spare Wheel Verified', style: pw.TextStyle(font: fontRegular, fontSize: 9)),
+                        pw.Text('[X] Jack & Tools Checked', style: pw.TextStyle(font: fontRegular, fontSize: 9)),
+                        pw.Text('[X] Customer Valuables Removed', style: pw.TextStyle(font: fontRegular, fontSize: 9)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 16),
+
+              // Official Instructions & Terms
+              pw.Container(
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(
+                  color: const PdfColor.fromInt(0xFFFEF2F2),
+                  borderRadius: pw.BorderRadius.circular(6),
+                  border: pw.Border.all(color: const PdfColor.fromInt(0xFFFCA5A5)),
+                ),
+                child: pw.Text(
+                  isGateIn
+                      ? 'SECURITY NOTICE: This vehicle has been checked into the workshop premises for diagnosis/service. The security officer must verify that the vehicle registration matches physical plates and driver identity matches the intake record before opening the barrier.'
+                      : 'SECURITY NOTICE: This vehicle has been authorized to exit workshop premises. The security barrier must NOT be opened until this official gate pass has been inspected, logged, and stamped by the security officer on duty.',
+                  style: pw.TextStyle(font: fontRegular, fontSize: 7.5, color: const PdfColor.fromInt(0xFF991B1B)),
+                ),
+              ),
+              pw.Spacer(),
+
+              // Formal Dual Signatures & Stamps
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(width: 190, height: 1, color: navyDark),
+                      pw.SizedBox(height: 4),
+                      pw.Text('Authorized Workshop Official', style: pw.TextStyle(font: fontBold, fontSize: 9)),
+                      pw.Text('$authorizedBy  •  Signature & Official Stamp', style: pw.TextStyle(font: fontRegular, fontSize: 8, color: const PdfColor.fromInt(0xFF64748B))),
+                    ],
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(width: 190, height: 1, color: navyDark),
+                      pw.SizedBox(height: 4),
+                      pw.Text('Security Gate Officer', style: pw.TextStyle(font: fontBold, fontSize: 9)),
+                      pw.Text('$securityOfficer  •  Barrier Time & Stamp', style: pw.TextStyle(font: fontRegular, fontSize: 8, color: const PdfColor.fromInt(0xFF64748B))),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  /// Opens an interactive modal to configure and print a dedicated Gate Pass:
+  /// Handles both Gate-In (Intake) and Gate-Out (Release) with customizable clearance reasons.
+  static Future<void> showVehicleGatePassModal({
+    required BuildContext context,
+    required Map<String, dynamic> workshopSettings,
+    required Map<String, dynamic> vehicleData,
+    String? initialClearance,
+  }) async {
+    final String regNo = (vehicleData['registrationNumber'] ?? vehicleData['regNo'] ?? vehicleData['vehicleRegistration'] ?? 'VEHICLE').toString().toUpperCase().trim();
+    final String customerName = (vehicleData['customerName'] ?? vehicleData['customer']?['name'] ?? vehicleData['clientName'] ?? '').toString();
+    final String customerPhone = (vehicleData['customerPhone'] ?? vehicleData['phone'] ?? vehicleData['customer']?['phone'] ?? '').toString();
+    final String odo = (vehicleData['odometer'] ?? vehicleData['currentMileage'] ?? '').toString();
+    final String fuel = (vehicleData['fuelLevel'] ?? '1/2').toString();
+
+    String passType = initialClearance == 'VEHICLE_INTAKE' ? 'GATE_IN' : 'GATE_OUT';
+    String clearanceReason = initialClearance ?? 'FULL_PAYMENT';
+    if (clearanceReason == 'AUTO') clearanceReason = 'FULL_PAYMENT';
+
+    final TextEditingController driverNameCtrl = TextEditingController(text: customerName);
+    final TextEditingController driverPhoneCtrl = TextEditingController(text: customerPhone);
+    final TextEditingController driverIdCtrl = TextEditingController();
+    final TextEditingController authByCtrl = TextEditingController(text: 'Service Manager');
+    final TextEditingController notesCtrl = TextEditingController(
+      text: passType == 'GATE_IN' ? 'Intake for diagnostics and workshop service' : 'Vehicle cleared for exit',
+    );
+    final TextEditingController odoCtrl = TextEditingController(text: odo);
+    String selectedFuel = fuel.isNotEmpty ? fuel : '1/2';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final fileName = 'GatePass_${passType}_$regNo';
+
+            return Dialog(
+              backgroundColor: const Color(0xFF0F172A),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: SizedBox(
+                width: 880,
+                height: MediaQuery.of(ctx).size.height * 0.92,
+                child: Column(
+                  children: [
+                    // Top Bar
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1E293B),
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            passType == 'GATE_IN' ? Icons.login : Icons.logout,
+                            color: passType == 'GATE_IN' ? const Color(0xFF2DD4BF) : const Color(0xFF60A5FA),
+                            size: 22,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Text(
-                              'Official Payment Receipt & Gate Pass (${d.regNo})',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Security Gate Pass Generator ($regNo)',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                                ),
+                                Text(
+                                  passType == 'GATE_IN' ? 'Vehicle Gate-In (Intake / Check-In)' : 'Vehicle Gate-Out (Perimeter Release Clearance)',
+                                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                ),
+                              ],
                             ),
                           ),
                           IconButton(
                             onPressed: () => Navigator.pop(ctx),
                             icon: const Icon(Icons.close, color: Colors.white70, size: 20),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
                             tooltip: 'Close',
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
+                    ),
+
+                    // Controls & Options Row
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      color: const Color(0xFF0F172A),
+                      child: Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
+                          // Pass Type Segment
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'GATE_OUT', label: Text('Gate-Out (Release)'), icon: Icon(Icons.logout, size: 16)),
+                              ButtonSegment(value: 'GATE_IN', label: Text('Gate-In (Intake)'), icon: Icon(Icons.login, size: 16)),
+                            ],
+                            selected: {passType},
+                            onSelectionChanged: (set) {
+                              setModalState(() {
+                                passType = set.first;
+                                if (passType == 'GATE_IN') {
+                                  clearanceReason = 'INTAKE';
+                                  notesCtrl.text = 'Intake for diagnostics and workshop service';
+                                } else {
+                                  clearanceReason = 'FULL_PAYMENT';
+                                  notesCtrl.text = 'Vehicle cleared for exit';
+                                }
+                              });
+                            },
+                            style: ButtonStyle(
+                              backgroundColor: MaterialStateProperty.resolveWith((states) {
+                                if (states.contains(MaterialState.selected)) {
+                                  return passType == 'GATE_IN' ? const Color(0xFF0F766E) : const Color(0xFF2563EB);
+                                }
+                                return const Color(0xFF1E293B);
+                              }),
+                              foregroundColor: MaterialStateProperty.all(Colors.white),
+                            ),
+                          ),
+
+                          // Print & Download Buttons
                           ElevatedButton.icon(
                             onPressed: () async {
-                              final bytes = await generatePaymentReceiptPdf(
+                              final bytes = await generateVehicleGatePassPdf(
                                 workshopSettings: workshopSettings,
-                                invoice: invoice,
+                                vehicleData: vehicleData,
+                                passType: passType,
+                                clearanceReason: clearanceReason,
+                                driverName: driverNameCtrl.text,
+                                driverPhone: driverPhoneCtrl.text,
+                                driverId: driverIdCtrl.text,
+                                authorizedBy: authByCtrl.text,
+                                odometer: odoCtrl.text,
+                                fuelLevel: selectedFuel,
+                                notes: notesCtrl.text,
                               );
                               await printPdfBytesImpl(bytes, fileName);
                             },
                             icon: const Icon(Icons.print, size: 16),
-                            label: const Text('Print Receipt & Gate Pass', style: TextStyle(fontSize: 12)),
+                            label: const Text('Print Gate Pass', style: TextStyle(fontSize: 12)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF2563EB),
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             ),
                           ),
                           OutlinedButton.icon(
                             onPressed: () async {
-                              final bytes = await generatePaymentReceiptPdf(
+                              final bytes = await generateVehicleGatePassPdf(
                                 workshopSettings: workshopSettings,
-                                invoice: invoice,
+                                vehicleData: vehicleData,
+                                passType: passType,
+                                clearanceReason: clearanceReason,
+                                driverName: driverNameCtrl.text,
+                                driverPhone: driverPhoneCtrl.text,
+                                driverId: driverIdCtrl.text,
+                                authorizedBy: authByCtrl.text,
+                                odometer: odoCtrl.text,
+                                fuelLevel: selectedFuel,
+                                notes: notesCtrl.text,
                               );
                               await saveAndDownloadPdfImpl(bytes, '$fileName.pdf');
                             },
@@ -3849,114 +4646,310 @@ class InvoicePdfService {
                             label: const Text('Download PDF', style: TextStyle(color: Colors.white, fontSize: 12)),
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFF475569)),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(28),
-                    child: Container(
-                      padding: const EdgeInsets.all(32),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(d.workshopName.toUpperCase(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                                  Text('${d.workshopAddress} • PIN: ${d.workshopPin}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  const Text('OFFICIAL PAYMENT RECEIPT', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF1D4ED8))),
-                                  Text('Job Card: ${d.jobNumber} • Vehicle: ${d.regNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const Divider(height: 28),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('Customer: ${d.customerName} (${d.customerPhone})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text('Vehicle: ${d.regNo} (${d.makeModel})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          const Text('Payment & Deposit History Ledger:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 8),
-                          if (history.isEmpty)
-                            ListTile(
-                              dense: true,
-                              tileColor: Colors.grey.shade50,
-                              title: Text('${d.paymentMode} ${d.mpesaReceiptNo.isNotEmpty ? "• Ref: ${d.mpesaReceiptNo}" : ""}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              subtitle: Text('Date: ${d.createdAtStr}'),
-                              trailing: Text('KSH ${_formatCurrency(d.amountPaid)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-                            )
-                          else
-                            ...history.map((h) {
-                              final amt = (h['amount'] as num?)?.toDouble() ?? 0.0;
-                              return ListTile(
-                                dense: true,
-                                tileColor: Colors.grey.shade50,
-                                title: Text('${h['mode'] ?? d.paymentMode} • Ref: ${h['reference'] ?? d.mpesaReceiptNo ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Text('${_formatFullDate(h['date'])} — ${h['notes'] ?? ''}'),
-                                trailing: Text('KSH ${_formatCurrency(amt)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-                              );
-                            }),
-                          const Divider(height: 28),
-                          _previewSummaryLine('Total Invoice Amount (Incl. 16% VAT)', 'KSH ${_formatCurrency(d.grandTotal)}'),
-                          const SizedBox(height: 6),
-                          _previewSummaryLine('Total Amount Paid / Received', 'KSH ${_formatCurrency(d.amountPaid)}', valueColor: Colors.green.shade800),
-                          const SizedBox(height: 6),
-                          _previewSummaryLine('Remaining Balance Due', 'KSH ${_formatCurrency(d.balanceDue)}', valueColor: isCleared ? Colors.green.shade800 : Colors.red.shade800),
-                          const SizedBox(height: 24),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: isCleared ? Colors.green.shade50 : Colors.amber.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: isCleared ? Colors.green : Colors.amber.shade800),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      isCleared ? 'SECURITY GATE PASS: CLEARED FOR EXIT ✓' : 'PARTIAL DEPOSIT RECEIPT (BALANCE DUE)',
-                                      style: TextStyle(fontWeight: FontWeight.bold, color: isCleared ? Colors.green.shade900 : Colors.amber.shade900),
-                                    ),
-                                    Text('Vehicle ${d.regNo} (${d.makeModel}) — Job ${d.jobNumber}', style: const TextStyle(fontSize: 12)),
-                                  ],
-                                ),
-                                Icon(isCleared ? Icons.verified : Icons.schedule, color: isCleared ? Colors.green : Colors.amber.shade900, size: 28),
-                              ],
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
+
+                    // Main Form & Live Preview Area
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Config Card
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Gate Pass Authorization Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                  const SizedBox(height: 12),
+                                  if (passType == 'GATE_OUT') ...[
+                                    DropdownButtonFormField<String>(
+                                      value: clearanceReason,
+                                      dropdownColor: const Color(0xFF1E293B),
+                                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Clearance Reason (Even if Unpaid)',
+                                        labelStyle: TextStyle(color: Colors.white70),
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                      items: const [
+                                        DropdownMenuItem(value: 'FULL_PAYMENT', child: Text('Full Payment Cleared & Work Completed')),
+                                        DropdownMenuItem(value: 'CORPORATE_CREDIT', child: Text('Corporate Fleet Account (Net-30 Invoiced Terms)')),
+                                        DropdownMenuItem(value: 'DIAGNOSTIC_EXIT', child: Text('Diagnostic Only / Work Declined (Customer Took Car)')),
+                                        DropdownMenuItem(value: 'MANAGER_OVERRIDE', child: Text('Manager Authorized Courtesy / Temporary Release')),
+                                      ],
+                                      onChanged: (val) {
+                                        if (val != null) setModalState(() => clearanceReason = val);
+                                      },
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: driverNameCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Driver / Received By',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged: (_) => setModalState(() {}),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: driverPhoneCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Driver Mobile',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged: (_) => setModalState(() {}),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: authByCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Authorized By (Manager)',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged: (_) => setModalState(() {}),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: odoCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Odometer (KM)',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged: (_) => setModalState(() {}),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: notesCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Security Gate Notes / Instructions',
+                                            labelStyle: TextStyle(color: Colors.white70),
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          onChanged: (_) => setModalState(() {}),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Document Sheet Preview
+                            Container(
+                              padding: const EdgeInsets.all(28),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            (workshopSettings['name']?.toString() ?? 'AutoKe Workshop').toUpperCase(),
+                                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                                          ),
+                                          Text(
+                                            '${workshopSettings['address'] ?? ''} • PIN: ${workshopSettings['kraPin'] ?? ''}',
+                                            style: const TextStyle(fontSize: 11, color: Colors.black54),
+                                          ),
+                                        ],
+                                      ),
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            passType == 'GATE_IN' ? 'OFFICIAL GATE-IN PASS' : 'OFFICIAL GATE-OUT PASS',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 15,
+                                              color: passType == 'GATE_IN' ? const Color(0xFF0F766E) : const Color(0xFF1E3A8A),
+                                            ),
+                                          ),
+                                          Text('Date: ${_formatFullDate(DateTime.now())}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  const Divider(height: 24),
+
+                                  // Kenya Stencil License Plate Box
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFEF3C7),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFF0F172A), width: 2),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          '[  $regNo  ]',
+                                          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 3, color: Color(0xFF0F172A)),
+                                        ),
+                                        const SizedBox(width: 24),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              (vehicleData['makeModel'] ?? '${vehicleData['make'] ?? ''} ${vehicleData['model'] ?? ''}').toString(),
+                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                            ),
+                                            Text('Color: ${vehicleData['color'] ?? 'Standard'} • VIN: ${vehicleData['vin'] ?? 'On File'}', style: const TextStyle(fontSize: 11, color: Colors.black87)),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+
+                                  // Clearance Status Banner
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: passType == 'GATE_IN' ? const Color(0xFFCCFBF1) : const Color(0xFFEFF6FF),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: passType == 'GATE_IN' ? const Color(0xFF0F766E) : const Color(0xFF2563EB),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          passType == 'GATE_IN'
+                                              ? 'VEHICLE INTAKE & WORKSHOP RECEIVING (CHECKED IN)'
+                                              : clearanceReason == 'CORPORATE_CREDIT'
+                                                  ? 'SECURITY RELEASE: CORPORATE ACCOUNT CREDIT TERMS (NET-30)'
+                                                  : clearanceReason == 'DIAGNOSTIC_EXIT'
+                                                      ? 'SECURITY RELEASE: DIAGNOSTIC TRIAGE ONLY (WORK DECLINED)'
+                                                      : clearanceReason == 'MANAGER_OVERRIDE'
+                                                          ? 'SECURITY RELEASE: MANAGER AUTHORIZED COURTESY RELEASE'
+                                                          : 'SECURITY RELEASE: FULL PAYMENT CLEARED',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                            color: passType == 'GATE_IN' ? const Color(0xFF0F766E) : const Color(0xFF1E3A8A),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: passType == 'GATE_IN' ? const Color(0xFF0F766E) : const Color(0xFF1E3A8A),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            passType == 'GATE_IN' ? 'INTAKE PERMITTED' : 'CLEARED FOR EXIT',
+                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+
+                                  // Custody & Verification Details
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text('Driver & Custody Handover:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                            const SizedBox(height: 4),
+                                            Text('• Driver: ${driverNameCtrl.text.isNotEmpty ? driverNameCtrl.text : customerName}'),
+                                            Text('• Mobile: ${driverPhoneCtrl.text.isNotEmpty ? driverPhoneCtrl.text : customerPhone}'),
+                                            Text('• Authorized Official: ${authByCtrl.text}'),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text('Perimeter Check:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                            const SizedBox(height: 4),
+                                            Text('• Odometer: ${odoCtrl.text.isNotEmpty ? odoCtrl.text : "0"} KM'),
+                                            Text('• Fuel Level: $selectedFuel'),
+                                            Text('• Notes: ${notesCtrl.text}'),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 24),
+                                  const Divider(),
+                                  const SizedBox(height: 12),
+                                  const Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text('Authorized Workshop Manager Signature & Stamp', style: TextStyle(fontSize: 11, color: Colors.black54)),
+                                      Text('Perimeter Security Officer Stamp & Time', style: TextStyle(fontSize: 11, color: Colors.black54)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );

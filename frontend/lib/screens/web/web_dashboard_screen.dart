@@ -212,6 +212,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   bool _isLoading = true;
   bool _showEstimateCreator = false;
   String? _preselectedJobIdForEstimate;
+  bool _hideRevenue = false;
 
   // Filters for Job Cards
   String _searchQuery = '';
@@ -6090,6 +6091,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           Colors.green,
           Icons.show_chart,
           Colors.blue,
+          canHide: true,
+          isHidden: _hideRevenue,
+          onToggleHide: () => setState(() => _hideRevenue = !_hideRevenue),
           onPlusTap: () => setState(() {
             _activeSidebar = 'Invoices';
             _activeTab = 'Invoices';
@@ -6141,6 +6145,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     IconData chartIcon,
     Color chartColor, {
     VoidCallback? onPlusTap,
+    bool canHide = false,
+    bool isHidden = false,
+    VoidCallback? onToggleHide,
   }) {
     return Expanded(
       child: Container(
@@ -6168,20 +6175,52 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      InkWell(
-                        onTap: onPlusTap,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4)),
-                          child: const Icon(Icons.add, size: 12, color: Colors.green),
+                      if (onPlusTap != null)
+                        InkWell(
+                          onTap: onPlusTap,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4)),
+                            child: const Icon(Icons.add, size: 12, color: Colors.green),
+                          ),
                         ),
-                      )
+                      if (canHide) ...[
+                        const SizedBox(width: 6),
+                        Tooltip(
+                          message: isHidden ? 'Show Total Revenue' : 'Hide Total Revenue',
+                          child: InkWell(
+                            onTap: onToggleHide,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: isHidden ? Colors.amber.shade50 : Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Icon(
+                                isHidden ? Icons.visibility_off : Icons.visibility,
+                                size: 13,
+                                color: isHidden ? Colors.amber.shade800 : Colors.blue.shade700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  Text(
+                    canHide && isHidden ? 'KSH ••••••••' : value,
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
-                  Text(subtitle, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text(
+                    canHide && isHidden ? 'Confidential Amount Hidden' : subtitle,
+                    style: TextStyle(
+                      color: canHide && isHidden ? Colors.grey.shade500 : color,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -6677,6 +6716,25 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   ),
                 ),
               ),
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Issue Security Gate Pass (Intake Pass or Release Exit Pass)',
+                child: OutlinedButton.icon(
+                  onPressed: () => InvoicePdfService.showVehicleGatePassModal(
+                    context: context,
+                    workshopSettings: _workshopSettings,
+                    vehicleData: job,
+                  ),
+                  icon: const Icon(Icons.shield_outlined, size: 15, color: Color(0xFF0F766E)),
+                  label: const Text('Gate Pass', style: TextStyle(color: Color(0xFF0F766E), fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 32),
+                    side: const BorderSide(color: Color(0xFF5EEAD4)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                ),
+              ),
               Builder(builder: (_) {
                 final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : null;
                 final pmsRaw = (wad != null && wad['pmsChecklist'] is Map) ? (wad['pmsChecklist'] as Map) : null;
@@ -7159,6 +7217,19 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             ),
                             icon: const Icon(Icons.verified_outlined, size: 15, color: Color(0xFF15803D)),
                             label: const Text('Receipt & Gate Pass', style: TextStyle(fontSize: 12, color: Color(0xFF15803D), fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip: 'Issue Security Gate Pass',
+                            icon: const Icon(Icons.shield_outlined, color: Color(0xFF0F766E), size: 20),
+                            onPressed: () => InvoicePdfService.showVehicleGatePassModal(
+                              context: context,
+                              workshopSettings: _workshopSettings,
+                              vehicleData: {
+                                ...Map<String, dynamic>.from(inv),
+                                ...Map<String, dynamic>.from(est),
+                              },
+                            ),
                           ),
                           const SizedBox(width: 4),
                           IconButton(

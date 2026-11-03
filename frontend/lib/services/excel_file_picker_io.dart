@@ -18,6 +18,6 @@ class ExcelFilePickerHelper {
     final PlatformFile file = files.first;
     final Uint8List bytes = await file.readAsBytes();
     if (bytes.isEmpty) return null;
-    return PickedSpreadsheetFile(name: file.name, size: file.size, bytes: bytes);
+    return PickedSpreadsheetFile(name: file.name, size: bytes.length, bytes: bytes);
   }
 }

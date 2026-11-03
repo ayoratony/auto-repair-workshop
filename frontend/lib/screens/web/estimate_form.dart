@@ -38,6 +38,7 @@ class _EstimateFormState extends State<EstimateForm> {
 
   bool _isLoading = false;
   bool _isFetchingData = true;
+  bool _applyVat = true;
 
   @override
   void initState() {
@@ -217,7 +218,7 @@ class _EstimateFormState extends State<EstimateForm> {
   }
 
   double get _vatAmount {
-    return _subtotalAfterDiscount * 0.16;
+    return _applyVat ? (_subtotalAfterDiscount * 0.16) : 0.0;
   }
 
   double get _grandTotal {
@@ -250,7 +251,7 @@ class _EstimateFormState extends State<EstimateForm> {
           'jobCardId': _selectedJobCardId,
           'items': _items,
           'discountRate': _discountRate,
-          'taxRate': 16,
+          'taxRate': _applyVat ? 16 : 0,
           'status': 'SENT',
         }),
       );
@@ -260,7 +261,7 @@ class _EstimateFormState extends State<EstimateForm> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             backgroundColor: Colors.green.shade700,
-            content: Text('Estimate Saved! Total (incl. 16% VAT): KES ${(data['total'] as num).toStringAsFixed(2)}'),
+            content: Text('Estimate Saved! Total (${_applyVat ? "incl. 16% VAT" : "No VAT / 0%"}): KES ${(data['total'] as num).toStringAsFixed(2)}'),
           ));
           setState(() => _items.clear());
           widget.onSaved?.call();
@@ -530,23 +531,38 @@ class _EstimateFormState extends State<EstimateForm> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.receipt_long, size: 16, color: Color(0xFF475569)),
-                        SizedBox(width: 6),
-                        Text(
-                          'VAT: 16% (Auto)',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155)),
+                  InkWell(
+                    onTap: () => setState(() => _applyVat = !_applyVat),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _applyVat ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _applyVat ? const Color(0xFF3B82F6) : Colors.grey.shade400,
+                          width: _applyVat ? 1.5 : 1.0,
                         ),
-                      ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _applyVat ? Icons.check_box : Icons.check_box_outline_blank,
+                            size: 18,
+                            color: _applyVat ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _applyVat ? 'Apply 16% VAT' : 'No VAT (0% Exempt)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: _applyVat ? const Color(0xFF1D4ED8) : Colors.grey.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -888,7 +904,10 @@ class _EstimateFormState extends State<EstimateForm> {
                     const SizedBox(height: 6),
                     _calcRow('Subtotal After Discount:', 'KES ${_subtotalAfterDiscount.toStringAsFixed(2)}'),
                     const SizedBox(height: 6),
-                    _calcRow('VAT (16%):', '+ KES ${_vatAmount.toStringAsFixed(2)}'),
+                    _calcRow(
+                      _applyVat ? 'VAT (16%):' : 'VAT (0% - Exempt):',
+                      _applyVat ? '+ KES ${_vatAmount.toStringAsFixed(2)}' : 'KES 0.00',
+                    ),
                     const Divider(height: 16),
                     _calcRow('Grand Total (KES):', 'KES ${_grandTotal.toStringAsFixed(2)}', isBold: true, fontSize: 16, color: const Color(0xFF1E3A8A)),
                   ],

@@ -2818,7 +2818,7 @@ app.get('/api/estimates', async (_req: Request, res: Response) => {
 
 app.post('/api/estimates', async (req: Request, res: Response) => {
   try {
-    const { jobCardId, items, discountRate = 20, taxRate = 16, status = 'DRAFT' } = req.body;
+    const { jobCardId, items, discountRate = 20, taxRate, status = 'DRAFT' } = req.body;
 
     if (!jobCardId) {
       return res.status(400).json({ error: 'A valid Job Card must be selected' });
@@ -2828,8 +2828,8 @@ app.post('/api/estimates', async (req: Request, res: Response) => {
       return sum + Number(item.quantity) * Number(item.unitPrice);
     }, 0);
 
-    const parsedDiscount = Number(discountRate) || 0;
-    const parsedTax = Number(taxRate) || 16;
+    const parsedDiscount = discountRate !== undefined ? Number(discountRate) : 0;
+    const parsedTax = taxRate !== undefined ? Number(taxRate) : 16;
 
     const discountAmount = subtotal * (parsedDiscount / 100);
     const subtotalAfterDiscount = subtotal - discountAmount;
