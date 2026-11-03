@@ -914,11 +914,17 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
 
     const callerRole = String(req.headers['x-user-role'] || '').toUpperCase();
     const isCallerSupervisor = ['ADMIN', 'SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADVISOR'].includes(callerRole);
+    const isRepairApproved =
+      (existingWalk.repairAuthorization && existingWalk.repairAuthorization.isAuthorized === true) ||
+      existingWf.stage === 'APPROVED_FOR_REPAIR';
+
     const isAssessmentAlreadyLocked =
-      existingTechInsp.isLocked === true ||
-      existingWf.isAssessmentLocked === true ||
-      existingPms.isLocked === true ||
-      existing.status === 'AWAITING_APPROVAL';
+      !isRepairApproved && (
+        existingTechInsp.isLocked === true ||
+        existingWf.isAssessmentLocked === true ||
+        existingPms.isLocked === true ||
+        existing.status === 'AWAITING_APPROVAL'
+      );
 
     if (
       isAssessmentAlreadyLocked &&

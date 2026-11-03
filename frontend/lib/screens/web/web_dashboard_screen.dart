@@ -2654,15 +2654,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         final isMech = AuthService.instance.isMechanic;
                         final techInsp = wad['techInspection'] is Map ? (wad['techInspection'] as Map) : null;
                         final pmsMap = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
-                        final bool isJobSheetLocked = techInsp?['isLocked'] == true ||
+                        final bool isApprovedForRepair = isAuthorized || wf?['stage'] == 'APPROVED_FOR_REPAIR';
+                        final bool isAssessmentSubmittedOrLocked = techInsp?['isLocked'] == true ||
                             wf?['isAssessmentLocked'] == true ||
                             pmsMap?['isLocked'] == true ||
                             pmsMap?['status'] == 'SUBMITTED_TO_ADVISOR' ||
                             pmsMap?['status'] == 'COMPLETED' ||
-                            curStatus == 'AWAITING_APPROVAL' ||
-                            curStatus == 'QUALITY_CHECK' ||
-                            curStatus == 'READY' ||
-                            curStatus == 'COMPLETED';
+                            curStatus == 'AWAITING_APPROVAL';
+                        final bool isJobSheetLocked = isAssessmentSubmittedOrLocked && !isApprovedForRepair;
                         final String lockedByTech = (techInsp?['by'] ??
                                 wf?['assessmentSubmittedBy'] ??
                                 pmsMap?['technicianName'] ??
@@ -2820,7 +2819,45 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             ),
 
                             // Stage 2 / Locked Assessment Card
-                            if (isJobSheetLocked) ...[
+                            if (isApprovedForRepair) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFECFDF5),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFF10B981), width: 1.5),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF059669),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Icon(Icons.build_circle_rounded, size: 18, color: Colors.white),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            '⚡ ACTIVE WORKING PROCESS — STAGE 4: APPROVED FOR REPAIR',
+                                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF065F46)),
+                                          ),
+                                          Text(
+                                            'Assessment signed & customer approval confirmed. PMS diagnostics are closed. Technician is tracking active repair work progress.',
+                                            style: TextStyle(fontSize: 11, color: Colors.green.shade900, fontWeight: FontWeight.w600),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ] else if (isJobSheetLocked) ...[
                               const SizedBox(height: 10),
                               Container(
                                 padding: const EdgeInsets.all(12),
@@ -3309,6 +3346,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       // -------------------------------------------------------------
                       Builder(builder: (_) {
                         final walkData = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
+                        final repairAuth = walkData['repairAuthorization'] is Map ? (walkData['repairAuthorization'] as Map) : null;
+                        final recsList = (walkData['recommendations'] is List)
+                            ? (walkData['recommendations'] as List).whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
+                            : <Map<String, dynamic>>[];
+                        final approvedList = recsList.where((r) => (r['status'] ?? '').toString().toUpperCase() == 'APPROVED').toList();
+                        final isRepairApproved = repairAuth?['isAuthorized'] == true ||
+                            (job['status'] == 'IN_PROGRESS' && approvedList.isNotEmpty);
+                        if (isRepairApproved) return const SizedBox.shrink();
+
                         final pmsRaw = walkData['pmsChecklist'] is Map ? (walkData['pmsChecklist'] as Map) : null;
                         final isSubmitted = pmsRaw?['status'] == 'SUBMITTED' ||
                             pmsRaw?['status'] == 'SUBMITTED_TO_ADVISOR' ||

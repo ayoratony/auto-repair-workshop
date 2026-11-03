@@ -5061,15 +5061,24 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           final curTechInsp = curWad['techInspection'] is Map ? (curWad['techInspection'] as Map) : tech;
           final curPms = curWad['pmsChecklist'] is Map ? (curWad['pmsChecklist'] as Map) : null;
           final curRepairAuth = curWad['repairAuthorization'] is Map ? (curWad['repairAuthorization'] as Map) : null;
-          final bool isJobSheetLocked = curTechInsp['isLocked'] == true ||
+          final recsList = (curWad['recommendations'] is List)
+              ? (curWad['recommendations'] as List).whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
+              : <Map<String, dynamic>>[];
+          final approvedList = recsList.where((r) => (r['status'] ?? '').toString().toUpperCase() == 'APPROVED').toList();
+          final bool isApprovedForRepair = curRepairAuth?['isAuthorized'] == true ||
+              curWf?['stage'] == 'APPROVED_FOR_REPAIR' ||
+              (status == 'IN_PROGRESS' && approvedList.isNotEmpty);
+
+          final bool isAssessmentSubmittedOrLocked = curTechInsp['isLocked'] == true ||
               curWf?['isAssessmentLocked'] == true ||
               curPms?['isLocked'] == true ||
               curPms?['status'] == 'SUBMITTED_TO_ADVISOR' ||
               curPms?['status'] == 'COMPLETED' ||
-              status == 'AWAITING_APPROVAL' ||
-              status == 'QUALITY_CHECK' ||
-              status == 'READY' ||
-              status == 'COMPLETED';
+              status == 'AWAITING_APPROVAL';
+
+          // When approved for repair, the workflow has moved to active repair execution (Stage 4)
+          final bool isJobSheetLocked = isAssessmentSubmittedOrLocked && !isApprovedForRepair;
+
           final String lockedByTech = (curTechInsp['by'] ??
                   curWf?['assessmentSubmittedBy'] ??
                   curPms?['technicianName'] ??
@@ -5388,7 +5397,45 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                       // -------------------------------------------------------------
                       // STAGE 2 / LOCKED ASSESSMENT STATUS CARD (ALWAYS VISIBLE)
                       // -------------------------------------------------------------
-                      if (isJobSheetLocked) ...[
+                      if (isApprovedForRepair) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF10B981), width: 1.5),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF059669),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.build_circle_rounded, size: 18, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '⚡ ACTIVE WORKING PROCESS — STAGE 4',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF065F46)),
+                                    ),
+                                    Text(
+                                      'Assessment completed & approved by customer. PMS diagnostics are closed. Technician is tracking active repair work progress.',
+                                      style: TextStyle(fontSize: 10.5, color: Colors.green.shade900, fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else if (isJobSheetLocked) ...[
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -6156,128 +6203,177 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 ],
                 if (techMode) ...[
                   const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          isJobSheetLocked
-                              ? 'Mechanical & OBD-II Inspection (Completed & Locked)'
-                              : 'Mechanical & OBD-II Inspection',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
+                  if (isApprovedForRepair) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.blueGrey.shade200),
                       ),
-                      if (isJobSheetLocked)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade50,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: Colors.green.shade300),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
                             children: [
-                              Icon(Icons.lock, size: 10, color: Colors.green),
-                              SizedBox(width: 3),
-                              Text('LOCKED', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.green)),
+                              Icon(Icons.timer_outlined, size: 16, color: Color(0xFF0F4C81)),
+                              SizedBox(width: 6),
+                              Text('Work Progress & Time Tracking', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: Color(0xFF0F172A))),
                             ],
                           ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(labelText: 'Estimated hrs', border: OutlineInputBorder()),
+                                  child: Text(job['estimatedHours']?.toString() ?? '-'),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: TextField(
+                                  controller: hoursCtrl,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  decoration: const InputDecoration(labelText: 'Actual hrs logged', border: OutlineInputBorder()),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: notesCtrl,
+                            maxLines: 2,
+                            decoration: const InputDecoration(labelText: 'Technician Work Progress & Repair Notes', border: OutlineInputBorder()),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            isJobSheetLocked
+                                ? 'Mechanical & OBD-II Inspection (Completed & Locked)'
+                                : 'Mechanical & OBD-II Inspection',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  ..._inspectionPoints.map((p) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(p, style: const TextStyle(fontSize: 13.5))),
-                            ...[
-                              ['PASS', Colors.green],
-                              ['ATTENTION', Colors.orange],
-                              ['FAIL', Colors.red],
-                            ].map((o) {
-                              final sel = results[p] == o[0];
-                              final c = o[1] as Color;
-                              return Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: GestureDetector(
-                                  onTap: isJobSheetLocked
-                                      ? () {
-                                          ScaffoldMessenger.of(ctx).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('🔒 Job Sheet is locked after submission. Another technician cannot redo or overwrite completed checks.'),
-                                              duration: Duration(seconds: 2),
-                                              backgroundColor: Color(0xFF1E293B),
-                                            ),
-                                          );
-                                        }
-                                      : () => setSheet(() => results[p] = o[0] as String),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: sel ? c : c.withOpacity(0.08),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      o[0] == 'ATTENTION' ? 'WARN' : o[0] as String,
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: sel ? Colors.white : c),
+                        if (isJobSheetLocked)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.green.shade300),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.lock, size: 10, color: Colors.green),
+                                SizedBox(width: 3),
+                                Text('LOCKED', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.green)),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ..._inspectionPoints.map((p) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text(p, style: const TextStyle(fontSize: 13.5))),
+                              ...[
+                                ['PASS', Colors.green],
+                                ['ATTENTION', Colors.orange],
+                                ['FAIL', Colors.red],
+                              ].map((o) {
+                                final sel = results[p] == o[0];
+                                final c = o[1] as Color;
+                                return Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: GestureDetector(
+                                    onTap: isJobSheetLocked
+                                        ? () {
+                                            ScaffoldMessenger.of(ctx).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('🔒 Job Sheet is locked after submission. Another technician cannot redo or overwrite completed checks.'),
+                                                duration: Duration(seconds: 2),
+                                                backgroundColor: Color(0xFF1E293B),
+                                              ),
+                                            );
+                                          }
+                                        : () => setSheet(() => results[p] = o[0] as String),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: sel ? c : c.withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        o[0] == 'ATTENTION' ? 'WARN' : o[0] as String,
+                                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: sel ? Colors.white : c),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              );
-                            }),
-                          ],
-                        ),
-                      )),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: obdCtrl,
-                    readOnly: isJobSheetLocked,
-                    decoration: InputDecoration(
-                      labelText: isJobSheetLocked
-                          ? 'OBD-II fault codes (Locked)'
-                          : 'OBD-II fault codes (e.g. P0300)',
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: notesCtrl,
-                    readOnly: isJobSheetLocked,
-                    maxLines: 2,
-                    decoration: InputDecoration(
-                      labelText: isJobSheetLocked
-                          ? 'Findings / parts needed (Locked)'
-                          : 'Findings / parts needed',
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: InputDecorator(
-                          decoration: const InputDecoration(labelText: 'Estimated hrs', border: OutlineInputBorder()),
-                          child: Text(job['estimatedHours']?.toString() ?? '-'),
-                        ),
+                                );
+                              }),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: obdCtrl,
+                      readOnly: isJobSheetLocked,
+                      decoration: InputDecoration(
+                        labelText: isJobSheetLocked
+                            ? 'OBD-II fault codes (Locked)'
+                            : 'OBD-II fault codes (e.g. P0300)',
+                        border: const OutlineInputBorder(),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: hoursCtrl,
-                          readOnly: isJobSheetLocked && !(curRepairAuth?['isAuthorized'] == true),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'Actual hrs', border: OutlineInputBorder()),
-                        ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: notesCtrl,
+                      readOnly: isJobSheetLocked,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: isJobSheetLocked
+                            ? 'Findings / parts needed (Locked)'
+                            : 'Findings / parts needed',
+                        border: const OutlineInputBorder(),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InputDecorator(
+                            decoration: const InputDecoration(labelText: 'Estimated hrs', border: OutlineInputBorder()),
+                            child: Text(job['estimatedHours']?.toString() ?? '-'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: hoursCtrl,
+                            readOnly: isJobSheetLocked && !(curRepairAuth?['isAuthorized'] == true),
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(labelText: 'Actual hrs', border: OutlineInputBorder()),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
                 const SizedBox(height: 14),
 
                 // -------------------------------------------------------------
                 // ISUZU / VEHICLE PMS DIAGNOSTIC & HEALTH CHECK SHEET
                 // -------------------------------------------------------------
+                if (!isApprovedForRepair)
                 Builder(builder: (_) {
                   final wad = job['walkAroundData'] is Map ? (job['walkAroundData'] as Map) : {};
                   final pmsRaw = wad['pmsChecklist'] is Map ? (wad['pmsChecklist'] as Map) : null;
@@ -6538,6 +6634,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     ),
                   );
                 }),
+                if (!isApprovedForRepair)
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -7344,7 +7441,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (techMode && isJobSheetLocked) ...[
+                if (techMode && isJobSheetLocked && !isApprovedForRepair) ...[
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 12),
@@ -7373,30 +7470,45 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F4C81),
+                        backgroundColor: isApprovedForRepair ? const Color(0xFF047857) : const Color(0xFF0F4C81),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                       icon: saving
                           ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.save),
+                          : Icon(isApprovedForRepair ? Icons.update_rounded : Icons.save),
                       label: Text(
-                        techMode ? 'Save & Lock Job Sheet Updates' : 'Save Job Card Assignment / Status',
+                        isApprovedForRepair
+                            ? 'Update Work Progress & Logged Hours'
+                            : (techMode ? 'Save & Lock Job Sheet Updates' : 'Save Job Card Assignment / Status'),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       onPressed: saving
                           ? null
                           : () async {
-                              if (techMode) {
+                              if (techMode && !isApprovedForRepair) {
                                 await submitAndLockAssessment(closeSheetAfter: true);
                                 return;
                               }
                               setSheet(() => saving = true);
                               final body = <String, dynamic>{'status': status};
-                              walk['diagnostics'] = sheetDiag;
-                              walk['obdCodes'] = obdCtrl.text.trim();
-                              body['technician'] = assigned;
+                              if (isApprovedForRepair) {
+                                final h = double.tryParse(hoursCtrl.text.trim());
+                                if (h != null) body['actualHours'] = h;
+                                if (notesCtrl.text.trim().isNotEmpty) {
+                                  walk['techInspection'] = {
+                                    ...(walk['techInspection'] is Map ? walk['techInspection'] : {}),
+                                    'notes': notesCtrl.text.trim(),
+                                    'by': _techName,
+                                    'updatedAt': DateTime.now().toIso8601String(),
+                                  };
+                                }
+                              } else {
+                                walk['diagnostics'] = sheetDiag;
+                                walk['obdCodes'] = obdCtrl.text.trim();
+                                body['technician'] = assigned;
+                              }
                               walk['securityPhotos'] = sheetPhotos;
                               body['walkAroundData'] = walk;
                               final ok = await _putJob(job['id'].toString(), body);
