@@ -212,7 +212,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   bool _isLoading = true;
   bool _showEstimateCreator = false;
   String? _preselectedJobIdForEstimate;
-  bool _hideRevenue = false;
+  bool _hideRevenue = true; // Default hidden for confidentiality
 
   // Filters for Job Cards
   String _searchQuery = '';
@@ -625,6 +625,454 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       default:
         return Colors.grey.shade700;
     }
+  }
+
+  // ==========================================
+  // GATE PASS REGISTRY & VERIFICATION LEDGER
+  // ==========================================
+  Future<void> _showGatePassLedgerDialog() async {
+    final searchCtrl = TextEditingController();
+    bool isVerifying = false;
+    Map<String, dynamic>? verificationResult;
+    String? verificationError;
+
+    List<dynamic> gatePasses = [];
+    bool isLoadingPasses = true;
+
+    Future<void> loadPasses([String query = '']) async {
+      try {
+        final uri = Uri.parse('$_baseUrl/gate-passes${query.isNotEmpty ? "?search=${Uri.encodeComponent(query)}" : ""}');
+        final res = await http.get(uri, headers: AuthService.instance.authHeaders);
+        if (res.statusCode == 200) {
+          gatePasses = jsonDecode(res.body) as List<dynamic>;
+        }
+      } catch (e) {
+        debugPrint('Error loading gate passes: $e');
+      }
+      isLoadingPasses = false;
+    }
+
+    Future<void> verifyCode(String code, StateSetter setDialogState) async {
+      final trimmed = code.trim().toUpperCase();
+      if (trimmed.isEmpty) return;
+      setDialogState(() {
+        isVerifying = true;
+        verificationResult = null;
+        verificationError = null;
+      });
+      try {
+        final uri = Uri.parse('$_baseUrl/gate-passes/verify/${Uri.encodeComponent(trimmed)}');
+        final res = await http.get(uri);
+        final data = jsonDecode(res.body);
+        if (res.statusCode == 200 && data['verified'] == true) {
+          setDialogState(() {
+            verificationResult = data;
+            isVerifying = false;
+          });
+        } else {
+          setDialogState(() {
+            verificationError = data['error'] ?? 'Unverified or Invalid Gate Pass Code';
+            isVerifying = false;
+          });
+        }
+      } catch (e) {
+        setDialogState(() {
+          verificationError = 'Network error during verification';
+          isVerifying = false;
+        });
+      }
+    }
+
+    Future<void> stampPass(String passId, StateSetter setDialogState) async {
+      try {
+        final uri = Uri.parse('$_baseUrl/gate-passes/$passId/stamp');
+        final res = await http.put(uri, headers: AuthService.instance.authHeaders, body: jsonEncode({
+          'securityOfficer': AuthService.instance.userName.isNotEmpty ? AuthService.instance.userName : 'Security Gate Officer',
+        }));
+        if (res.statusCode == 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Gate Pass stamped and marked as USED at barrier!'), backgroundColor: Colors.green),
+          );
+          if (verificationResult != null && verificationResult!['pass'] != null && verificationResult!['pass']['id'] == passId) {
+            verificationResult!['pass']['status'] = 'USED';
+          }
+          await loadPasses(searchCtrl.text);
+          setDialogState(() {});
+        }
+      } catch (e) {
+        debugPrint('Error stamping pass: $e');
+      }
+    }
+
+    await loadPasses();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: const Color(0xFF0F172A),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: SizedBox(
+                width: 1040,
+                height: MediaQuery.of(ctx).size.height * 0.9,
+                child: Column(
+                  children: [
+                    // Header
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1E293B),
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F766E).withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.security, color: Color(0xFF2DD4BF), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Security Gate Pass Registry & Anti-Counterfeit Verification',
+                                  style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Verify vehicle release credentials, prevent unauthorized photocopies, and search historical gate passes',
+                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white70),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Body
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Verification Search Box
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF334155)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Row(
+                                    children: [
+                                      Icon(Icons.qr_code_scanner, color: Color(0xFF38BDF8), size: 20),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Instant Legitimacy Check (Enter Pass #, Security Code, or Reg No)',
+                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: searchCtrl,
+                                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                                          decoration: InputDecoration(
+                                            hintText: 'e.g. SEC-A1B2-C3D4, GP-2026-12345, or KDA 123B',
+                                            hintStyle: const TextStyle(color: Colors.white38),
+                                            filled: true,
+                                            fillColor: const Color(0xFF0F172A),
+                                            prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF475569))),
+                                            isDense: true,
+                                          ),
+                                          onSubmitted: (val) {
+                                            verifyCode(val, setDialogState);
+                                            loadPasses(val).then((_) => setDialogState(() {}));
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      ElevatedButton.icon(
+                                        onPressed: isVerifying
+                                            ? null
+                                            : () {
+                                                verifyCode(searchCtrl.text, setDialogState);
+                                                loadPasses(searchCtrl.text).then((_) => setDialogState(() {}));
+                                              },
+                                        icon: isVerifying
+                                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                            : const Icon(Icons.verified, size: 18),
+                                        label: const Text('Verify Pass'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF0F766E),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  // Verification Result Display
+                                  if (verificationResult != null) ...[
+                                    const SizedBox(height: 16),
+                                    Container(
+                                      padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF064E3B).withValues(alpha: 0.5),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: const Color(0xFF10B981)),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              const Row(
+                                                children: [
+                                                  Icon(Icons.check_circle, color: Color(0xFF34D399), size: 22),
+                                                  SizedBox(width: 8),
+                                                  Text('AUTHENTIC & VERIFIED OFFICIAL GATE PASS', style: TextStyle(color: Color(0xFF34D399), fontWeight: FontWeight.bold, fontSize: 14)),
+                                                ],
+                                              ),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: verificationResult!['pass']['status'] == 'USED' ? const Color(0xFFD97706) : const Color(0xFF059669),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  verificationResult!['pass']['status'] == 'USED' ? 'STATUS: USED / ARCHIVED' : 'STATUS: ACTIVE AT GATE',
+                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Wrap(
+                                            spacing: 24,
+                                            runSpacing: 10,
+                                            children: [
+                                              Text('Pass #: ${verificationResult!['pass']['passNumber']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                              Text('Security Code: ${verificationResult!['pass']['securityCode']}', style: const TextStyle(color: Color(0xFF38BDF8), fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                                              Text('Plate: [ ${verificationResult!['pass']['regNo']} ]', style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                                              Text('Vehicle: ${verificationResult!['pass']['makeModel']}', style: const TextStyle(color: Colors.white70)),
+                                              Text('Color: ${verificationResult!['pass']['color']}', style: const TextStyle(color: Colors.white70)),
+                                              Text('VIN: ${verificationResult!['pass']['vin']}', style: const TextStyle(color: Colors.white70)),
+                                              Text('Driver: ${verificationResult!['pass']['driverName']} (${verificationResult!['pass']['driverPhone']})', style: const TextStyle(color: Colors.white70)),
+                                              Text('Clearance: ${verificationResult!['pass']['clearanceReason']}', style: const TextStyle(color: Color(0xFF93C5FD))),
+                                              Text('Authorized By: ${verificationResult!['pass']['authorizedBy']}', style: const TextStyle(color: Colors.white70)),
+                                            ],
+                                          ),
+                                          if (verificationResult!['pass']['status'] != 'USED') ...[
+                                            const SizedBox(height: 14),
+                                            ElevatedButton.icon(
+                                              onPressed: () => stampPass(verificationResult!['pass']['id'], setDialogState),
+                                              icon: const Icon(Icons.toll, size: 16),
+                                              label: const Text('Stamp Vehicle Barrier Exit / Use Pass'),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: const Color(0xFFD97706),
+                                                foregroundColor: Colors.white,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+
+                                  if (verificationError != null) ...[
+                                    const SizedBox(height: 16),
+                                    Container(
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF450A0A),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: const Color(0xFFEF4444)),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.warning_amber_rounded, color: Color(0xFFF87171), size: 24),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                const Text('COUNTERFEIT / UNVERIFIED ALERT', style: TextStyle(color: Color(0xFFF87171), fontWeight: FontWeight.bold, fontSize: 13)),
+                                                const SizedBox(height: 2),
+                                                Text(verificationError!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            // Ledger Table
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('Recent Security Gate Passes (${gatePasses.length})', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    setDialogState(() => isLoadingPasses = true);
+                                    await loadPasses(searchCtrl.text);
+                                    setDialogState(() {});
+                                  },
+                                  icon: const Icon(Icons.refresh, size: 16, color: Color(0xFF38BDF8)),
+                                  label: const Text('Refresh Ledger', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 12)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+
+                            if (isLoadingPasses)
+                              const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))
+                            else if (gatePasses.isEmpty)
+                              Container(
+                                padding: const EdgeInsets.all(32),
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(10)),
+                                child: const Text('No gate passes found matching your search.', style: TextStyle(color: Colors.white54)),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: gatePasses.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                itemBuilder: (ctx, idx) {
+                                  final p = gatePasses[idx] as Map<String, dynamic>;
+                                  final isUsed = p['status'] == 'USED';
+                                  final isOut = p['passType'] == 'GATE_OUT';
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1E293B),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFF334155)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFEF3C7),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            p['regNo'] ?? 'VEHICLE',
+                                            style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF0F172A), fontSize: 13),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Text(p['passNumber'] ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                                  const SizedBox(width: 8),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: isOut ? const Color(0xFF1E3A8A) : const Color(0xFF0F766E),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      isOut ? 'GATE-OUT' : 'GATE-IN',
+                                                      style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Text('Sec Code: ${p['securityCode'] ?? ''}', style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontFamily: 'monospace')),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '${p['makeModel']} • Color: ${p['color'] ?? "Standard"} • VIN: ${p['vin'] ?? "On File"} • Driver: ${p['driverName']} (${p['driverPhone'] ?? ""})',
+                                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: isUsed ? const Color(0xFFD97706).withValues(alpha: 0.2) : const Color(0xFF059669).withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: isUsed ? const Color(0xFFD97706) : const Color(0xFF059669)),
+                                          ),
+                                          child: Text(
+                                            isUsed ? 'USED' : 'ACTIVE',
+                                            style: TextStyle(color: isUsed ? const Color(0xFFFBBF24) : const Color(0xFF34D399), fontSize: 11, fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        IconButton(
+                                          tooltip: 'Reprint / View Pass',
+                                          icon: const Icon(Icons.print, color: Color(0xFF60A5FA), size: 18),
+                                          onPressed: () {
+                                            InvoicePdfService.showVehicleGatePassModal(
+                                              context: context,
+                                              workshopSettings: _workshopSettings,
+                                              vehicleData: p,
+                                              initialClearance: p['clearanceReason'],
+                                            );
+                                          },
+                                        ),
+                                        if (!isUsed)
+                                          IconButton(
+                                            tooltip: 'Stamp Used at Barrier',
+                                            icon: const Icon(Icons.toll, color: Color(0xFFF59E0B), size: 18),
+                                            onPressed: () => stampPass(p['id'], setDialogState),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   // ==========================================
@@ -6415,6 +6863,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                           .toList(),
                       onChanged: (val) => setState(() => _technicianFilter = val ?? 'All'),
                     ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _showGatePassLedgerDialog(),
+                  icon: const Icon(Icons.shield_outlined, size: 18, color: Color(0xFF0F766E)),
+                  label: const Text('Gate Pass Registry & Verify', style: TextStyle(color: Color(0xFF0F766E), fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF0F766E)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
                   ),
                 ),
                 const SizedBox(width: 12),

@@ -4466,6 +4466,262 @@ app.put('/api/settings', async (req: Request, res: Response) => {
 });
 
 // ==========================================
+// SECURITY GATE PASS & ANTI-COUNTERFEIT LEDGER API
+// ==========================================
+
+app.post('/api/gate-passes', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const {
+      passType,
+      clearanceReason,
+      regNo,
+      makeModel,
+      color,
+      vin,
+      driverName,
+      driverPhone,
+      driverId,
+      authorizedBy,
+      securityOfficer,
+      odometer,
+      fuelLevel,
+      notes,
+      jobCardId,
+    } = req.body;
+
+    if (!regNo) {
+      return res.status(400).json({ error: 'Vehicle registration number is required' });
+    }
+
+    const year = new Date().getFullYear();
+    const randomSuffix = Math.floor(10000 + Math.random() * 90000);
+    const passNumber = `GP-${year}-${randomSuffix}`;
+    const securityCode = `SEC-${randomUUID().substring(0, 4).toUpperCase()}-${randomUUID().substring(9, 13).toUpperCase()}`;
+
+    const gatePass = await prisma.gatePass.create({
+      data: {
+        passNumber,
+        securityCode,
+        tenantId: tenant.id,
+        jobCardId: jobCardId || null,
+        regNo: String(regNo).toUpperCase().trim(),
+        makeModel: makeModel || 'Vehicle',
+        color: color || 'Standard',
+        vin: vin || 'On File',
+        passType: passType || 'GATE_OUT',
+        clearanceReason: clearanceReason || 'FULL_PAYMENT',
+        driverName: driverName || 'Customer Driver',
+        driverPhone: driverPhone || '',
+        driverId: driverId || '',
+        authorizedBy: authorizedBy || 'Service Manager',
+        securityOfficer: securityOfficer || 'Main Gate Security',
+        odometer: odometer ? String(odometer) : '0',
+        fuelLevel: fuelLevel || '1/2',
+        notes: notes || '',
+        status: 'ACTIVE',
+      },
+    });
+
+    const host = req.get('host') || 'auto.zksms.online';
+    const protocol = req.protocol === 'http' && host.includes('zksms') ? 'https' : req.protocol;
+    const verificationUrl = `${protocol}://${host}/api/gate-passes/verify/${gatePass.securityCode}`;
+
+    res.status(201).json({
+      ...gatePass,
+      verificationUrl,
+    });
+  } catch (error: any) {
+    console.error('Error creating gate pass:', error);
+    res.status(500).json({ error: 'Failed to issue security gate pass' });
+  }
+});
+
+app.get('/api/gate-passes', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const search = req.query.search ? String(req.query.search).trim() : '';
+
+    const where: any = { tenantId: tenant.id };
+    if (search) {
+      where.OR = [
+        { regNo: { contains: search, mode: 'insensitive' } },
+        { passNumber: { contains: search, mode: 'insensitive' } },
+        { securityCode: { contains: search, mode: 'insensitive' } },
+        { driverName: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const passes = await prisma.gatePass.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    res.json(passes);
+  } catch (error: any) {
+    console.error('Error fetching gate passes:', error);
+    res.status(500).json({ error: 'Failed to fetch gate passes' });
+  }
+});
+
+app.get('/api/gate-passes/verify/:code', async (req: Request, res: Response) => {
+  try {
+    const rawCode = Array.isArray(req.params.code) ? req.params.code[0] : req.params.code;
+    const code = String(rawCode || '').trim().toUpperCase();
+    const wantsHtml = req.headers.accept?.includes('text/html') || req.query.format === 'html';
+
+    if (!code) {
+      if (wantsHtml) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Verification Error</title>
+          <style>body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}
+          .box{background:#1e293b;border-radius:12px;padding:32px;max-width:440px;width:100%;text-align:center;border:1px solid #334155;}
+          .bad{color:#ef4444;font-size:24px;font-weight:bold;margin-bottom:12px;}
+          </style></head>
+          <body><div class="box"><div class="bad">Missing Code</div><p>Security code or pass number is required for verification.</p></div></body></html>
+        `);
+      }
+      return res.status(400).json({ verified: false, error: 'Verification code or pass number is required' });
+    }
+
+    const gatePass = await prisma.gatePass.findFirst({
+      where: {
+        OR: [
+          { securityCode: { equals: code, mode: 'insensitive' } },
+          { passNumber: { equals: code, mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    if (!gatePass) {
+      if (wantsHtml) {
+        return res.status(404).send(`
+          <!DOCTYPE html>
+          <html>
+          <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Security Alert - Invalid Gate Pass</title>
+          <style>
+            body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}
+            .card{background:#1e293b;border-radius:16px;padding:32px;max-width:480px;width:100%;text-align:center;border:2px solid #ef4444;box-shadow:0 20px 25px -5px rgba(239,68,68,0.2);}
+            .badge{background:#ef4444;color:#fff;display:inline-block;padding:8px 16px;border-radius:9999px;font-weight:bold;font-size:14px;letter-spacing:1px;margin-bottom:16px;}
+            .code{font-family:monospace;background:#0f172a;padding:8px 16px;border-radius:8px;font-size:18px;color:#f87171;letter-spacing:2px;display:inline-block;margin:12px 0;}
+            p{color:#94a3b8;line-height:1.6;}
+            .alert-box{background:#450a0a;border:1px solid #7f1d1d;padding:12px;border-radius:8px;color:#fca5a5;font-size:13px;margin-top:20px;text-align:left;}
+          </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="badge">COUNTERFEIT / UNVERIFIED WARNING</div>
+              <h2>Pass Not Recognized</h2>
+              <div class="code">${code}</div>
+              <p>This gate pass does not exist in the official workshop security registry. It may be an unauthorized copy, forgery, or tampered document.</p>
+              <div class="alert-box">
+                <strong>GATE SECURITY NOTICE:</strong> Do NOT open the barrier. Hold vehicle and immediately contact the Workshop Manager.
+              </div>
+            </div>
+          </body>
+          </html>
+        `);
+      }
+      return res.status(404).json({
+        verified: false,
+        error: 'INVALID / NOT FOUND: This Gate Pass does not exist in the official AutoKe security registry. It may be fraudulent or counterfeit.',
+      });
+    }
+
+    const tenant = await prisma.tenant.findUnique({ where: { id: gatePass.tenantId } });
+    const workshopName = tenant?.name || 'AutoKe Workshop';
+
+    if (wantsHtml) {
+      const isOut = gatePass.passType === 'GATE_OUT';
+      const isUsed = gatePass.status === 'USED';
+      const createdDate = new Date(gatePass.createdAt).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' });
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Gate Pass Verification - ${gatePass.regNo}</title>
+        <style>
+          body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}
+          .card{background:#1e293b;border-radius:16px;padding:32px;max-width:520px;width:100%;border:2px solid #10b981;box-shadow:0 20px 25px -5px rgba(16,185,129,0.25);}
+          .header{text-align:center;border-bottom:1px solid #334155;padding-bottom:18px;margin-bottom:20px;}
+          .badge{background:#059669;color:#fff;display:inline-block;padding:6px 14px;border-radius:9999px;font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:12px;}
+          .used-badge{background:#d97706;}
+          .plate{background:#fef3c7;color:#0f172a;font-weight:900;font-size:26px;letter-spacing:3px;padding:10px 20px;border-radius:8px;border:2px solid #0f172a;display:inline-block;margin:12px 0;}
+          .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #334155;font-size:14px;}
+          .row .lbl{color:#94a3b8;}
+          .row .val{font-weight:600;text-align:right;}
+          .footer{margin-top:24px;text-align:center;font-size:12px;color:#64748b;}
+          .sec-pill{background:#0f172a;color:#38bdf8;padding:4px 10px;border-radius:6px;font-family:monospace;font-size:13px;}
+        </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="header">
+              <div class="badge ${isUsed ? 'used-badge' : ''}">${isUsed ? 'BARRIER PASSED / ARCHIVED' : 'AUTHENTIC OFFICIAL PASS'}</div>
+              <h2 style="margin:4px 0 2px 0;font-size:18px;">${workshopName}</h2>
+              <div style="font-size:12px;color:#94a3b8;">${isOut ? 'OFFICIAL GATE-OUT RELEASE PASS' : 'OFFICIAL GATE-IN INTAKE PASS'}</div>
+              <div class="plate">[ ${gatePass.regNo} ]</div>
+              <div style="font-size:14px;font-weight:bold;color:#cbd5e1;">${gatePass.makeModel}</div>
+            </div>
+            <div class="details">
+              <div class="row"><span class="lbl">Pass Number</span><span class="val">${gatePass.passNumber}</span></div>
+              <div class="row"><span class="lbl">Security Code</span><span class="val"><span class="sec-pill">${gatePass.securityCode}</span></span></div>
+              <div class="row"><span class="lbl">Vehicle Color</span><span class="val">${gatePass.color || 'Standard'}</span></div>
+              <div class="row"><span class="lbl">Chassis / VIN</span><span class="val">${gatePass.vin || 'On File'}</span></div>
+              <div class="row"><span class="lbl">Driver / Custody</span><span class="val">${gatePass.driverName} (${gatePass.driverPhone || 'N/A'})</span></div>
+              <div class="row"><span class="lbl">Clearance Term</span><span class="val" style="color:#38bdf8;">${gatePass.clearanceReason.replace('_', ' ')}</span></div>
+              <div class="row"><span class="lbl">Authorized By</span><span class="val">${gatePass.authorizedBy}</span></div>
+              <div class="row"><span class="lbl">Issued At</span><span class="val">${createdDate}</span></div>
+              <div class="row"><span class="lbl">Gate Status</span><span class="val" style="color:${isUsed ? '#f59e0b' : '#34d399'};font-weight:bold;">${gatePass.status}</span></div>
+            </div>
+            <div class="footer">
+              Anti-Counterfeiting Registry Powered by AutoKe Cloud OS &bull; Official Digital Record
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    res.json({
+      verified: true,
+      message: 'AUTHENTIC & VERIFIED: Legitimate official security gate pass issued by workshop.',
+      pass: gatePass,
+      workshopName,
+    });
+  } catch (error: any) {
+    console.error('Error verifying gate pass:', error);
+    res.status(500).json({ verified: false, error: 'Internal verification check error' });
+  }
+});
+
+app.put('/api/gate-passes/:id/stamp', async (req: Request, res: Response) => {
+  try {
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const id = String(rawId || '');
+    const { securityOfficer } = req.body;
+
+    const pass = await prisma.gatePass.update({
+      where: { id },
+      data: {
+        status: 'USED',
+        usedAt: new Date(),
+        ...(securityOfficer ? { securityOfficer } : {}),
+      },
+    });
+
+    res.json({ success: true, pass });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to record barrier security stamp' });
+  }
+});
+
+// ==========================================
 // NEON OBJECT STORAGE (ASSETS BUCKET) API
 // ==========================================
 

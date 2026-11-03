@@ -558,3 +558,33 @@ model StoreNotification {
 
   @@index([tenantId, targetRole, readAt])
 }
+
+model GatePass {
+  id              String    @id @default(uuid())
+  passNumber      String    @unique
+  securityCode    String    @unique
+  tenantId        String
+  jobCardId       String?
+  regNo           String
+  makeModel       String?
+  color           String?
+  vin             String?
+  passType        String    // GATE_IN or GATE_OUT
+  clearanceReason String    // FULL_PAYMENT, CORPORATE_CREDIT, DIAGNOSTIC_EXIT, MANAGER_OVERRIDE, INTAKE
+  driverName      String?
+  driverPhone     String?
+  driverId        String?
+  authorizedBy    String
+  securityOfficer String?
+  odometer        String?
+  fuelLevel       String?
+  notes           String?
+  status          String    @default("ACTIVE") // ACTIVE, USED, REVOKED
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId, regNo])
+  @@index([securityCode])
+  @@index([passNumber])
+}
