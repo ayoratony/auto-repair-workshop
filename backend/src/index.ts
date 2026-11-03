@@ -926,17 +926,66 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
         existing.status === 'AWAITING_APPROVAL'
       );
 
-    if (
-      isAssessmentAlreadyLocked &&
-      !isCallerSupervisor &&
-      walkAroundData &&
-      typeof walkAroundData === 'object' &&
-      !req.body.supervisorOverride
-    ) {
-      walkAroundData.techInspection = existingWalk.techInspection;
-      walkAroundData.diagnostics = existingWalk.diagnostics;
-      walkAroundData.obdCodes = existingWalk.obdCodes;
-      walkAroundData.pmsChecklist = existingWalk.pmsChecklist;
+    // Intake Walk-Around baseline lock gate:
+    // Once vehicle repair has started (IN_PROGRESS, WAITING), finished (QUALITY_CHECK, READY, COMPLETED),
+    // or when the assessment has been locked / submitted / approved for work:
+    // the intake condition baseline (markers, bodyType, memoDetails) is legally locked.
+    const isJobActiveOrDone =
+      ['IN_PROGRESS', 'WAITING', 'QUALITY_CHECK', 'READY', 'COMPLETED', 'AWAITING_APPROVAL'].includes(existing.status) ||
+      isRepairApproved ||
+      existingWf.stage === 'APPROVED_FOR_REPAIR';
+
+    const supervisorIntakeOverrideRequested = req.body.supervisorIntakeOverride === true;
+    const supervisorIntakeReason = typeof req.body.supervisorIntakeReason === 'string'
+      ? req.body.supervisorIntakeReason.trim()
+      : '';
+    const canOverrideIntake = isCallerSupervisor && supervisorIntakeOverrideRequested && supervisorIntakeReason.length > 0;
+
+    let mergedWalkAround: Record<string, any> | undefined = undefined;
+
+    if (walkAroundData && typeof walkAroundData === 'object') {
+      const workingWalk: Record<string, any> = {
+        ...existingWalk,
+        ...walkAroundData,
+      };
+
+      // 1. Guard assessment fields if assessment is locked and caller is not authorized supervisor
+      if (
+        isAssessmentAlreadyLocked &&
+        !isCallerSupervisor &&
+        !req.body.supervisorOverride
+      ) {
+        workingWalk.techInspection = existingWalk.techInspection;
+        workingWalk.diagnostics = existingWalk.diagnostics;
+        workingWalk.obdCodes = existingWalk.obdCodes;
+        workingWalk.pmsChecklist = existingWalk.pmsChecklist;
+      }
+
+      // 2. Guard Intake Walk-Around baseline (damage markers, bodyType, receiving memo details)
+      if (isJobActiveOrDone) {
+        if (!canOverrideIntake) {
+          // Revert intake condition to original baseline
+          workingWalk.markers = existingWalk.markers;
+          workingWalk.bodyType = existingWalk.bodyType;
+          workingWalk.memoDetails = existingWalk.memoDetails;
+        } else {
+          // Authorized supervisor amendment with reason - record audit log
+          await createJobCardAuditLog({
+            jobCardId: existing.id,
+            actorName: (req.headers['x-user-name'] as string) || 'Supervisor',
+            actorRole: callerRole || 'ADMIN',
+            action: 'INTAKE_WALKAROUND_AMENDED',
+            details: `Supervisor amended intake walk-around records. Reason: ${supervisorIntakeReason}`,
+            diff: {
+              previousMarkersCount: Array.isArray(existingWalk.markers) ? existingWalk.markers.length : 0,
+              newMarkersCount: Array.isArray(walkAroundData.markers) ? walkAroundData.markers.length : 0,
+              reason: supervisorIntakeReason,
+            },
+          });
+        }
+      }
+
+      mergedWalkAround = workingWalk;
     }
 
     if (customerName || phone !== undefined) {
@@ -1008,7 +1057,7 @@ app.put('/api/jobs/:id', async (req: Request, res: Response) => {
         ...(nextServiceDate !== undefined
           ? { nextServiceDate: nextServiceDate ? new Date(nextServiceDate) : null }
           : {}),
-        ...(walkAroundData !== undefined ? { walkAroundData } : {}),
+        ...(mergedWalkAround !== undefined ? { walkAroundData: mergedWalkAround } : (walkAroundData !== undefined ? { walkAroundData } : {})),
       },
       include: {
         customer: true,

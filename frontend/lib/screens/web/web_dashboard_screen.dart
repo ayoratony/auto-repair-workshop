@@ -740,6 +740,20 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       }
     }
 
+    final curJobStatus = (existingJob?['status'] ?? '').toString().toUpperCase();
+    final existingWfStage = (existingWalkAround is Map && existingWalkAround['workflowState'] is Map)
+        ? (existingWalkAround['workflowState']['stage'] ?? '').toString().toUpperCase()
+        : '';
+    final isRepairApproved = (existingWalkAround is Map && existingWalkAround['repairAuthorization'] is Map && existingWalkAround['repairAuthorization']['isAuthorized'] == true) ||
+        existingWfStage == 'APPROVED_FOR_REPAIR';
+
+    final bool isIntakeLockedByDefault = isEdit && (
+      ['IN_PROGRESS', 'WAITING', 'QUALITY_CHECK', 'READY', 'COMPLETED', 'AWAITING_APPROVAL'].contains(curJobStatus) ||
+      isRepairApproved
+    );
+    bool supervisorIntakeUnlocked = false;
+    String supervisorIntakeReason = '';
+
     bool isSaving = false;
     const bayOptions = ['Bay 1', 'Bay 2', 'Bay 3', 'Lift 1', 'Lift 2', 'Diagnostics Bay', 'Body & Paint Bay'];
 
@@ -1901,12 +1915,178 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       const SizedBox(height: 16),
                       const Divider(),
                       const SizedBox(height: 8),
-                      const Text(
-                        '360\u00B0 Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              (isIntakeLockedByDefault && !supervisorIntakeUnlocked)
+                                  ? '360° Vehicle Walk-Around Inspection (🔒 Intake Baseline Locked)'
+                                  : '360° Vehicle Walk-Around Inspection (Select Body Type, Angle & Tap to Mark Dents/Scratches/Cuts)',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                            ),
+                          ),
+                          if (isIntakeLockedByDefault && !supervisorIntakeUnlocked)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: const Color(0xFFF59E0B)),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.lock_rounded, size: 13, color: Color(0xFFB45309)),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Intake Immutable',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 8),
+                      if (isIntakeLockedByDefault && !supervisorIntakeUnlocked)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFDE68A)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.shield_outlined, color: Color(0xFFD97706), size: 24),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '🔒 Intake Baseline Inspection Locked',
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF92400E)),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'This vehicle is already in service (${_statusLabel(curJobStatus)}). The gate-in damage diagram, inventory checklist, and customer terms are protected legal records and cannot be altered.',
+                                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF78350F)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (['ADMIN', 'SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADVISOR'].contains(_activeUserRole.toUpperCase()))
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF92400E),
+                                    side: const BorderSide(color: Color(0xFFD97706)),
+                                    backgroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  ),
+                                  icon: const Icon(Icons.lock_open_rounded, size: 14),
+                                  label: const Text('Supervisor Amend Intake', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                                  onPressed: () async {
+                                    final reasonCtrl = TextEditingController();
+                                    final confirmed = await showDialog<bool>(
+                                      context: ctx,
+                                      builder: (dCtx) => AlertDialog(
+                                        title: const Row(
+                                          children: [
+                                            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 22),
+                                            SizedBox(width: 8),
+                                            Text('Supervisor Intake Amendment', style: TextStyle(fontSize: 15)),
+                                          ],
+                                        ),
+                                        content: SizedBox(
+                                          width: 440,
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              const Text(
+                                                'Amending intake walk-around records while a vehicle is active in repair or completed requires supervisor sign-off and is permanently recorded in the immutable audit log.',
+                                                style: TextStyle(fontSize: 12.5, color: Color(0xFF334155)),
+                                              ),
+                                              const SizedBox(height: 12),
+                                              TextField(
+                                                controller: reasonCtrl,
+                                                maxLines: 2,
+                                                decoration: const InputDecoration(
+                                                  labelText: 'Mandatory Reason / Verification *',
+                                                  hintText: 'e.g. CCTV review showed pre-existing right mirror scratch at gate-in',
+                                                  border: OutlineInputBorder(),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(dCtx, false),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: const Color(0xFFD97706),
+                                              foregroundColor: Colors.white,
+                                            ),
+                                            onPressed: () {
+                                              if (reasonCtrl.text.trim().isEmpty) return;
+                                              Navigator.pop(dCtx, true);
+                                            },
+                                            child: const Text('Confirm Unlock'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirmed == true && reasonCtrl.text.trim().isNotEmpty) {
+                                      setModalState(() {
+                                        supervisorIntakeUnlocked = true;
+                                        supervisorIntakeReason = reasonCtrl.text.trim();
+                                      });
+                                    }
+                                  },
+                                ),
+                            ],
+                          ),
+                        )
+                      else if (supervisorIntakeUnlocked)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF10B981)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.check_circle_outline, color: Color(0xFF047857), size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '🔓 Unlocked for Supervisor Amendment ("$supervisorIntakeReason"). Changes will be written to the audit log on save.',
+                                  style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF065F46)),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 16, color: Color(0xFF065F46)),
+                                tooltip: 'Re-lock',
+                                onPressed: () {
+                                  setModalState(() {
+                                    supervisorIntakeUnlocked = false;
+                                    supervisorIntakeReason = '';
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
                       VehicleDamageMap(
+                        readOnly: isIntakeLockedByDefault && !supervisorIntakeUnlocked,
                         initialMarkers: markers,
                         initialBodyType: bodyType,
                         onMarkersChanged: (updated) {
@@ -1918,6 +2098,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       ),
                       const SizedBox(height: 16),
                       WalkAroundChecklistWidget(
+                        readOnly: isIntakeLockedByDefault && !supervisorIntakeUnlocked,
                         details: memoDetails,
                         onChanged: () => setModalState(() {}),
                       ),
@@ -2150,7 +2331,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               'make': makeCtrl.text.trim(),
                               'model': modelCtrl.text.trim(),
                               'fuelType': fuelType,
-                              'bodyType': bodyType.name,
+                              'bodyType': (isIntakeLockedByDefault && !supervisorIntakeUnlocked && existingWalkAround is Map && existingWalkAround['bodyType'] != null)
+                                  ? existingWalkAround['bodyType']
+                                  : bodyType.name,
                               'vinNumber': memoDetails.vinNumber,
                               'service': serviceCtrl.text.trim().isEmpty
                                   ? memoDetails.selectedCategories.join(', ')
@@ -2167,10 +2350,21 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               'actualHours': double.tryParse(actualHoursCtrl.text.trim()) ?? 0.0,
                               'isWarranty': isWarranty,
                               'warrantyNotes': warrantyNotesCtrl.text.trim(),
+                              if (supervisorIntakeUnlocked && supervisorIntakeReason.isNotEmpty) ...{
+                                'supervisorIntakeOverride': true,
+                                'supervisorIntakeReason': supervisorIntakeReason,
+                              },
                               'walkAroundData': {
-                                'bodyType': bodyType.name,
-                                'markers': markers.map((m) => m.toJson()).toList(),
-                                'memoDetails': memoDetails.toJson(),
+                                if (existingWalkAround is Map) ...existingWalkAround,
+                                'bodyType': (isIntakeLockedByDefault && !supervisorIntakeUnlocked && existingWalkAround is Map && existingWalkAround['bodyType'] != null)
+                                    ? existingWalkAround['bodyType']
+                                    : bodyType.name,
+                                'markers': (isIntakeLockedByDefault && !supervisorIntakeUnlocked && existingWalkAround is Map && existingWalkAround['markers'] is List)
+                                    ? existingWalkAround['markers']
+                                    : markers.map((m) => m.toJson()).toList(),
+                                'memoDetails': (isIntakeLockedByDefault && !supervisorIntakeUnlocked && existingWalkAround is Map && existingWalkAround['memoDetails'] is Map)
+                                    ? existingWalkAround['memoDetails']
+                                    : memoDetails.toJson(),
                                 'diagnostics': diagnostics,
                                 'obdCodes': obdCodesCtrl.text.trim(),
                                 'qcPassed': qcPassed,
@@ -2506,6 +2700,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               : null) ??
           '',
     );
+
+    final curJobStatus = (job['status'] ?? '').toString().toUpperCase();
+    final isRepairApproved = (walkAround is Map && walkAround['repairAuthorization'] is Map && walkAround['repairAuthorization']['isAuthorized'] == true) ||
+        (walkAround is Map && walkAround['workflowState'] is Map && walkAround['workflowState']['stage'] == 'APPROVED_FOR_REPAIR');
+    final bool isDetailsIntakeLocked = [
+      'IN_PROGRESS', 'WAITING', 'QUALITY_CHECK', 'READY', 'COMPLETED', 'AWAITING_APPROVAL'
+    ].contains(curJobStatus) || isRepairApproved;
 
     await showDialog(
       context: context,
@@ -4144,9 +4345,41 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      const Text('Walk-Around Damage Map (Tap to mark or update vehicle damages)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              isDetailsIntakeLocked
+                                  ? 'Intake Walk-Around Damage Map (🔒 Gate-In Baseline Frozen)'
+                                  : 'Walk-Around Damage Map (Tap to mark or update vehicle damages)',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          if (isDetailsIntakeLocked)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: const Color(0xFFF59E0B)),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.lock_rounded, size: 12, color: Color(0xFFB45309)),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Intake Locked',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                       const SizedBox(height: 8),
                       VehicleDamageMap(
+                        readOnly: isDetailsIntakeLocked,
                         initialMarkers: markers,
                         initialBodyType: bodyType,
                         onMarkersChanged: (updated) {
@@ -4158,6 +4391,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                       ),
                       const SizedBox(height: 16),
                       WalkAroundChecklistWidget(
+                        readOnly: isDetailsIntakeLocked,
                         details: memoDetails,
                         onChanged: () {},
                       ),
@@ -4436,6 +4670,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   } else if (act == 'DETAILS_EDITED') {
                                     icon = Icons.edit_note_outlined;
                                     color = const Color(0xFF7C3AED);
+                                  } else if (act == 'INTAKE_WALKAROUND_AMENDED') {
+                                    icon = Icons.security_outlined;
+                                    color = const Color(0xFFD97706);
                                   }
 
                                   return Container(
@@ -4556,32 +4793,53 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     side: const BorderSide(color: Color(0xFF1D4ED8)),
                   ),
                 ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final existingWad = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
-                    await http.put(
-                      Uri.parse('$_baseUrl/jobs/${job['id']}'),
-                      headers: {'Content-Type': 'application/json'},
-                      body: json.encode({
-                        'walkAroundData': {
-                          ...existingWad,
-                          'bodyType': bodyType.name,
-                          'markers': markers.map((m) => m.toJson()).toList(),
-                          'memoDetails': memoDetails.toJson(),
-                          'diagnostics': diagnostics,
-                          'obdCodes': obdCodes,
-                          'qcPassed': qcPassed,
-                          'assetKeys': assetKeys,
-                          'updatedAt': DateTime.now().toIso8601String(),
-                        }
-                      }),
-                    );
-                    if (mounted) Navigator.pop(ctx);
-                    _refreshAllData();
-                  },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                  child: const Text('Save Inspection & Checklist'),
-                ),
+                if (!isDetailsIntakeLocked)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final existingWad = job['walkAroundData'] is Map ? Map<String, dynamic>.from(job['walkAroundData']) : <String, dynamic>{};
+                      await http.put(
+                        Uri.parse('$_baseUrl/jobs/${job['id']}'),
+                        headers: {'Content-Type': 'application/json'},
+                        body: json.encode({
+                          'walkAroundData': {
+                            ...existingWad,
+                            'bodyType': bodyType.name,
+                            'markers': markers.map((m) => m.toJson()).toList(),
+                            'memoDetails': memoDetails.toJson(),
+                            'diagnostics': diagnostics,
+                            'obdCodes': obdCodes,
+                            'qcPassed': qcPassed,
+                            'assetKeys': assetKeys,
+                            'updatedAt': DateTime.now().toIso8601String(),
+                          }
+                        }),
+                      );
+                      if (mounted) Navigator.pop(ctx);
+                      _refreshAllData();
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                    child: const Text('Save Inspection & Checklist'),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB45309)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Intake Baseline Locked',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             );
           },
