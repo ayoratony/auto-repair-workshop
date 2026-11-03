@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'dart:typed_data';
 import 'estimate_form.dart';
 import 'invoice_pdf_service.dart';
 import 'pdf_saver_stub.dart' if (dart.library.html) 'pdf_saver_web.dart';
@@ -213,6 +214,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   bool _showEstimateCreator = false;
   String? _preselectedJobIdForEstimate;
   bool _hideRevenue = true; // Default hidden for confidentiality
+
+  // Compensation & Payroll Hub State
+  String _staffSectionTab = 'PAYROLL_HUB'; // 'PAYROLL_HUB', 'DIRECTORY'
+  int _payrollMonth = DateTime.now().month;
+  int _payrollYear = DateTime.now().year;
+  Map<String, dynamic> _payrollSummary = {};
+  List<dynamic> _payrollRecords = [];
+  bool _isLoadingPayroll = false;
 
   // Filters for Job Cards
   String _searchQuery = '';
@@ -6285,6 +6294,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               _activeTab = tabTarget;
             }
           });
+          if (title == 'Employees') {
+            _loadPayrollSummary();
+          }
         },
       ),
     );
@@ -9981,263 +9993,1790 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     }
   }
 
+  static const List<String> _payrollMonthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  String _formatKsh(num? amount) {
+    if (amount == null) return 'KES 0';
+    final isNeg = amount < 0;
+    final absVal = amount.abs().toStringAsFixed(0);
+    final regex = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+    final formatted = absVal.replaceAllMapped(regex, (Match m) => '${m[1]},');
+    return isNeg ? '-KES $formatted' : 'KES $formatted';
+  }
+
+  Future<void> _loadPayrollSummary() async {
+    setState(() => _isLoadingPayroll = true);
+    try {
+      final resp = await http.get(
+        Uri.parse('$_baseUrl/payroll/summary?month=$_payrollMonth&year=$_payrollYear'),
+        headers: AuthService.instance.authHeaders,
+      );
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        if (mounted) {
+          setState(() {
+            _payrollSummary = (data['summary'] as Map<String, dynamic>?) ?? {};
+            _payrollRecords = (data['records'] as List<dynamic>?) ?? [];
+            _isLoadingPayroll = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _isLoadingPayroll = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingPayroll = false);
+    }
+  }
+
+  Future<void> _exportPayrollCsv() async {
+    try {
+      final url = '$_baseUrl/payroll/export?month=$_payrollMonth&year=$_payrollYear';
+      final resp = await http.get(
+        Uri.parse(url),
+        headers: AuthService.instance.authHeaders,
+      );
+      if (resp.statusCode == 200) {
+        final bytes = Uint8List.fromList(utf8.encode(resp.body));
+        await saveAndDownloadPdfImpl(bytes, 'payroll_${_payrollYear}_${_payrollMonth.toString().padLeft(2, '0')}.csv');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.green,
+              content: Text('Payroll register exported successfully for ${_payrollMonthNames[_payrollMonth - 1]} $_payrollYear!'),
+            ),
+          );
+        }
+      } else {
+        throw Exception('Failed to export payroll');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.red, content: Text('Export error: $e')),
+        );
+      }
+    }
+  }
+
+  void _showCompensationConfigDialog(Map<String, dynamic> user) {
+    final userId = (user['userId'] ?? user['id']).toString();
+    final userName = (user['name'] ?? 'Staff').toString();
+    final currentStructure = (user['payStructure'] ?? 'MONTHLY_SALARY').toString();
+
+    String selectedStructure = currentStructure;
+    final baseSalaryCtrl = TextEditingController(text: ((user['baseSalary'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0));
+    final hourlyRateCtrl = TextEditingController(text: ((user['hourlyRate'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0));
+    final commRateCtrl = TextEditingController(text: ((user['commissionRate'] as num?)?.toDouble() ?? 15.0).toStringAsFixed(1));
+    final flatCommCtrl = TextEditingController(text: ((user['flatCommissionPerJob'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0));
+    final extSystemCtrl = TextEditingController(text: (user['externalPayrollSystem'] ?? 'QuickBooks Online').toString());
+    final extIdCtrl = TextEditingController(text: (user['externalPayrollId'] ?? '').toString());
+
+    String selectedPaymentMethod = (user['paymentMethod'] ?? 'MPESA').toString();
+    final payoutBankCtrl = TextEditingController(text: (user['payoutBank'] ?? '').toString());
+    final payoutAccountCtrl = TextEditingController(text: (user['payoutAccountNumber'] ?? user['phone'] ?? '').toString());
+    final nationalIdCtrl = TextEditingController(text: (user['nationalId'] ?? '').toString());
+    final kraPinCtrl = TextEditingController(text: (user['kraPin'] ?? '').toString());
+    final nssfNoCtrl = TextEditingController(text: (user['nssfNo'] ?? '').toString());
+    final shifNoCtrl = TextEditingController(text: (user['shifNo'] ?? '').toString());
+
+    bool isSaving = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: const Color(0xFF1E3A8A).withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.tune, color: Color(0xFF1E3A8A)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Staff Compensation Model: $userName', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 2),
+                    Text('Configure how this employee is paid, commission tiers, and tax identifiers.', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 640,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (errorMsg != null)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.shade200)),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(errorMsg!, style: TextStyle(color: Colors.red.shade900, fontSize: 13))),
+                        ],
+                      ),
+                    ),
+
+                  const Text('Select Workshop Payment Structure:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: selectedStructure,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.payments_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'MONTHLY_SALARY',
+                        child: Text('1. Monthly Fixed Salary Only (Guaranteed contract, no commission)', overflow: TextOverflow.ellipsis),
+                      ),
+                      DropdownMenuItem(
+                        value: 'COMMISSION_ONLY',
+                        child: Text('2. Commission Only (% of labor billed or per completed job)', overflow: TextOverflow.ellipsis),
+                      ),
+                      DropdownMenuItem(
+                        value: 'SALARY_AND_COMMISSION',
+                        child: Text('3. Monthly Salary + Commission (Both Base Salary & Labor Commission)', overflow: TextOverflow.ellipsis),
+                      ),
+                      DropdownMenuItem(
+                        value: 'HOURLY',
+                        child: Text('4. Hourly Wage Only (Rate per hour worked on repairs)', overflow: TextOverflow.ellipsis),
+                      ),
+                      DropdownMenuItem(
+                        value: 'HOURLY_AND_COMMISSION',
+                        child: Text('5. Hourly Wage + Commission (Both Hourly Rate & Labor Commission)', overflow: TextOverflow.ellipsis),
+                      ),
+                      DropdownMenuItem(
+                        value: 'EXTERNAL_PAYROLL',
+                        child: Text('6. External Payroll System (Processed in QuickBooks, Sage, ADP, Gusto)', overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                    onChanged: (v) => setDlgState(() => selectedStructure = v ?? 'MONTHLY_SALARY'),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Model Explanatory Banner
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFBBF7D0)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_outline, color: Color(0xFF166534), size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            selectedStructure == 'MONTHLY_SALARY'
+                                ? 'Guaranteed Monthly Salary: Employee is paid a fixed sum at month-end. Ideal for service advisors, managers, storekeepers, or mechanics on fixed contract.'
+                                : selectedStructure == 'COMMISSION_ONLY'
+                                    ? 'Commission Only: Employee earns entirely based on workshop output (% of labor billed on completed job cards and/or flat fee per job).'
+                                    : selectedStructure == 'SALARY_AND_COMMISSION'
+                                        ? 'Salary + Commission: Employee gets a reliable base monthly salary PLUS earns extra commission on every repair job completed.'
+                                        : selectedStructure == 'HOURLY'
+                                            ? 'Hourly Pay: Employee is compensated based on actual or clocked repair hours logged in the system.'
+                                            : selectedStructure == 'HOURLY_AND_COMMISSION'
+                                                ? 'Hourly + Commission: Employee earns hourly wages for work time PLUS a percentage of the labor revenue billed.'
+                                                : 'External System: Workshop exports labor hours and completed jobs. Full payroll calculation, PAYE, and payouts occur in an external system (e.g. QuickBooks / Sage).',
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF166534), height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Structure-specific inputs
+                  if (selectedStructure == 'MONTHLY_SALARY' || selectedStructure == 'SALARY_AND_COMMISSION') ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: baseSalaryCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Monthly Base Salary (KES) *',
+                              prefixText: 'KES ',
+                              prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (selectedStructure == 'HOURLY' || selectedStructure == 'HOURLY_AND_COMMISSION') ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: hourlyRateCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Hourly Pay Rate (KES / hr) *',
+                              prefixText: 'KES ',
+                              suffixText: '/ hr',
+                              prefixIcon: Icon(Icons.timer_outlined),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (selectedStructure == 'COMMISSION_ONLY' || selectedStructure == 'SALARY_AND_COMMISSION' || selectedStructure == 'HOURLY_AND_COMMISSION') ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: commRateCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Labor Commission Rate (%)',
+                              suffixText: '%',
+                              prefixIcon: Icon(Icons.percent_outlined),
+                              border: OutlineInputBorder(),
+                              helperText: 'Calculated from labor lines on completed jobs',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: flatCommCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Flat Bonus Per Job (KES)',
+                              prefixText: 'KES ',
+                              prefixIcon: Icon(Icons.card_giftcard),
+                              border: OutlineInputBorder(),
+                              helperText: 'Optional flat amount per finished car',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (selectedStructure == 'EXTERNAL_PAYROLL') ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: extSystemCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'External Payroll System Name',
+                              hintText: 'e.g. QuickBooks, Sage, Gusto, Stanbic Bulk',
+                              prefixIcon: Icon(Icons.cloud_sync_outlined),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: extIdCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'External Employee ID / Code',
+                              hintText: 'e.g. EMP-0042',
+                              prefixIcon: Icon(Icons.tag),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  const Divider(height: 24),
+                  const Text('Payment Method & Tax Compliance (Optional):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: selectedPaymentMethod,
+                          decoration: const InputDecoration(
+                            labelText: 'Disbursement Method',
+                            prefixIcon: Icon(Icons.payment),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa Direct')),
+                            DropdownMenuItem(value: 'BANK_TRANSFER', child: Text('Bank Transfer (EFT / RTGS)')),
+                            DropdownMenuItem(value: 'CASH', child: Text('Cash Payout')),
+                            DropdownMenuItem(value: 'CHEQUE', child: Text('Cheque')),
+                          ],
+                          onChanged: (v) => setDlgState(() => selectedPaymentMethod = v ?? 'MPESA'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: payoutAccountCtrl,
+                          decoration: InputDecoration(
+                            labelText: selectedPaymentMethod == 'BANK_TRANSFER' ? 'Bank Account Number' : 'M-Pesa / Mobile Number',
+                            prefixIcon: Icon(selectedPaymentMethod == 'BANK_TRANSFER' ? Icons.account_balance : Icons.phone_android),
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (selectedPaymentMethod == 'BANK_TRANSFER') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: payoutBankCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Bank Name & Branch',
+                        hintText: 'e.g. Equity Bank, KCB, NCBA, Stanbic',
+                        prefixIcon: Icon(Icons.business),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: nationalIdCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'National ID / Passport',
+                            prefixIcon: Icon(Icons.badge_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: kraPinCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'KRA Tax PIN',
+                            hintText: 'e.g. A001234567Z',
+                            prefixIcon: Icon(Icons.receipt_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: nssfNoCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'NSSF Number',
+                            prefixIcon: Icon(Icons.numbers),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: shifNoCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'SHIF / NHIF Number',
+                            prefixIcon: Icon(Icons.health_and_safety_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              icon: isSaving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save),
+              label: const Text('Save Compensation Settings'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E3A8A),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              ),
+              onPressed: isSaving ? null : () async {
+                setDlgState(() {
+                  isSaving = true;
+                  errorMsg = null;
+                });
+
+                final baseSalary = double.tryParse(baseSalaryCtrl.text.trim()) ?? 0.0;
+                final hourlyRate = double.tryParse(hourlyRateCtrl.text.trim()) ?? 0.0;
+                final commRate = double.tryParse(commRateCtrl.text.trim()) ?? 0.0;
+                final flatComm = double.tryParse(flatCommCtrl.text.trim()) ?? 0.0;
+
+                try {
+                  final resp = await http.put(
+                    Uri.parse('$_baseUrl/users/$userId'),
+                    headers: AuthService.instance.authHeaders,
+                    body: json.encode({
+                      'payStructure': selectedStructure,
+                      'baseSalary': baseSalary,
+                      'hourlyRate': hourlyRate,
+                      'commissionRate': commRate,
+                      'flatCommissionPerJob': flatComm,
+                      'externalPayrollSystem': extSystemCtrl.text.trim(),
+                      'externalPayrollId': extIdCtrl.text.trim(),
+                      'paymentMethod': selectedPaymentMethod,
+                      'payoutBank': payoutBankCtrl.text.trim(),
+                      'payoutAccountNumber': payoutAccountCtrl.text.trim(),
+                      'nationalId': nationalIdCtrl.text.trim(),
+                      'kraPin': kraPinCtrl.text.trim(),
+                      'nssfNo': nssfNoCtrl.text.trim(),
+                      'shifNo': shifNoCtrl.text.trim(),
+                    }),
+                  );
+
+                  if (resp.statusCode == 200) {
+                    if (context.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: Colors.green,
+                          content: Text('Compensation profile updated for $userName!'),
+                        ),
+                      );
+                      _refreshAllData();
+                      _loadPayrollSummary();
+                    }
+                  } else {
+                    final err = json.decode(resp.body);
+                    setDlgState(() {
+                      isSaving = false;
+                      errorMsg = err['error'] ?? 'Failed to update compensation.';
+                    });
+                  }
+                } catch (e) {
+                  setDlgState(() {
+                    isSaving = false;
+                    errorMsg = 'Error updating compensation: $e';
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddAdvanceDialog({Map<String, dynamic>? preselectedUser}) {
+    String? selectedUserId = preselectedUser != null ? (preselectedUser['userId'] ?? preselectedUser['id']).toString() : null;
+    if (selectedUserId == null && _employees.isNotEmpty) {
+      selectedUserId = _employees.first['id'].toString();
+    }
+
+    String selectedType = 'ADVANCE';
+    final amountCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
+    final paymentRefCtrl = TextEditingController();
+    bool isSaving = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.amber.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.money_off, color: Colors.amber),
+              ),
+              const SizedBox(width: 12),
+              const Text('Record Salary Advance / Deduction', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Record mid-month salary advances, tool allowances, bonuses, or deductions.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                  const SizedBox(height: 16),
+                  if (errorMsg != null)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.shade200)),
+                      child: Text(errorMsg!, style: TextStyle(color: Colors.red.shade900, fontSize: 13)),
+                    ),
+
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: selectedUserId,
+                    decoration: const InputDecoration(
+                      labelText: 'Staff Member *',
+                      prefixIcon: Icon(Icons.person),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _employees.map<DropdownMenuItem<String>>((e) {
+                      return DropdownMenuItem<String>(
+                        value: e['id'].toString(),
+                        child: Text('${e['name']} (${e['role']})', overflow: TextOverflow.ellipsis),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setDlgState(() => selectedUserId = v),
+                  ),
+                  const SizedBox(height: 12),
+
+                  DropdownButtonFormField<String>(
+                    value: selectedType,
+                    decoration: const InputDecoration(
+                      labelText: 'Transaction Type *',
+                      prefixIcon: Icon(Icons.category),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'ADVANCE', child: Text('Mid-Month Salary Advance (Deducted from Net Pay)')),
+                      DropdownMenuItem(value: 'BONUS', child: Text('Performance Bonus (Added to Gross Pay)')),
+                      DropdownMenuItem(value: 'TOOL_ALLOWANCE', child: Text('Tool & Equipment Allowance (Added to Gross Pay)')),
+                      DropdownMenuItem(value: 'DEDUCTION', child: Text('Inventory / Disciplinary Deduction (Deducted)')),
+                    ],
+                    onChanged: (v) => setDlgState(() => selectedType = v ?? 'ADVANCE'),
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Amount (KES) *',
+                      prefixText: 'KES ',
+                      prefixIcon: Icon(Icons.attach_money),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: reasonCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Reason / Notes',
+                      hintText: 'e.g. Emergency family advance, Tool kit purchase',
+                      prefixIcon: Icon(Icons.description),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: paymentRefCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'M-Pesa / Bank Ref Code (Optional)',
+                      hintText: 'e.g. QX8192019A',
+                      prefixIcon: Icon(Icons.receipt),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              icon: isSaving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
+              label: const Text('Record Transaction'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              ),
+              onPressed: isSaving ? null : () async {
+                final amt = double.tryParse(amountCtrl.text.trim());
+                if (selectedUserId == null || amt == null || amt <= 0) {
+                  setDlgState(() => errorMsg = 'Please select staff and enter a valid positive amount.');
+                  return;
+                }
+
+                setDlgState(() {
+                  isSaving = true;
+                  errorMsg = null;
+                });
+
+                try {
+                  final resp = await http.post(
+                    Uri.parse('$_baseUrl/payroll/advances'),
+                    headers: AuthService.instance.authHeaders,
+                    body: json.encode({
+                      'userId': selectedUserId,
+                      'amount': amt,
+                      'type': selectedType,
+                      'reason': reasonCtrl.text.trim(),
+                      'paymentRef': paymentRefCtrl.text.trim(),
+                      'approvedBy': AuthService.instance.userName ?? 'Manager',
+                    }),
+                  );
+
+                  if (resp.statusCode == 200 || resp.statusCode == 201) {
+                    if (context.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          backgroundColor: Colors.green,
+                          content: Text('Advance/Adjustment saved successfully!'),
+                        ),
+                      );
+                      _loadPayrollSummary();
+                    }
+                  } else {
+                    final err = json.decode(resp.body);
+                    setDlgState(() {
+                      isSaving = false;
+                      errorMsg = err['error'] ?? 'Failed to record advance.';
+                    });
+                  }
+                } catch (e) {
+                  setDlgState(() {
+                    isSaving = false;
+                    errorMsg = 'Error saving advance: $e';
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMarkPaidDialog(Map<String, dynamic> staffRecord) {
+    final userId = staffRecord['userId'].toString();
+    final name = (staffRecord['name'] ?? 'Staff').toString();
+    final netPay = (staffRecord['netPay'] as num?)?.toDouble() ?? 0.0;
+    String selectedMethod = (staffRecord['paymentMethod'] ?? 'MPESA').toString();
+    final refCtrl = TextEditingController(text: 'PAY-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}');
+    bool isSaving = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.green),
+              const SizedBox(width: 10),
+              Text('Mark Payroll as Paid: $name'),
+            ],
+          ),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Net Payout Amount:', style: TextStyle(fontWeight: FontWeight.w600)),
+                      Text(_formatKsh(netPay), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade900)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (errorMsg != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                  ),
+
+                DropdownButtonFormField<String>(
+                  value: selectedMethod,
+                  decoration: const InputDecoration(
+                    labelText: 'Payment Method',
+                    prefixIcon: Icon(Icons.payment),
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'MPESA', child: Text('M-Pesa Direct')),
+                    DropdownMenuItem(value: 'BANK_TRANSFER', child: Text('Bank Transfer (EFT/RTGS)')),
+                    DropdownMenuItem(value: 'CASH', child: Text('Cash')),
+                    DropdownMenuItem(value: 'CHEQUE', child: Text('Cheque')),
+                  ],
+                  onChanged: (v) => setDlgState(() => selectedMethod = v ?? 'MPESA'),
+                ),
+                const SizedBox(height: 12),
+
+                TextField(
+                  controller: refCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Transaction Reference / Receipt Code *',
+                    hintText: 'e.g. SIK9218201 or EFT-00912',
+                    prefixIcon: Icon(Icons.tag),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Marking as paid will record the transaction reference and mark any mid-month advances as settled.',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              icon: isSaving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.done_all),
+              label: const Text('Confirm & Mark Paid'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              ),
+              onPressed: isSaving ? null : () async {
+                setDlgState(() {
+                  isSaving = true;
+                  errorMsg = null;
+                });
+
+                try {
+                  final resp = await http.post(
+                    Uri.parse('$_baseUrl/payroll/records/mark-paid'),
+                    headers: AuthService.instance.authHeaders,
+                    body: json.encode({
+                      'userId': userId,
+                      'periodMonth': _payrollMonth,
+                      'periodYear': _payrollYear,
+                      'paymentReference': refCtrl.text.trim(),
+                      'paymentMethod': selectedMethod,
+                    }),
+                  );
+
+                  if (resp.statusCode == 200) {
+                    if (context.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: Colors.green,
+                          content: Text('Payroll payout confirmed for $name!'),
+                        ),
+                      );
+                      _loadPayrollSummary();
+                    }
+                  } else {
+                    final err = json.decode(resp.body);
+                    setDlgState(() {
+                      isSaving = false;
+                      errorMsg = err['error'] ?? 'Failed to update record.';
+                    });
+                  }
+                } catch (e) {
+                  setDlgState(() {
+                    isSaving = false;
+                    errorMsg = 'Error marking paid: $e';
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPayslipDialog(Map<String, dynamic> rec) {
+    final staffName = (rec['name'] ?? 'Staff').toString();
+    final role = (rec['role'] ?? 'Staff').toString();
+    final periodName = '${_payrollMonthNames[_payrollMonth - 1]} $_payrollYear';
+    final payStructure = (rec['payStructure'] ?? 'MONTHLY_SALARY').toString();
+    final baseSalary = (rec['baseSalary'] as num?)?.toDouble() ?? 0.0;
+    final hourlyRate = (rec['hourlyRate'] as num?)?.toDouble() ?? 0.0;
+    final hoursWorked = (rec['hoursWorked'] as num?)?.toDouble() ?? 0.0;
+    final hourlyPay = (rec['hourlyPay'] as num?)?.toDouble() ?? 0.0;
+    final commissionRate = (rec['commissionRate'] as num?)?.toDouble() ?? 0.0;
+    final laborBilled = (rec['totalLaborBilled'] as num?)?.toDouble() ?? 0.0;
+    final commissionAmount = (rec['commissionAmount'] as num?)?.toDouble() ?? 0.0;
+    final allowancesAmount = (rec['allowancesAmount'] as num?)?.toDouble() ?? 0.0;
+    final advancesAmount = (rec['advancesAmount'] as num?)?.toDouble() ?? 0.0;
+    final deductionsAmount = (rec['deductionsAmount'] as num?)?.toDouble() ?? 0.0;
+    final grossPay = (rec['grossPay'] as num?)?.toDouble() ?? 0.0;
+    final netPay = (rec['netPay'] as num?)?.toDouble() ?? 0.0;
+    final status = (rec['status'] ?? 'DRAFT').toString();
+    final paymentMethod = (rec['paymentMethod'] ?? 'MPESA').toString();
+    final paymentRef = (rec['paymentReference'] ?? '').toString();
+    final nationalId = (rec['nationalId'] ?? '').toString();
+    final kraPin = (rec['kraPin'] ?? '').toString();
+    final workshopName = (_workshopSettings['name'] ?? 'AutoCare Workshop').toString();
+    final workshopPhone = (_workshopSettings['phone'] ?? '').toString();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        contentPadding: const EdgeInsets.all(24),
+        content: SizedBox(
+          width: 580,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(workshopName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E3A8A))),
+                        if (workshopPhone.isNotEmpty) Text('Phone: $workshopPhone', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                        const Text('OFFICIAL EMPLOYEE PAYSLIP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: Colors.grey)),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: status == 'PAID' ? Colors.green.shade50 : Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: status == 'PAID' ? Colors.green.shade300 : Colors.blue.shade200),
+                      ),
+                      child: Text(
+                        status == 'PAID' ? 'PAID ($paymentMethod)' : 'DRAFT / APPROVED',
+                        style: TextStyle(
+                          color: status == 'PAID' ? Colors.green.shade800 : Colors.blue.shade800,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Employee: $staffName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          Text('Role: $role', style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+                          if (nationalId.isNotEmpty) Text('National ID: $nationalId', style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('Pay Period: $periodName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          Text('Pay Model: $payStructure', style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+                          if (kraPin.isNotEmpty) Text('KRA PIN: $kraPin', style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        color: Colors.grey.shade100,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('EARNINGS ITEM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                            Text('AMOUNT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      if (payStructure.contains('SALARY'))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Monthly Basic Salary'),
+                              Text(_formatKsh(baseSalary), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      if (payStructure.contains('HOURLY'))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Hourly Wages ($hoursWorked hrs @ ${_formatKsh(hourlyRate)}/hr)'),
+                              Text(_formatKsh(hourlyPay), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      if (payStructure.contains('COMMISSION'))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Labor Commission ($commissionRate% of ${_formatKsh(laborBilled)} labor)'),
+                              Text(_formatKsh(commissionAmount), style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF166534))),
+                            ],
+                          ),
+                        ),
+                      if (allowancesAmount > 0)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Allowances / Bonuses'),
+                              Text(_formatKsh(allowancesAmount), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        color: Colors.blue.shade50.withOpacity(0.5),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('TOTAL GROSS PAY', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text(_formatKsh(grossPay), style: const TextStyle(fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        color: Colors.grey.shade100,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('DEDUCTIONS & RECOVERIES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                            Text('AMOUNT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      if (advancesAmount > 0)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Mid-Month Salary Advance'),
+                              Text('-${_formatKsh(advancesAmount)}', style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.red)),
+                            ],
+                          ),
+                        ),
+                      if (deductionsAmount > 0)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Other Deductions'),
+                              Text('-${_formatKsh(deductionsAmount)}', style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.red)),
+                            ],
+                          ),
+                        ),
+                      if (advancesAmount == 0 && deductionsAmount == 0)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('No deductions recorded', style: TextStyle(color: Colors.grey)),
+                              Text('KES 0', style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E3A8A),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('NET TAKE-HOME PAY', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                          SizedBox(height: 2),
+                          Text('Amount Disbursed to Staff', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                        ],
+                      ),
+                      Text(
+                        _formatKsh(netPay),
+                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+                if (paymentRef.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Icon(Icons.receipt, size: 16, color: Colors.grey),
+                      const SizedBox(width: 6),
+                      Text('Payment Ref: $paymentRef', style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.print),
+            label: const Text('Print Payslip'),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Payslip ready for print')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmployeesSection() {
     final mechProd = (_dashboard['mechanicProductivity'] as List<dynamic>?) ?? [];
     final canManageUsers = _can('user:manage') || _activeUserRole == 'OWNER' || _activeUserRole == 'SUPER_ADMIN' || _activeUserRole == 'ADMIN';
+
+    final totalLiability = (_payrollSummary['totalLiability'] as num?)?.toDouble() ?? 0.0;
+    final totalBase = (_payrollSummary['totalBase'] as num?)?.toDouble() ?? 0.0;
+    final totalCommissions = (_payrollSummary['totalCommissions'] as num?)?.toDouble() ?? 0.0;
+    final totalHourly = (_payrollSummary['totalHourly'] as num?)?.toDouble() ?? 0.0;
+    final totalAdvances = (_payrollSummary['totalAdvances'] as num?)?.toDouble() ?? 0.0;
 
     return StatefulBuilder(
       builder: (context, setEmpState) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Top Tab Navigation: Payroll Hub vs Staff Directory
             Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Workshop Staff & User Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Create staff accounts with User IDs and passwords so each team member can log in with their specific role.',
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                      if (canManageUsers)
-                        ElevatedButton.icon(
-                          onPressed: _showAddUserDialog,
-                          icon: const Icon(Icons.person_add),
-                          label: const Text('Add New User / Staff'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF2563EB),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
-                    ],
+                  ChoiceChip(
+                    avatar: const Icon(Icons.payments_outlined, size: 18),
+                    label: const Text('Compensation & Monthly Payroll Hub', style: TextStyle(fontWeight: FontWeight.bold)),
+                    selected: _staffSectionTab == 'PAYROLL_HUB',
+                    selectedColor: const Color(0xFF1E3A8A).withOpacity(0.12),
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() => _staffSectionTab = 'PAYROLL_HUB');
+                        _loadPayrollSummary();
+                      }
+                    },
                   ),
-                  const Divider(height: 32),
-                  if (_employees.isEmpty)
-                    const Padding(padding: EdgeInsets.all(24), child: Text('No users found in database.'))
-                  else
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('Staff Member', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('User ID / Username', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Email & Phone', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Assigned Role', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Commission / Pay', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
-                        ],
-                        rows: _employees.map((e) {
-                          final role = (e['role'] ?? 'MECHANIC').toString();
-                          final isActive = e['isActive'] ?? true;
-                          final username = (e['username'] ?? '').toString();
-                          final email = (e['email'] ?? '').toString();
-                          final phone = (e['phone'] ?? '').toString();
-                          final name = (e['name'] ?? 'Staff').toString();
-                          final comm = (e['commissionRate'] as num?)?.toDouble() ?? 15.0;
+                  const SizedBox(width: 12),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.people_outline, size: 18),
+                    label: const Text('Staff Accounts & Roles Directory', style: TextStyle(fontWeight: FontWeight.bold)),
+                    selected: _staffSectionTab == 'DIRECTORY',
+                    selectedColor: const Color(0xFF1E3A8A).withOpacity(0.12),
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() => _staffSectionTab = 'DIRECTORY');
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
 
-                          Color roleColor;
-                          switch (role) {
-                            case 'OWNER':
-                            case 'SUPER_ADMIN':
-                              roleColor = Colors.purple;
-                              break;
-                            case 'MANAGER':
-                              roleColor = Colors.indigo;
-                              break;
-                            case 'STOREKEEPER':
-                              roleColor = Colors.teal;
-                              break;
-                            case 'INVENTORY_MANAGER':
-                              roleColor = Colors.cyan.shade800;
-                              break;
-                            case 'ADVISOR':
-                              roleColor = Colors.blue.shade700;
-                              break;
-                            case 'CASHIER':
-                              roleColor = Colors.green.shade700;
-                              break;
-                            default:
-                              roleColor = Colors.orange.shade800;
-                          }
-
-                          return DataRow(
-                            cells: [
-                              DataCell(
+            // ==========================================
+            // TAB 1: COMPENSATION & PAYROLL HUB
+            // ==========================================
+            if (_staffSectionTab == 'PAYROLL_HUB') ...[
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header Bar with Month/Year Pickers and Actions
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E3A8A).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.calendar_month, color: Color(0xFF1E3A8A)),
+                            ),
+                            const SizedBox(width: 12),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Row(
                                   children: [
-                                    CircleAvatar(
-                                      radius: 14,
-                                      backgroundColor: roleColor.withOpacity(0.15),
-                                      child: Text(
-                                        name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                                        style: TextStyle(color: roleColor, fontWeight: FontWeight.bold, fontSize: 11),
-                                      ),
+                                    DropdownButton<int>(
+                                      value: _payrollMonth,
+                                      underline: const SizedBox(),
+                                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                                      items: List.generate(12, (index) {
+                                        return DropdownMenuItem<int>(
+                                          value: index + 1,
+                                          child: Text(_payrollMonthNames[index]),
+                                        );
+                                      }),
+                                      onChanged: (m) {
+                                        if (m != null) {
+                                          setState(() => _payrollMonth = m);
+                                          _loadPayrollSummary();
+                                        }
+                                      },
                                     ),
-                                    const SizedBox(width: 8),
-                                    Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    const SizedBox(width: 6),
+                                    DropdownButton<int>(
+                                      value: _payrollYear,
+                                      underline: const SizedBox(),
+                                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                                      items: [2024, 2025, 2026, 2027, 2028].map((y) {
+                                        return DropdownMenuItem<int>(value: y, child: Text('$y'));
+                                      }).toList(),
+                                      onChanged: (y) {
+                                        if (y != null) {
+                                          setState(() => _payrollYear = y);
+                                          _loadPayrollSummary();
+                                        }
+                                      },
+                                    ),
                                   ],
                                 ),
+                                Text(
+                                  'Calculated from monthly base salaries, labor commissions on completed jobs, logged hours & advances.',
+                                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+
+                        // Action Buttons
+                        Wrap(
+                          spacing: 10,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _showAddAdvanceDialog(),
+                              icon: const Icon(Icons.money_off, size: 16),
+                              label: const Text('Log Advance / Bonus'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                               ),
-                              DataCell(
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey.shade100,
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: Colors.grey.shade300),
-                                  ),
-                                  child: Text(
-                                    username.isNotEmpty ? username : '-',
-                                    style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _exportPayrollCsv,
+                              icon: const Icon(Icons.file_download, size: 16),
+                              label: const Text('Export CSV (QuickBooks/Bank)'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Refresh Payroll Calculations',
+                              icon: _isLoadingPayroll
+                                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(Icons.refresh),
+                              onPressed: _loadPayrollSummary,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 28),
+
+                    // Executive Payroll KPI Cards
+                    Wrap(
+                      spacing: 16,
+                      runSpacing: 16,
+                      children: [
+                        _buildPayrollKpiCard('Total Net Liability', _formatKsh(totalLiability), Icons.account_balance_wallet, const Color(0xFF1E3A8A), 'Net cash payout due this period'),
+                        _buildPayrollKpiCard('Fixed Base Salaries', _formatKsh(totalBase), Icons.credit_card, Colors.blue.shade700, 'Guaranteed contractual salaries'),
+                        _buildPayrollKpiCard('Labor Commissions', _formatKsh(totalCommissions), Icons.trending_up, const Color(0xFF166534), 'Earned by technicians on jobs'),
+                        _buildPayrollKpiCard('Hourly Wages', _formatKsh(totalHourly), Icons.timer, Colors.orange.shade800, 'Based on logged repair hours'),
+                        _buildPayrollKpiCard('Advances Deducted', _formatKsh(totalAdvances), Icons.money_off, Colors.amber.shade900, 'Mid-month cash advances settled'),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Staff Payroll Register Table
+                    const Text('Staff Payroll Register & Payment Execution', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Supports All Workshop Pay Models: Monthly Salary only, Commission only, Both (Salary + Comm), Hourly only, Both (Hourly + Comm), and External Payroll.',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+
+                    if (_isLoadingPayroll)
+                      const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+                    else if (_payrollRecords.isEmpty)
+                      const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No active staff found for this period.')))
+                    else
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          columnSpacing: 20,
+                          columns: const [
+                            DataColumn(label: Text('Staff Member', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Pay Structure', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Rates & Baseline', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Output (Jobs & Hrs)', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Gross Pay', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Advances / Ded.', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Net Payable', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Status & Method', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                          ],
+                          rows: _payrollRecords.map((r) {
+                            final name = (r['name'] ?? 'Staff').toString();
+                            final role = (r['role'] ?? 'Staff').toString();
+                            final phone = (r['phone'] ?? '').toString();
+                            final structure = (r['payStructure'] ?? 'MONTHLY_SALARY').toString();
+                            final status = (r['status'] ?? 'DRAFT').toString();
+                            final gross = (r['grossPay'] as num?)?.toDouble() ?? 0.0;
+                            final net = (r['netPay'] as num?)?.toDouble() ?? 0.0;
+                            final advances = (r['advancesAmount'] as num?)?.toDouble() ?? 0.0;
+                            final completedJobs = (r['completedJobsCount'] as num?)?.toInt() ?? 0;
+                            final hoursWorked = (r['hoursWorked'] as num?)?.toDouble() ?? 0.0;
+                            final laborBilled = (r['totalLaborBilled'] as num?)?.toDouble() ?? 0.0;
+                            final paymentMethod = (r['paymentMethod'] ?? 'MPESA').toString();
+
+                            // Structure badge config
+                            String structureLabel;
+                            Color structureColor;
+                            switch (structure) {
+                              case 'MONTHLY_SALARY':
+                                structureLabel = 'Monthly Salary';
+                                structureColor = Colors.blue.shade700;
+                                break;
+                              case 'COMMISSION_ONLY':
+                                structureLabel = 'Commission Only';
+                                structureColor = Colors.green.shade700;
+                                break;
+                              case 'SALARY_AND_COMMISSION':
+                                structureLabel = 'Salary + Commission';
+                                structureColor = Colors.purple.shade700;
+                                break;
+                              case 'HOURLY':
+                                structureLabel = 'Hourly Wage';
+                                structureColor = Colors.orange.shade800;
+                                break;
+                              case 'HOURLY_AND_COMMISSION':
+                                structureLabel = 'Hourly + Commission';
+                                structureColor = Colors.teal.shade700;
+                                break;
+                              case 'EXTERNAL_PAYROLL':
+                                structureLabel = 'External (${r['externalPayrollSystem'] ?? 'Payroll'})';
+                                structureColor = Colors.indigo.shade700;
+                                break;
+                              default:
+                                structureLabel = structure;
+                                structureColor = Colors.grey.shade700;
+                            }
+
+                            // Build Rates description
+                            String rateDesc = '';
+                            if (structure == 'MONTHLY_SALARY') {
+                              rateDesc = _formatKsh(r['baseSalary']);
+                            } else if (structure == 'COMMISSION_ONLY') {
+                              rateDesc = '${r['commissionRate']}% Labor';
+                            } else if (structure == 'SALARY_AND_COMMISSION') {
+                              rateDesc = '${_formatKsh(r['baseSalary'])} + ${r['commissionRate']}%';
+                            } else if (structure == 'HOURLY') {
+                              rateDesc = '${_formatKsh(r['hourlyRate'])}/hr';
+                            } else if (structure == 'HOURLY_AND_COMMISSION') {
+                              rateDesc = '${_formatKsh(r['hourlyRate'])}/hr + ${r['commissionRate']}%';
+                            } else {
+                              rateDesc = 'ID: ${r['externalPayrollId'] ?? '-'}';
+                            }
+
+                            return DataRow(
+                              cells: [
+                                DataCell(
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text('$role ${phone.isNotEmpty ? '\u2022 $phone' : ''}', style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+                                    ],
                                   ),
                                 ),
-                              ),
-                              DataCell(
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(email, style: const TextStyle(fontSize: 12)),
-                                    if (phone.isNotEmpty) Text(phone, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                                  ],
-                                ),
-                              ),
-                              DataCell(
-                                Chip(
-                                  backgroundColor: roleColor.withOpacity(0.1),
-                                  label: Text(role, style: TextStyle(color: roleColor, fontSize: 11, fontWeight: FontWeight.bold)),
-                                ),
-                              ),
-                              DataCell(Text(role == 'MECHANIC' ? '$comm% Labour' : 'Standard')),
-                              DataCell(
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: isActive ? Colors.green.shade50 : Colors.red.shade50,
-                                    borderRadius: BorderRadius.circular(6),
+                                DataCell(
+                                  Chip(
+                                    backgroundColor: structureColor.withOpacity(0.12),
+                                    label: Text(structureLabel, style: TextStyle(color: structureColor, fontSize: 11, fontWeight: FontWeight.bold)),
                                   ),
-                                  child: Text(
-                                    isActive ? 'Active' : 'Inactive',
-                                    style: TextStyle(
-                                      color: isActive ? Colors.green.shade800 : Colors.red.shade800,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
+                                ),
+                                DataCell(Text(rateDesc, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
+                                DataCell(
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text('$completedJobs jobs completed', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                      if (laborBilled > 0)
+                                        Text('Labor: ${_formatKsh(laborBilled)}', style: TextStyle(fontSize: 11, color: Colors.green.shade800)),
+                                      if (hoursWorked > 0)
+                                        Text('Time: ${hoursWorked.toStringAsFixed(1)} hrs', style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                                    ],
+                                  ),
+                                ),
+                                DataCell(Text(_formatKsh(gross), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                                DataCell(
+                                  advances > 0
+                                      ? Text('-${_formatKsh(advances)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                                      : const Text('-', style: TextStyle(color: Colors.grey)),
+                                ),
+                                DataCell(
+                                  Text(
+                                    _formatKsh(net),
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: net > 0 ? const Color(0xFF1E3A8A) : Colors.black87),
+                                  ),
+                                ),
+                                DataCell(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: status == 'PAID' ? Colors.green.shade50 : Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: status == 'PAID' ? Colors.green.shade300 : Colors.grey.shade300),
+                                    ),
+                                    child: Text(
+                                      status == 'PAID' ? 'PAID ($paymentMethod)' : 'DRAFT',
+                                      style: TextStyle(
+                                        color: status == 'PAID' ? Colors.green.shade800 : Colors.grey.shade800,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              DataCell(
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (canManageUsers) ...[
+                                DataCell(
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
                                       IconButton(
-                                        tooltip: 'Reset Password',
-                                        icon: const Icon(Icons.lock_reset, color: Colors.orange, size: 20),
-                                        onPressed: () => _showResetPasswordDialog(Map<String, dynamic>.from(e)),
+                                        tooltip: 'Configure Pay Structure',
+                                        icon: const Icon(Icons.tune, color: Color(0xFF1E3A8A), size: 19),
+                                        onPressed: () => _showCompensationConfigDialog(Map<String, dynamic>.from(r)),
                                       ),
                                       IconButton(
-                                        tooltip: isActive ? 'Deactivate User' : 'Activate User',
-                                        icon: Icon(
-                                          isActive ? Icons.block : Icons.check_circle_outline,
-                                          color: isActive ? Colors.red.shade400 : Colors.green,
-                                          size: 20,
+                                        tooltip: 'Log Advance or Bonus',
+                                        icon: const Icon(Icons.money_off, color: Colors.amber, size: 19),
+                                        onPressed: () => _showAddAdvanceDialog(preselectedUser: Map<String, dynamic>.from(r)),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'View & Print Payslip',
+                                        icon: const Icon(Icons.receipt_long, color: Colors.blue, size: 19),
+                                        onPressed: () => _showPayslipDialog(Map<String, dynamic>.from(r)),
+                                      ),
+                                      if (status != 'PAID')
+                                        IconButton(
+                                          tooltip: 'Mark Paid via M-Pesa/Bank',
+                                          icon: const Icon(Icons.check_circle_outline, color: Colors.green, size: 19),
+                                          onPressed: () => _showMarkPaidDialog(Map<String, dynamic>.from(r)),
                                         ),
-                                        onPressed: () => _toggleUserActive(Map<String, dynamic>.from(e)),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+
+            // ==========================================
+            // TAB 2: STAFF DIRECTORY & ACCOUNTS
+            // ==========================================
+            if (_staffSectionTab == 'DIRECTORY') ...[
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Workshop Staff & User Accounts', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Create staff accounts with User IDs and passwords so each team member can log in with their specific role.',
+                              style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        if (canManageUsers)
+                          ElevatedButton.icon(
+                            onPressed: _showAddUserDialog,
+                            icon: const Icon(Icons.person_add),
+                            label: const Text('Add New User / Staff'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const Divider(height: 32),
+                    if (_employees.isEmpty)
+                      const Padding(padding: EdgeInsets.all(24), child: Text('No users found in database.'))
+                    else
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          columns: const [
+                            DataColumn(label: Text('Staff Member', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('User ID / Username', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Email & Phone', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Assigned Role', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Pay Structure', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
+                          ],
+                          rows: _employees.map((e) {
+                            final role = (e['role'] ?? 'MECHANIC').toString();
+                            final isActive = e['isActive'] ?? true;
+                            final username = (e['username'] ?? '').toString();
+                            final email = (e['email'] ?? '').toString();
+                            final phone = (e['phone'] ?? '').toString();
+                            final name = (e['name'] ?? 'Staff').toString();
+                            final structure = (e['payStructure'] ?? 'MONTHLY_SALARY').toString();
+
+                            Color roleColor;
+                            switch (role) {
+                              case 'OWNER':
+                              case 'SUPER_ADMIN':
+                                roleColor = Colors.purple;
+                                break;
+                              case 'MANAGER':
+                                roleColor = Colors.indigo;
+                                break;
+                              case 'STOREKEEPER':
+                                roleColor = Colors.teal;
+                                break;
+                              case 'INVENTORY_MANAGER':
+                                roleColor = Colors.cyan.shade800;
+                                break;
+                              case 'ADVISOR':
+                                roleColor = Colors.blue.shade700;
+                                break;
+                              case 'CASHIER':
+                                roleColor = Colors.green.shade700;
+                                break;
+                              default:
+                                roleColor = Colors.orange.shade800;
+                            }
+
+                            return DataRow(
+                              cells: [
+                                DataCell(
+                                  Row(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 14,
+                                        backgroundColor: roleColor.withOpacity(0.15),
+                                        child: Text(
+                                          name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                                          style: TextStyle(color: roleColor, fontWeight: FontWeight.bold, fontSize: 11),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
+                                DataCell(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: Colors.grey.shade300),
+                                    ),
+                                    child: Text(
+                                      username.isNotEmpty ? username : '-',
+                                      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 12),
+                                    ),
+                                  ),
+                                ),
+                                DataCell(
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(email, style: const TextStyle(fontSize: 12)),
+                                      if (phone.isNotEmpty) Text(phone, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                                    ],
+                                  ),
+                                ),
+                                DataCell(
+                                  Chip(
+                                    backgroundColor: roleColor.withOpacity(0.1),
+                                    label: Text(role, style: TextStyle(color: roleColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                                DataCell(
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(structure.replaceAll('_', ' '), style: const TextStyle(fontSize: 12)),
+                                      const SizedBox(width: 6),
+                                      InkWell(
+                                        onTap: () => _showCompensationConfigDialog(Map<String, dynamic>.from(e)),
+                                        child: const Icon(Icons.edit, size: 14, color: Color(0xFF2563EB)),
                                       ),
                                     ],
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            ],
-                          );
-                        }).toList(),
+                                DataCell(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: isActive ? Colors.green.shade50 : Colors.red.shade50,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      isActive ? 'Active' : 'Inactive',
+                                      style: TextStyle(
+                                        color: isActive ? Colors.green.shade800 : Colors.red.shade800,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                DataCell(
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Configure Pay Structure',
+                                        icon: const Icon(Icons.tune, color: Color(0xFF1E3A8A), size: 20),
+                                        onPressed: () => _showCompensationConfigDialog(Map<String, dynamic>.from(e)),
+                                      ),
+                                      if (canManageUsers) ...[
+                                        IconButton(
+                                          tooltip: 'Reset Password',
+                                          icon: const Icon(Icons.lock_reset, color: Colors.orange, size: 20),
+                                          onPressed: () => _showResetPasswordDialog(Map<String, dynamic>.from(e)),
+                                        ),
+                                        IconButton(
+                                          tooltip: isActive ? 'Deactivate User' : 'Activate User',
+                                          icon: Icon(
+                                            isActive ? Icons.block : Icons.check_circle_outline,
+                                            color: isActive ? Colors.red.shade400 : Colors.green,
+                                            size: 20,
+                                          ),
+                                          onPressed: () => _toggleUserActive(Map<String, dynamic>.from(e)),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            // Module 7: Mechanic Labour Hours, Turnaround & Commission Ledger
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Mechanic Labour Hours, Efficiency & 15% Commission Tracker', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const Divider(height: 20),
-                  if (mechProd.isEmpty)
-                    const Text('No mechanic job assignments yet.', style: TextStyle(color: Colors.grey))
-                  else
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Total Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Completed', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Est. vs Actual Hours', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Labour Value (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
-                          DataColumn(label: Text('Commission (15%)', style: TextStyle(fontWeight: FontWeight.bold))),
-                        ],
-                        rows: mechProd.map((m) {
-                          final estH = (m['estimatedHours'] as num?)?.toDouble() ?? 0.0;
-                          final actH = (m['actualHours'] as num?)?.toDouble() ?? 0.0;
-                          final labVal = (m['labourGenerated'] as num?)?.toDouble() ?? (estH * 1500);
-                          final comm = (m['commissionEarned'] as num?)?.toDouble() ?? (labVal * 0.15);
-                          return DataRow(
-                            cells: [
-                              DataCell(Text((m['technician'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
-                              DataCell(Text('${m['totalJobs'] ?? 0}')),
-                              DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
-                              DataCell(Text('${estH.toStringAsFixed(1)}h est / ${actH.toStringAsFixed(1)}h actual')),
-                              DataCell(Text('KSH ${labVal.toStringAsFixed(0)}')),
-                              DataCell(Text('KSH ${comm.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)))),
-                            ],
-                          );
-                        }).toList(),
+              const SizedBox(height: 24),
+
+              // Mechanic Labour Hours, Turnaround & Commission Ledger
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Technician Efficiency & Turnaround Ledger', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Divider(height: 20),
+                    if (mechProd.isEmpty)
+                      const Text('No mechanic job assignments yet.', style: TextStyle(color: Colors.grey))
+                    else
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          columns: const [
+                            DataColumn(label: Text('Technician', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Total Jobs', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Completed', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Est. vs Actual Hours', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Labour Value (KSH)', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('Commission Earned', style: TextStyle(fontWeight: FontWeight.bold))),
+                          ],
+                          rows: mechProd.map((m) {
+                            final estH = (m['estimatedHours'] as num?)?.toDouble() ?? 0.0;
+                            final actH = (m['actualHours'] as num?)?.toDouble() ?? 0.0;
+                            final labVal = (m['labourGenerated'] as num?)?.toDouble() ?? (estH * 1500);
+                            final comm = (m['commissionEarned'] as num?)?.toDouble() ?? (labVal * 0.15);
+                            return DataRow(
+                              cells: [
+                                DataCell(Text((m['technician'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                                DataCell(Text('${m['totalJobs'] ?? 0}')),
+                                DataCell(Text('${m['completedJobs'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))),
+                                DataCell(Text('${estH.toStringAsFixed(1)}h est / ${actH.toStringAsFixed(1)}h actual')),
+                                DataCell(Text(_formatKsh(labVal))),
+                                DataCell(Text(_formatKsh(comm), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)))),
+                              ],
+                            );
+                          }).toList(),
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            // Module 7: Role-Based Access & Permissions Matrix
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Workshop Role-Based Access Control (RBAC) Matrix', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  Divider(height: 20),
-                  Text('\u2022 Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('\u2022 Service Advisor: Create Job Cards, 360\u00B0 Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('\u2022 Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('\u2022 Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('\u2022 Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
-                  Text('\u2022 Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
-                ],
+              const SizedBox(height: 24),
+
+              // Role-Based Access Matrix
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Workshop Role-Based Access Control (RBAC) Matrix', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    Divider(height: 20),
+                    Text('\u2022 Owner / Admin: Full access to Job Cards, Parts, Quotations, Invoices, Staff, Payroll, Expenses, and Net Profit Reports.', style: TextStyle(fontSize: 13, height: 1.6)),
+                    Text('\u2022 Service Advisor: Create Job Cards, 360\u00B0 Walk-Around, Quotations, Appointments, and Customer WhatsApp Updates.', style: TextStyle(fontSize: 13, height: 1.6)),
+                    Text('\u2022 Workshop Manager: Assign Bays & Technicians, Approve QC Road-Tests, Monitor Turnaround, Compensation & Overdue Jobs.', style: TextStyle(fontSize: 13, height: 1.6)),
+                    Text('\u2022 Mechanic: View Assigned Job Cards, Log OBD-II Diagnostics, Record Actual Hours & Request Parts.', style: TextStyle(fontSize: 13, height: 1.6)),
+                    Text('\u2022 Storekeeper: Manage Spare Parts Catalog, Suppliers, Reorder Alerts, and Stock Movement Ledger.', style: TextStyle(fontSize: 13, height: 1.6)),
+                    Text('\u2022 Cashier / Accounts: Convert Approved Estimates to Invoices, Record M-Pesa / Deposits, Issue Receipts & Gate Passes.', style: TextStyle(fontSize: 13, height: 1.6)),
+                  ],
+                ),
               ),
-            ),
+            ],
           ],
         );
       },
+    );
+  }
+
+  Widget _buildPayrollKpiCard(String label, String value, IconData icon, Color color, String subtitle) {
+    return Container(
+      width: 220,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 12, fontWeight: FontWeight.bold)),
+              Icon(icon, color: color, size: 20),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(subtitle, style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+        ],
+      ),
     );
   }
 

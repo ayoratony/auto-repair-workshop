@@ -4222,6 +4222,19 @@ app.get('/api/users', async (req: Request, res: Response) => {
         role: true,
         specialization: true,
         commissionRate: true,
+        payStructure: true,
+        baseSalary: true,
+        hourlyRate: true,
+        flatCommissionPerJob: true,
+        externalPayrollId: true,
+        externalPayrollSystem: true,
+        paymentMethod: true,
+        payoutBank: true,
+        payoutAccountNumber: true,
+        nationalId: true,
+        kraPin: true,
+        nssfNo: true,
+        shifNo: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
@@ -4238,7 +4251,29 @@ app.get('/api/users', async (req: Request, res: Response) => {
 // Workshop owner creates new user
 app.post('/api/users', async (req: Request, res: Response) => {
   try {
-    const { name, email, username, phone, password, role, specialization, commissionRate } = req.body;
+    const {
+      name,
+      email,
+      username,
+      phone,
+      password,
+      role,
+      specialization,
+      commissionRate,
+      payStructure,
+      baseSalary,
+      hourlyRate,
+      flatCommissionPerJob,
+      externalPayrollId,
+      externalPayrollSystem,
+      paymentMethod,
+      payoutBank,
+      payoutAccountNumber,
+      nationalId,
+      kraPin,
+      nssfNo,
+      shifNo,
+    } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and initial password are required.' });
     }
@@ -4272,6 +4307,19 @@ app.post('/api/users', async (req: Request, res: Response) => {
         role: validRole,
         specialization: specialization ? String(specialization).trim() : null,
         commissionRate: typeof commissionRate === 'number' ? commissionRate : (Number(commissionRate) || 0),
+        payStructure: payStructure || 'MONTHLY_SALARY',
+        baseSalary: Number(baseSalary) || 0,
+        hourlyRate: Number(hourlyRate) || 0,
+        flatCommissionPerJob: Number(flatCommissionPerJob) || 0,
+        externalPayrollId: externalPayrollId ? String(externalPayrollId).trim() : null,
+        externalPayrollSystem: externalPayrollSystem ? String(externalPayrollSystem).trim() : null,
+        paymentMethod: paymentMethod || 'MPESA',
+        payoutBank: payoutBank ? String(payoutBank).trim() : null,
+        payoutAccountNumber: payoutAccountNumber ? String(payoutAccountNumber).trim() : null,
+        nationalId: nationalId ? String(nationalId).trim() : null,
+        kraPin: kraPin ? String(kraPin).trim() : null,
+        nssfNo: nssfNo ? String(nssfNo).trim() : null,
+        shifNo: shifNo ? String(shifNo).trim() : null,
         isActive: true,
         tenantId: tenant.id,
       },
@@ -4284,6 +4332,19 @@ app.post('/api/users', async (req: Request, res: Response) => {
         role: true,
         specialization: true,
         commissionRate: true,
+        payStructure: true,
+        baseSalary: true,
+        hourlyRate: true,
+        flatCommissionPerJob: true,
+        externalPayrollId: true,
+        externalPayrollSystem: true,
+        paymentMethod: true,
+        payoutBank: true,
+        payoutAccountNumber: true,
+        nationalId: true,
+        kraPin: true,
+        nssfNo: true,
+        shifNo: true,
         isActive: true,
         createdAt: true,
       },
@@ -4300,7 +4361,29 @@ app.post('/api/users', async (req: Request, res: Response) => {
 app.put('/api/users/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, email, username, phone, role, specialization, commissionRate, isActive } = req.body;
+    const {
+      name,
+      email,
+      username,
+      phone,
+      role,
+      specialization,
+      commissionRate,
+      payStructure,
+      baseSalary,
+      hourlyRate,
+      flatCommissionPerJob,
+      externalPayrollId,
+      externalPayrollSystem,
+      paymentMethod,
+      payoutBank,
+      payoutAccountNumber,
+      nationalId,
+      kraPin,
+      nssfNo,
+      shifNo,
+      isActive,
+    } = req.body;
 
     const data: any = {};
     if (name !== undefined) data.name = String(name).trim();
@@ -4310,6 +4393,19 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
     if (role !== undefined && Object.values(Role).includes(role as Role)) data.role = role as Role;
     if (specialization !== undefined) data.specialization = specialization ? String(specialization).trim() : null;
     if (commissionRate !== undefined) data.commissionRate = Number(commissionRate) || 0;
+    if (payStructure !== undefined) data.payStructure = String(payStructure);
+    if (baseSalary !== undefined) data.baseSalary = Number(baseSalary) || 0;
+    if (hourlyRate !== undefined) data.hourlyRate = Number(hourlyRate) || 0;
+    if (flatCommissionPerJob !== undefined) data.flatCommissionPerJob = Number(flatCommissionPerJob) || 0;
+    if (externalPayrollId !== undefined) data.externalPayrollId = externalPayrollId ? String(externalPayrollId).trim() : null;
+    if (externalPayrollSystem !== undefined) data.externalPayrollSystem = externalPayrollSystem ? String(externalPayrollSystem).trim() : null;
+    if (paymentMethod !== undefined) data.paymentMethod = String(paymentMethod);
+    if (payoutBank !== undefined) data.payoutBank = payoutBank ? String(payoutBank).trim() : null;
+    if (payoutAccountNumber !== undefined) data.payoutAccountNumber = payoutAccountNumber ? String(payoutAccountNumber).trim() : null;
+    if (nationalId !== undefined) data.nationalId = nationalId ? String(nationalId).trim() : null;
+    if (kraPin !== undefined) data.kraPin = kraPin ? String(kraPin).trim() : null;
+    if (nssfNo !== undefined) data.nssfNo = nssfNo ? String(nssfNo).trim() : null;
+    if (shifNo !== undefined) data.shifNo = shifNo ? String(shifNo).trim() : null;
     if (isActive !== undefined) data.isActive = Boolean(isActive);
 
     const updated = await prisma.user.update({
@@ -4324,6 +4420,19 @@ app.put('/api/users/:id', async (req: Request, res: Response) => {
         role: true,
         specialization: true,
         commissionRate: true,
+        payStructure: true,
+        baseSalary: true,
+        hourlyRate: true,
+        flatCommissionPerJob: true,
+        externalPayrollId: true,
+        externalPayrollSystem: true,
+        paymentMethod: true,
+        payoutBank: true,
+        payoutAccountNumber: true,
+        nationalId: true,
+        kraPin: true,
+        nssfNo: true,
+        shifNo: true,
         isActive: true,
         updatedAt: true,
       },
@@ -4369,6 +4478,602 @@ app.delete('/api/users/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Delete user error:', error);
     res.status(500).json({ error: 'Failed to deactivate user.' });
+  }
+});
+
+// ==========================================
+// WORKSHOP COMPENSATION & PAYROLL MANAGEMENT API
+// ==========================================
+
+// Get monthly payroll summary & auto-calculated staff liabilities
+app.get('/api/payroll/summary', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const month = parseInt(String(req.query.month || (new Date().getMonth() + 1)), 10);
+    const year = parseInt(String(req.query.year || new Date().getFullYear()), 10);
+
+    const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // 1. Fetch active users
+    const users = await prisma.user.findMany({
+      where: { tenantId: tenant.id, isActive: true },
+      orderBy: { name: 'asc' },
+    });
+
+    // 2. Fetch all job cards for this period
+    const jobCards = await prisma.jobCard.findMany({
+      where: {
+        tenantId: tenant.id,
+        createdAt: { gte: startOfMonth, lte: endOfMonth },
+      },
+      include: {
+        estimates: {
+          include: {
+            lineItems: true,
+            invoice: true,
+          },
+        },
+      },
+    });
+
+    // 3. Fetch all staff advances for this period (or settled in this period)
+    const advances = await prisma.staffAdvance.findMany({
+      where: {
+        tenantId: tenant.id,
+        OR: [
+          { settledMonth: month, settledYear: year },
+          {
+            date: { gte: startOfMonth, lte: endOfMonth },
+            settledMonth: null,
+          },
+        ],
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    // 4. Fetch existing saved/approved payroll records for this month/year
+    const existingRecords = await prisma.payrollRecord.findMany({
+      where: {
+        tenantId: tenant.id,
+        periodMonth: month,
+        periodYear: year,
+      },
+    });
+    const recordMap = new Map(existingRecords.map((r) => [r.userId, r]));
+
+    // 5. Build staff rows
+    const staffRows = users.map((user) => {
+      const existing = recordMap.get(user.id);
+
+      // Match jobs completed by this technician
+      const userJobCards = jobCards.filter((jc) => {
+        if (!jc.technician) return false;
+        const tech = jc.technician.trim().toLowerCase();
+        return tech === user.name.trim().toLowerCase() || (user.username && tech === user.username.trim().toLowerCase());
+      });
+
+      const completedJobs = userJobCards.filter((jc) => jc.status === 'COMPLETED' || jc.status === 'READY');
+
+      // Calculate total labor billed
+      let totalLaborBilled = 0;
+      let totalActualHours = 0;
+      for (const jc of completedJobs) {
+        if (jc.actualHours) totalActualHours += jc.actualHours;
+        else if (jc.estimatedHours) totalActualHours += jc.estimatedHours;
+
+        for (const est of jc.estimates || []) {
+          for (const li of est.lineItems || []) {
+            if ((li.itemType || 'PART').toUpperCase() === 'LABOUR') {
+              totalLaborBilled += li.total;
+            }
+          }
+        }
+      }
+
+      // Advances & deductions
+      const userAdvances = advances.filter((a) => a.userId === user.id);
+      const advancesSum = userAdvances
+        .filter((a) => a.type === 'ADVANCE')
+        .reduce((sum, a) => sum + a.amount, 0);
+      const deductionsSum = userAdvances
+        .filter((a) => a.type === 'DEDUCTION')
+        .reduce((sum, a) => sum + a.amount, 0);
+      const allowancesSum = userAdvances
+        .filter((a) => a.type === 'BONUS' || a.type === 'TOOL_ALLOWANCE')
+        .reduce((sum, a) => sum + a.amount, 0);
+
+      const payStructure = existing?.payStructure || user.payStructure || 'MONTHLY_SALARY';
+      const baseSalary = existing ? existing.baseSalary : (user.baseSalary || 0);
+      const hourlyRate = existing ? existing.hourlyRate : (user.hourlyRate || 0);
+      const hoursWorked = existing ? existing.hoursWorked : totalActualHours;
+      const commissionRate = existing ? existing.commissionRate : (user.commissionRate || 0);
+      const flatPerJob = user.flatCommissionPerJob || 0;
+
+      // Calculate component pays
+      let calcBase = 0;
+      let calcHourly = 0;
+      let calcCommission = 0;
+
+      if (payStructure === 'MONTHLY_SALARY') {
+        calcBase = baseSalary;
+      } else if (payStructure === 'COMMISSION_ONLY') {
+        calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      } else if (payStructure === 'SALARY_AND_COMMISSION') {
+        calcBase = baseSalary;
+        calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      } else if (payStructure === 'HOURLY') {
+        calcHourly = hoursWorked * hourlyRate;
+      } else if (payStructure === 'HOURLY_AND_COMMISSION') {
+        calcHourly = hoursWorked * hourlyRate;
+        calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      } else if (payStructure === 'EXTERNAL_PAYROLL') {
+        calcBase = 0;
+        calcHourly = 0;
+        calcCommission = 0;
+      }
+
+      const totalAllowances = existing ? existing.allowancesAmount : allowancesSum;
+      const totalAdvances = existing ? existing.advancesAmount : advancesSum;
+      const totalDeductions = existing ? existing.deductionsAmount : deductionsSum;
+
+      const grossPay = calcBase + calcHourly + calcCommission + totalAllowances;
+      const netPay = Math.max(0, grossPay - totalAdvances - totalDeductions);
+
+      return {
+        id: existing?.id || null,
+        userId: user.id,
+        name: user.name,
+        role: user.role,
+        phone: user.phone,
+        specialization: user.specialization,
+        payStructure,
+        baseSalary,
+        hourlyRate,
+        hoursWorked,
+        hourlyPay: calcHourly,
+        commissionRate,
+        flatCommissionPerJob: flatPerJob,
+        totalLaborBilled,
+        completedJobsCount: completedJobs.length,
+        commissionAmount: calcCommission,
+        allowancesAmount: totalAllowances,
+        allowanceNotes: existing?.allowanceNotes || null,
+        advancesAmount: totalAdvances,
+        deductionsAmount: totalDeductions,
+        deductionNotes: existing?.deductionNotes || null,
+        grossPay,
+        netPay,
+        status: existing?.status || 'DRAFT',
+        paidAt: existing?.paidAt || null,
+        paymentReference: existing?.paymentReference || null,
+        paymentMethod: existing?.paymentMethod || user.paymentMethod || 'MPESA',
+        payoutBank: user.payoutBank,
+        payoutAccountNumber: user.payoutAccountNumber,
+        externalPayrollId: user.externalPayrollId,
+        externalPayrollSystem: user.externalPayrollSystem,
+        nationalId: user.nationalId,
+        kraPin: user.kraPin,
+        nssfNo: user.nssfNo,
+        shifNo: user.shifNo,
+        advancesList: userAdvances,
+      };
+    });
+
+    const totalLiability = staffRows.reduce((sum, s) => sum + s.netPay, 0);
+    const totalGross = staffRows.reduce((sum, s) => sum + s.grossPay, 0);
+    const totalBase = staffRows.reduce((sum, s) => sum + (s.payStructure.includes('SALARY') ? s.baseSalary : 0), 0);
+    const totalCommissions = staffRows.reduce((sum, s) => sum + s.commissionAmount, 0);
+    const totalHourly = staffRows.reduce((sum, s) => sum + s.hourlyPay, 0);
+    const totalAdvances = staffRows.reduce((sum, s) => sum + s.advancesAmount, 0);
+
+    res.json({
+      month,
+      year,
+      summary: {
+        totalLiability,
+        totalGross,
+        totalBase,
+        totalCommissions,
+        totalHourly,
+        totalAdvances,
+        staffCount: staffRows.length,
+      },
+      records: staffRows,
+    });
+  } catch (error) {
+    console.error('Payroll summary error:', error);
+    res.status(500).json({ error: 'Failed to generate payroll summary' });
+  }
+});
+
+// Save or Approve staff payroll record
+app.post('/api/payroll/records/upsert', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const {
+      userId,
+      periodMonth,
+      periodYear,
+      payStructure,
+      baseSalary,
+      hourlyRate,
+      hoursWorked,
+      hourlyPay,
+      commissionRate,
+      commissionAmount,
+      completedJobsCount,
+      totalLaborBilled,
+      allowancesAmount,
+      allowanceNotes,
+      advancesAmount,
+      deductionsAmount,
+      deductionNotes,
+      grossPay,
+      netPay,
+      status,
+      paymentReference,
+      paymentMethod,
+      notes,
+    } = req.body;
+
+    if (!userId || !periodMonth || !periodYear) {
+      return res.status(400).json({ error: 'userId, periodMonth, and periodYear are required' });
+    }
+
+    const record = await prisma.payrollRecord.upsert({
+      where: {
+        tenantId_userId_periodMonth_periodYear: {
+          tenantId: tenant.id,
+          userId,
+          periodMonth: Number(periodMonth),
+          periodYear: Number(periodYear),
+        },
+      },
+      create: {
+        tenantId: tenant.id,
+        userId,
+        periodMonth: Number(periodMonth),
+        periodYear: Number(periodYear),
+        payStructure: payStructure || 'MONTHLY_SALARY',
+        baseSalary: Number(baseSalary) || 0,
+        hourlyRate: Number(hourlyRate) || 0,
+        hoursWorked: Number(hoursWorked) || 0,
+        hourlyPay: Number(hourlyPay) || 0,
+        commissionRate: Number(commissionRate) || 0,
+        commissionAmount: Number(commissionAmount) || 0,
+        completedJobsCount: Number(completedJobsCount) || 0,
+        totalLaborBilled: Number(totalLaborBilled) || 0,
+        allowancesAmount: Number(allowancesAmount) || 0,
+        allowanceNotes: allowanceNotes || null,
+        advancesAmount: Number(advancesAmount) || 0,
+        deductionsAmount: Number(deductionsAmount) || 0,
+        deductionNotes: deductionNotes || null,
+        grossPay: Number(grossPay) || 0,
+        netPay: Number(netPay) || 0,
+        status: status || 'DRAFT',
+        paymentReference: paymentReference || null,
+        paymentMethod: paymentMethod || null,
+        notes: notes || null,
+      },
+      update: {
+        payStructure: payStructure !== undefined ? payStructure : undefined,
+        baseSalary: baseSalary !== undefined ? Number(baseSalary) : undefined,
+        hourlyRate: hourlyRate !== undefined ? Number(hourlyRate) : undefined,
+        hoursWorked: hoursWorked !== undefined ? Number(hoursWorked) : undefined,
+        hourlyPay: hourlyPay !== undefined ? Number(hourlyPay) : undefined,
+        commissionRate: commissionRate !== undefined ? Number(commissionRate) : undefined,
+        commissionAmount: commissionAmount !== undefined ? Number(commissionAmount) : undefined,
+        completedJobsCount: completedJobsCount !== undefined ? Number(completedJobsCount) : undefined,
+        totalLaborBilled: totalLaborBilled !== undefined ? Number(totalLaborBilled) : undefined,
+        allowancesAmount: allowancesAmount !== undefined ? Number(allowancesAmount) : undefined,
+        allowanceNotes: allowanceNotes !== undefined ? allowanceNotes : undefined,
+        advancesAmount: advancesAmount !== undefined ? Number(advancesAmount) : undefined,
+        deductionsAmount: deductionsAmount !== undefined ? Number(deductionsAmount) : undefined,
+        deductionNotes: deductionNotes !== undefined ? deductionNotes : undefined,
+        grossPay: grossPay !== undefined ? Number(grossPay) : undefined,
+        netPay: netPay !== undefined ? Number(netPay) : undefined,
+        status: status !== undefined ? status : undefined,
+        paymentReference: paymentReference !== undefined ? paymentReference : undefined,
+        paymentMethod: paymentMethod !== undefined ? paymentMethod : undefined,
+        notes: notes !== undefined ? notes : undefined,
+      },
+    });
+
+    res.json(record);
+  } catch (error) {
+    console.error('Upsert payroll record error:', error);
+    res.status(500).json({ error: 'Failed to save payroll record' });
+  }
+});
+
+// Mark a staff member's payroll as paid
+app.post('/api/payroll/records/mark-paid', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const { userId, periodMonth, periodYear, paymentReference, paymentMethod } = req.body;
+
+    if (!userId || !periodMonth || !periodYear) {
+      return res.status(400).json({ error: 'userId, periodMonth, and periodYear are required' });
+    }
+
+    // Update or create record
+    const record = await prisma.payrollRecord.upsert({
+      where: {
+        tenantId_userId_periodMonth_periodYear: {
+          tenantId: tenant.id,
+          userId,
+          periodMonth: Number(periodMonth),
+          periodYear: Number(periodYear),
+        },
+      },
+      create: {
+        tenantId: tenant.id,
+        userId,
+        periodMonth: Number(periodMonth),
+        periodYear: Number(periodYear),
+        payStructure: 'MONTHLY_SALARY',
+        status: 'PAID',
+        paidAt: new Date(),
+        paymentReference: paymentReference || `PAY-${Date.now()}`,
+        paymentMethod: paymentMethod || 'MPESA',
+      },
+      update: {
+        status: 'PAID',
+        paidAt: new Date(),
+        paymentReference: paymentReference || `PAY-${Date.now()}`,
+        paymentMethod: paymentMethod || 'MPESA',
+      },
+    });
+
+    // Mark staff advances for this period as settled
+    await prisma.staffAdvance.updateMany({
+      where: {
+        tenantId: tenant.id,
+        userId,
+        isSettled: false,
+      },
+      data: {
+        isSettled: true,
+        settledMonth: Number(periodMonth),
+        settledYear: Number(periodYear),
+      },
+    });
+
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error('Mark paid error:', error);
+    res.status(500).json({ error: 'Failed to mark payroll as paid' });
+  }
+});
+
+// Staff Advances & Adjustments
+app.get('/api/payroll/advances', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const advances = await prisma.staffAdvance.findMany({
+      where: { tenantId: tenant.id },
+      include: {
+        user: {
+          select: { id: true, name: true, role: true, phone: true },
+        },
+      },
+      orderBy: { date: 'desc' },
+    });
+    res.json(advances);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch advances' });
+  }
+});
+
+app.post('/api/payroll/advances', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const { userId, amount, type, reason, date, paymentRef, approvedBy } = req.body;
+
+    if (!userId || !amount) {
+      return res.status(400).json({ error: 'userId and amount are required' });
+    }
+
+    const advance = await prisma.staffAdvance.create({
+      data: {
+        tenantId: tenant.id,
+        userId,
+        amount: Number(amount),
+        type: type || 'ADVANCE',
+        reason: reason ? String(reason).trim() : null,
+        paymentRef: paymentRef ? String(paymentRef).trim() : null,
+        approvedBy: approvedBy ? String(approvedBy).trim() : null,
+        date: date ? new Date(date) : new Date(),
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json(advance);
+  } catch (error) {
+    console.error('Create advance error:', error);
+    res.status(500).json({ error: 'Failed to record staff advance' });
+  }
+});
+
+app.delete('/api/payroll/advances/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await prisma.staffAdvance.delete({
+      where: { id: String(id) },
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete advance error:', error);
+    res.status(500).json({ error: 'Failed to delete advance' });
+  }
+});
+
+// Export Payroll CSV (for QuickBooks, Sage, Excel, Bank Uploads)
+app.get('/api/payroll/export', async (req: Request, res: Response) => {
+  try {
+    const tenant = await getActiveTenant();
+    const month = parseInt(String(req.query.month || (new Date().getMonth() + 1)), 10);
+    const year = parseInt(String(req.query.year || new Date().getFullYear()), 10);
+
+    // Call summary logic
+    const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const users = await prisma.user.findMany({
+      where: { tenantId: tenant.id, isActive: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const jobCards = await prisma.jobCard.findMany({
+      where: {
+        tenantId: tenant.id,
+        createdAt: { gte: startOfMonth, lte: endOfMonth },
+      },
+      include: {
+        estimates: { include: { lineItems: true } },
+      },
+    });
+
+    const advances = await prisma.staffAdvance.findMany({
+      where: {
+        tenantId: tenant.id,
+        OR: [
+          { settledMonth: month, settledYear: year },
+          { date: { gte: startOfMonth, lte: endOfMonth }, settledMonth: null },
+        ],
+      },
+    });
+
+    const existingRecords = await prisma.payrollRecord.findMany({
+      where: { tenantId: tenant.id, periodMonth: month, periodYear: year },
+    });
+    const recordMap = new Map(existingRecords.map((r) => [r.userId, r]));
+
+    const headers = [
+      'Employee Name',
+      'Role',
+      'National ID',
+      'KRA PIN',
+      'Pay Structure',
+      'External Payroll System',
+      'External Payroll ID',
+      'Base Salary (KES)',
+      'Hourly Rate (KES)',
+      'Hours Worked',
+      'Hourly Pay (KES)',
+      'Commission Rate (%)',
+      'Completed Jobs',
+      'Labor Billed (KES)',
+      'Commission (KES)',
+      'Allowances (KES)',
+      'Gross Pay (KES)',
+      'Advances (KES)',
+      'Deductions (KES)',
+      'Net Pay (KES)',
+      'Payment Method',
+      'Bank / Account / Phone',
+      'Status',
+    ];
+
+    const rows = users.map((user) => {
+      const existing = recordMap.get(user.id);
+      const userJobCards = jobCards.filter((jc) => {
+        if (!jc.technician) return false;
+        const tech = jc.technician.trim().toLowerCase();
+        return tech === user.name.trim().toLowerCase() || (user.username && tech === user.username.trim().toLowerCase());
+      });
+      const completedJobs = userJobCards.filter((jc) => jc.status === 'COMPLETED' || jc.status === 'READY');
+
+      let totalLaborBilled = 0;
+      let totalActualHours = 0;
+      for (const jc of completedJobs) {
+        if (jc.actualHours) totalActualHours += jc.actualHours;
+        else if (jc.estimatedHours) totalActualHours += jc.estimatedHours;
+        for (const est of jc.estimates || []) {
+          for (const li of est.lineItems || []) {
+            if ((li.itemType || 'PART').toUpperCase() === 'LABOUR') {
+              totalLaborBilled += li.total;
+            }
+          }
+        }
+      }
+
+      const userAdvances = advances.filter((a) => a.userId === user.id);
+      const advancesSum = userAdvances.filter((a) => a.type === 'ADVANCE').reduce((s, a) => s + a.amount, 0);
+      const deductionsSum = userAdvances.filter((a) => a.type === 'DEDUCTION').reduce((s, a) => s + a.amount, 0);
+      const allowancesSum = userAdvances.filter((a) => a.type === 'BONUS' || a.type === 'TOOL_ALLOWANCE').reduce((s, a) => s + a.amount, 0);
+
+      const payStructure = existing?.payStructure || user.payStructure || 'MONTHLY_SALARY';
+      const baseSalary = existing ? existing.baseSalary : (user.baseSalary || 0);
+      const hourlyRate = existing ? existing.hourlyRate : (user.hourlyRate || 0);
+      const hoursWorked = existing ? existing.hoursWorked : totalActualHours;
+      const commissionRate = existing ? existing.commissionRate : (user.commissionRate || 0);
+      const flatPerJob = user.flatCommissionPerJob || 0;
+
+      let calcBase = 0;
+      let calcHourly = 0;
+      let calcCommission = 0;
+
+      if (payStructure === 'MONTHLY_SALARY') calcBase = baseSalary;
+      else if (payStructure === 'COMMISSION_ONLY') calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      else if (payStructure === 'SALARY_AND_COMMISSION') {
+        calcBase = baseSalary;
+        calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      } else if (payStructure === 'HOURLY') calcHourly = hoursWorked * hourlyRate;
+      else if (payStructure === 'HOURLY_AND_COMMISSION') {
+        calcHourly = hoursWorked * hourlyRate;
+        calcCommission = (totalLaborBilled * (commissionRate / 100)) + (flatPerJob * completedJobs.length);
+      }
+
+      const totalAllowances = existing ? existing.allowancesAmount : allowancesSum;
+      const totalAdvances = existing ? existing.advancesAmount : advancesSum;
+      const totalDeductions = existing ? existing.deductionsAmount : deductionsSum;
+
+      const grossPay = calcBase + calcHourly + calcCommission + totalAllowances;
+      const netPay = Math.max(0, grossPay - totalAdvances - totalDeductions);
+
+      const accountInfo = user.payoutAccountNumber
+        ? `${user.payoutBank || ''} - ${user.payoutAccountNumber}`
+        : user.phone || '';
+
+      return [
+        `"${user.name.replace(/"/g, '""')}"`,
+        `"${user.role}"`,
+        `"${user.nationalId || ''}"`,
+        `"${user.kraPin || ''}"`,
+        `"${payStructure}"`,
+        `"${user.externalPayrollSystem || ''}"`,
+        `"${user.externalPayrollId || ''}"`,
+        calcBase.toFixed(2),
+        hourlyRate.toFixed(2),
+        hoursWorked.toFixed(1),
+        calcHourly.toFixed(2),
+        commissionRate.toFixed(1),
+        completedJobs.length,
+        totalLaborBilled.toFixed(2),
+        calcCommission.toFixed(2),
+        totalAllowances.toFixed(2),
+        grossPay.toFixed(2),
+        totalAdvances.toFixed(2),
+        totalDeductions.toFixed(2),
+        netPay.toFixed(2),
+        `"${user.paymentMethod || 'MPESA'}"`,
+        `"${accountInfo.replace(/"/g, '""')}"`,
+        `"${existing?.status || 'DRAFT'}"`,
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll_${year}_${String(month).padStart(2, '0')}.csv"`);
+    res.send(csvContent);
+  } catch (error) {
+    console.error('Payroll export error:', error);
+    res.status(500).json({ error: 'Failed to export payroll' });
   }
 });
 

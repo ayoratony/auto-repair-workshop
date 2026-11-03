@@ -29,6 +29,8 @@ model Tenant {
   parts        PartCatalog[]
   appointments Appointment[]
   expenses     Expense[]
+  payrollRecords PayrollRecord[]
+  staffAdvances  StaffAdvance[]
 }
 
 model User {
@@ -43,8 +45,26 @@ model User {
   role           Role     @default(MECHANIC)
   isActive       Boolean  @default(true)
 
+  // Compensation & Payroll Profile
+  payStructure          String    @default("MONTHLY_SALARY") // MONTHLY_SALARY, COMMISSION_ONLY, SALARY_AND_COMMISSION, HOURLY, HOURLY_AND_COMMISSION, EXTERNAL_PAYROLL
+  baseSalary            Float     @default(0) // Monthly salary in KES
+  hourlyRate            Float     @default(0) // Hourly rate in KES
+  flatCommissionPerJob  Float     @default(0) // Fixed KES bonus per completed job card
+  externalPayrollId     String?   // e.g. "EMP-041" in external payroll system
+  externalPayrollSystem String?   // e.g. "QuickBooks", "Sage", "External Bank File"
+  paymentMethod         String    @default("MPESA") // "MPESA", "BANK_TRANSFER", "CASH", "CHEQUE"
+  payoutBank            String?   // e.g. "KCB", "Equity", "Stanbic", "Co-op"
+  payoutAccountNumber   String?   // Account number or M-Pesa phone number
+  nationalId            String?   // National ID / Passport number
+  kraPin                String?   // Personal Tax PIN
+  nssfNo                String?   // NSSF number
+  shifNo                String?   // SHIF / NHIF number
+
   tenantId       String
   tenant         Tenant   @relation(fields: [tenantId], references: [id])
+
+  payrollRecords PayrollRecord[]
+  staffAdvances  StaffAdvance[]
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -587,4 +607,73 @@ model GatePass {
   @@index([tenantId, regNo])
   @@index([securityCode])
   @@index([passNumber])
+}
+
+// -------------------------------------
+// Staff Compensation, Payroll & Advances
+// -------------------------------------
+
+model StaffAdvance {
+  id             String    @id @default(uuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  amount         Float
+  type           String    @default("ADVANCE") // "ADVANCE", "BONUS", "TOOL_ALLOWANCE", "DEDUCTION"
+  reason         String?
+  date           DateTime  @default(now())
+  settledMonth   Int?
+  settledYear    Int?
+  isSettled      Boolean   @default(false)
+  approvedBy     String?
+  paymentRef     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, userId])
+}
+
+model PayrollRecord {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  userId              String
+  user                User      @relation(fields: [userId], references: [id])
+  
+  periodMonth         Int       // 1 - 12
+  periodYear          Int       // e.g. 2026
+  
+  payStructure        String    // MONTHLY_SALARY, COMMISSION_ONLY, SALARY_AND_COMMISSION, HOURLY, HOURLY_AND_COMMISSION, EXTERNAL_PAYROLL
+  baseSalary          Float     @default(0)
+  hourlyRate          Float     @default(0)
+  hoursWorked         Float     @default(0)
+  hourlyPay           Float     @default(0)
+  
+  commissionRate      Float     @default(0)
+  commissionAmount    Float     @default(0)
+  completedJobsCount  Int       @default(0)
+  totalLaborBilled    Float     @default(0)
+  
+  allowancesAmount    Float     @default(0)
+  allowanceNotes      String?
+  
+  advancesAmount      Float     @default(0)
+  deductionsAmount    Float     @default(0)
+  deductionNotes      String?
+  
+  grossPay            Float     @default(0)
+  netPay              Float     @default(0)
+  
+  status              String    @default("DRAFT") // DRAFT, APPROVED, PAID
+  paidAt              DateTime?
+  paymentReference    String?
+  paymentMethod       String?
+  notes               String?
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([tenantId, userId, periodMonth, periodYear])
+  @@index([tenantId, periodYear, periodMonth])
 }
