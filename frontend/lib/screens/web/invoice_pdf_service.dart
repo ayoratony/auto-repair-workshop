@@ -144,7 +144,7 @@ class InvoicePdfService {
                                 ),
                                 pw.SizedBox(height: 2),
                                 pw.Text(
-                                  'Tax / KRA PIN: ${d.workshopPin}  |  Tel: +254 700 000 000',
+                                  'Tax / KRA PIN: ${d.workshopPin}  |  Tel: ${d.workshopPhone}',
                                   style: pw.TextStyle(font: fontBold, fontSize: 9, color: textDark),
                                 ),
                               ],
@@ -829,7 +829,7 @@ class InvoicePdfService {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Tax / KRA PIN: ${d.workshopPin}   •   Tel: +254 700 000 000',
+                                'Tax / KRA PIN: ${d.workshopPin}   •   Tel: ${d.workshopPhone}',
                                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
                               ),
                             ],
@@ -1264,6 +1264,12 @@ class InvoicePdfService {
     final workshopPin = (workshopSettings['taxPin']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['taxPin'].toString()
         : 'P051234567X';
+    final workshopPhone = (workshopSettings['phone']?.toString().trim().isNotEmpty ?? false)
+        ? workshopSettings['phone'].toString()
+        : '+254 700 000 000';
+    final workshopEmail = (workshopSettings['email']?.toString().trim().isNotEmpty ?? false)
+        ? workshopSettings['email'].toString()
+        : 'info@autoke.co.ke';
 
     final job = (estimate['jobCard'] as Map<String, dynamic>?) ?? {};
     final customer = (job['customer'] as Map<String, dynamic>?) ?? {};
@@ -1324,6 +1330,8 @@ class InvoicePdfService {
       workshopName: workshopName,
       workshopAddress: workshopAddress,
       workshopPin: workshopPin,
+      workshopPhone: workshopPhone,
+      workshopEmail: workshopEmail,
       monogram: monogram,
       docNumber: docNumber,
       jobNumber: jobNumber,
@@ -3384,6 +3392,12 @@ class InvoicePdfService {
     final workshopPin = (workshopSettings['taxPin']?.toString().trim().isNotEmpty ?? false)
         ? workshopSettings['taxPin'].toString()
         : 'P051234567X';
+    final workshopPhone = (workshopSettings['phone']?.toString().trim().isNotEmpty ?? false)
+        ? workshopSettings['phone'].toString()
+        : '+254 700 000 000';
+    final workshopEmail = (workshopSettings['email']?.toString().trim().isNotEmpty ?? false)
+        ? workshopSettings['email'].toString()
+        : 'info@autoke.co.ke';
     final monogram = workshopName.substring(0, workshopName.length >= 3 ? 3 : 1).toUpperCase();
 
     final customer = (job['customer'] as Map<String, dynamic>?) ?? {};
@@ -3503,6 +3517,8 @@ class InvoicePdfService {
       workshopName: workshopName,
       workshopAddress: workshopAddress,
       workshopPin: workshopPin,
+      workshopPhone: workshopPhone,
+      workshopEmail: workshopEmail,
       monogram: monogram,
       jobNumber: jobNumber,
       status: status,
@@ -3640,7 +3656,7 @@ class InvoicePdfService {
                         ),
                         pw.SizedBox(height: 4),
                         pw.Text(
-                          '${d.workshopAddress}  |  Tax PIN: ${d.workshopPin}',
+                          '${d.workshopAddress}  |  Tax PIN: ${d.workshopPin}  |  Tel: ${d.workshopPhone}',
                           style: pw.TextStyle(font: fontRegular, color: const PdfColor.fromInt(0xFFCBD5E1), fontSize: 9),
                         ),
                       ],
@@ -4960,6 +4976,8 @@ class _JobCardDocData {
   final String workshopName;
   final String workshopAddress;
   final String workshopPin;
+  final String workshopPhone;
+  final String workshopEmail;
   final String monogram;
   final String jobNumber;
   final String status;
@@ -4992,6 +5010,8 @@ class _JobCardDocData {
     required this.workshopName,
     required this.workshopAddress,
     required this.workshopPin,
+    required this.workshopPhone,
+    required this.workshopEmail,
     required this.monogram,
     required this.jobNumber,
     required this.status,
@@ -5026,6 +5046,8 @@ class _DocData {
   final String workshopName;
   final String workshopAddress;
   final String workshopPin;
+  final String workshopPhone;
+  final String workshopEmail;
   final String monogram;
   final String docNumber;
   final String jobNumber;
@@ -5060,6 +5082,8 @@ class _DocData {
     required this.workshopName,
     required this.workshopAddress,
     required this.workshopPin,
+    required this.workshopPhone,
+    required this.workshopEmail,
     required this.monogram,
     required this.docNumber,
     required this.jobNumber,

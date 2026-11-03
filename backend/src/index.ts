@@ -4447,7 +4447,7 @@ app.get('/api/settings', async (_req: Request, res: Response) => {
 app.put('/api/settings', async (req: Request, res: Response) => {
   try {
     const tenant = await getActiveTenant();
-    const { name, address, taxPin, logoUrl } = req.body;
+    const { name, address, taxPin, logoUrl, phone, email } = req.body;
     const updated = await prisma.tenant.update({
       where: { id: tenant.id },
       data: {
@@ -4455,6 +4455,8 @@ app.put('/api/settings', async (req: Request, res: Response) => {
         ...(address !== undefined ? { address } : {}),
         ...(taxPin !== undefined ? { taxPin } : {}),
         ...(logoUrl !== undefined ? { logoUrl } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(email !== undefined ? { email } : {}),
       },
     });
     res.json(updated);

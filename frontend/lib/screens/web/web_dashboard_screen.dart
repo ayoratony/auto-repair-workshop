@@ -10917,44 +10917,150 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
   Widget _buildSettingsSection() {
     final nameCtrl = TextEditingController(text: _workshopSettings['name'] ?? '');
+    final phoneCtrl = TextEditingController(text: _workshopSettings['phone'] ?? '');
+    final emailCtrl = TextEditingController(text: _workshopSettings['email'] ?? '');
     final addressCtrl = TextEditingController(text: _workshopSettings['address'] ?? '');
     final pinCtrl = TextEditingController(text: _workshopSettings['taxPin'] ?? '');
 
     return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Workshop Settings (Tenant Profile)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.settings, color: Color(0xFF2563EB), size: 24),
+              ),
+              const SizedBox(width: 14),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Workshop Profile & Contact Settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 2),
+                  Text('These contact and legal details appear on all Invoices, Estimates, Job Cards, and Gate Passes.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Divider(),
           const SizedBox(height: 16),
-          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Workshop Name', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          TextField(controller: addressCtrl, decoration: const InputDecoration(labelText: 'Workshop Address', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          TextField(controller: pinCtrl, decoration: const InputDecoration(labelText: 'Tax / KRA PIN', border: OutlineInputBorder())),
-          const SizedBox(height: 16),
+          TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Workshop / Business Name',
+              hintText: 'e.g. AutoKe Auto Workshop',
+              prefixIcon: Icon(Icons.business_outlined),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Official Workshop Phone Number',
+                    hintText: 'e.g. +254 700 000 000 / 0712 345 678',
+                    prefixIcon: Icon(Icons.phone_outlined),
+                    helperText: 'Appears on customer invoice & gate pass headers and SMS reminders',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: TextField(
+                  controller: emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Official Workshop Email',
+                    hintText: 'e.g. info@autoke.co.ke',
+                    prefixIcon: Icon(Icons.email_outlined),
+                    helperText: 'Appears on invoice & estimate letterheads',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: addressCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Workshop Physical Address / Location',
+              hintText: 'e.g. Enterprise Road, Industrial Area, Nairobi, Kenya',
+              prefixIcon: Icon(Icons.location_on_outlined),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: pinCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Tax PIN / KRA PIN',
+              hintText: 'e.g. P051234567Z',
+              prefixIcon: Icon(Icons.receipt_long_outlined),
+              helperText: 'Required for official Kenyan business receipts & tax compliance',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: () async {
-              await http.put(
-                Uri.parse('$_baseUrl/settings'),
-                headers: {'Content-Type': 'application/json'},
-                body: json.encode({
-                  'name': nameCtrl.text.trim(),
-                  'address': addressCtrl.text.trim(),
-                  'taxPin': pinCtrl.text.trim(),
-                }),
-              );
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(backgroundColor: Colors.green, content: Text('Workshop settings updated!')),
+              try {
+                final res = await http.put(
+                  Uri.parse('$_baseUrl/settings'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: json.encode({
+                    'name': nameCtrl.text.trim(),
+                    'phone': phoneCtrl.text.trim(),
+                    'email': emailCtrl.text.trim(),
+                    'address': addressCtrl.text.trim(),
+                    'taxPin': pinCtrl.text.trim(),
+                  }),
                 );
+                if (res.statusCode == 200) {
+                  final updated = json.decode(res.body);
+                  setState(() {
+                    _workshopSettings = Map<String, dynamic>.from(updated);
+                  });
+                }
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(backgroundColor: Colors.green, content: Text('Workshop profile & phone number updated successfully!')),
+                  );
+                }
+                _refreshAllData();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(backgroundColor: Colors.red, content: Text('Error saving settings: $e')),
+                  );
+                }
               }
-              _refreshAllData();
             },
             icon: const Icon(Icons.save),
-            label: const Text('Save Workshop Settings'),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white),
+            label: const Text('Save Workshop Profile & Phone Number', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
           ),
         ],
       ),
